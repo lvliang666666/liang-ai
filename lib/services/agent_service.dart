@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart' show rootBundle;
 
 import '../models/agent.dart';
+import 'agent_parser.dart';
 import 'database_service.dart';
 
 /// Agent 服务：内置资产种子入库 + CRUD 委托数据库
