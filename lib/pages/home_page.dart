@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../providers/agent_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
@@ -42,41 +43,77 @@ class _HomePageState extends State<HomePage> {
   Future<void> _newChat() async {
     Haptics.light();
     _unfocusSearch();
-    // 先确认，避免误触创建空会话
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新对话'),
-        content: const Text('确定要开始一个新的对话吗？'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Haptics.light();
-              Navigator.pop(context, false);
-            },
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Haptics.light();
-              Navigator.pop(context, true);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+    // 选 Agent + 确认（null = 默认助手）
+    final agentId = await _showAgentPicker();
+    if (agentId == _agentPickerCancelled || !mounted) return;
 
     final settings = context.read<SettingsService>();
     final sessions = context.read<SessionsProvider>();
-    final session = await sessions.createSession(settings.defaultEffortValue);
+    final session = await sessions.createSession(
+      settings.defaultEffortValue,
+      agentId: agentId,
+    );
     if (!mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ChatPage(sessionId: session.id)),
     );
     sessions.refresh();
+  }
+
+  /// Agent 选择弹窗：返回选中的 agentId；取消返回哨兵值
+  static const _agentPickerCancelled = '__cancelled__';
+
+  Future<String?> _showAgentPicker() async {
+    final agents = context.read<AgentProvider>();
+    if (!agents.loaded) await agents.load();
+
+    if (!mounted) return _agentPickerCancelled;
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('选择 Agent 开始新对话',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final a in agents.agents)
+                    ListTile(
+                      leading: Text(a.icon,
+                          style: const TextStyle(fontSize: 24)),
+                      title: Text(a.name),
+                      subtitle: a.description.isEmpty
+                          ? null
+                          : Text(
+                              a.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                      onTap: () {
+                        Haptics.selection();
+                        Navigator.pop(context, a.id);
+                      },
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    return result ?? _agentPickerCancelled;
   }
 
   Future<void> _openChat(String id) async {
@@ -221,6 +258,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sessions = context.watch<SessionsProvider>();
+    final agentsProvider = context.watch<AgentProvider>();
 
     // 按标题过滤（不区分大小写）
     final allSessions = sessions.sessions;
@@ -347,6 +385,8 @@ class _HomePageState extends State<HomePage> {
                                   'low' => '轻量',
                                   _ => s.effort,
                                 };
+                                final agent =
+                                    agentsProvider.byId(s.agentId);
                                 return Card(
                                   elevation: 0,
                                   color: theme
@@ -356,9 +396,9 @@ class _HomePageState extends State<HomePage> {
                                     contentPadding:
                                         const EdgeInsets.symmetric(
                                             horizontal: 16, vertical: 4),
-                                    leading: Icon(
-                                      Icons.chat_bubble_outline,
-                                      color: theme.colorScheme.primary,
+                                    leading: Text(
+                                      agent?.icon ?? '💬',
+                                      style: const TextStyle(fontSize: 22),
                                     ),
                                     title: Text(
                                       s.title,
@@ -366,6 +406,7 @@ class _HomePageState extends State<HomePage> {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     subtitle: Text(
+                                      '${agent != null ? '${agent.name} · ' : ''}'
                                       '$effortText · ${_formatTime(s.updatedAt)}',
                                       style: theme.textTheme.bodySmall,
                                     ),
