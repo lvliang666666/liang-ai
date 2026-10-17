@@ -249,13 +249,15 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      // 圆形新对话按钮：稍大、加号居中，位置略向左上偏移（仍在右下角）
+      // 圆形新对话按钮：64px + 28px 加号，位置略向左上偏移（仍在右下角）
       floatingActionButton: Container(
         margin: const EdgeInsets.only(right: 12, bottom: 12),
-        child: FloatingActionButton.large(
+        width: 64,
+        height: 64,
+        child: FloatingActionButton(
           onPressed: _newChat,
           shape: const CircleBorder(),
-          child: const Icon(Icons.add, size: 36),
+          child: const Icon(Icons.add, size: 28),
         ),
       ),
       body: !sessions.loaded
