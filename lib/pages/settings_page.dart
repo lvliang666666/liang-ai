@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/agent.dart';
+import '../providers/agent_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme_registry.dart';
@@ -18,7 +20,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'API 配置', '对话参数', '说明'];
+  static const _tabs = ['外观', 'Agent 管理', 'API 配置', '对话参数', '说明'];
 
   late final SettingsService _settings;
   late final TextEditingController _keyController;
@@ -109,6 +111,7 @@ class _SettingsPageState extends State<SettingsPage> {
               },
               children: [
                 _buildAppearanceTab(theme),
+                _buildAgentTab(theme),
                 _buildApiTab(theme),
                 _buildParamsTab(theme),
                 _buildAboutTab(theme),
@@ -144,7 +147,256 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ===== Tag 2：API 配置 =====
+  // ===== Tag 2：Agent 管理 =====
+  Widget _buildAgentTab(ThemeData theme) {
+    final agents = context.watch<AgentProvider>();
+    if (!agents.loaded) {
+      agents.load();
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text('内置与自定义 Agent',
+                  style: theme.textTheme.titleSmall),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Haptics.light();
+                _showAgentEditor(context);
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('新建'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        ...agents.agents.map((a) => Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.5),
+              child: ListTile(
+                leading:
+                    Text(a.icon, style: const TextStyle(fontSize: 24)),
+                title: Text(a.name),
+                subtitle: Text(
+                  a.description.isEmpty ? '（无描述）' : a.description,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (a.isBuiltin)
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 20),
+                        tooltip: '复制为自定义',
+                        onPressed: () {
+                          Haptics.light();
+                          context.read<AgentProvider>().duplicate(a);
+                        },
+                      )
+                    else
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 20),
+                        tooltip: '删除',
+                        onPressed: () {
+                          Haptics.medium();
+                          _confirmDeleteAgent(context, a);
+                        },
+                      ),
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      tooltip: a.isBuiltin ? '查看' : '编辑',
+                      onPressed: () {
+                        Haptics.light();
+                        _showAgentEditor(context, agent: a);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            )),
+        const SizedBox(height: 8),
+        Text(
+          '· 内置 Agent 不可删除，可复制一份后修改\n'
+          '· Agent 的提示词会作为 system 消息注入对话\n'
+          '· 在新建对话或聊天页顶部可切换 Agent',
+          style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant, height: 1.6),
+        ),
+      ],
+    );
+  }
+
+  /// Agent 新建/编辑弹窗（内置 Agent 只读查看）
+  Future<void> _showAgentEditor(BuildContext context, {Agent? agent}) async {
+    final isBuiltin = agent?.isBuiltin ?? false;
+    final nameCtrl = TextEditingController(text: agent?.name ?? '');
+    final descCtrl = TextEditingController(text: agent?.description ?? '');
+    final iconCtrl = TextEditingController(text: agent?.icon ?? '🤖');
+    final promptCtrl = TextEditingController(text: agent?.prompt ?? '');
+    String? effort = agent?.effort;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(agent == null
+            ? '新建 Agent'
+            : (isBuiltin ? '查看 Agent' : '编辑 Agent')),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              Row(children: [
+                SizedBox(
+                  width: 64,
+                  child: TextField(
+                    controller: iconCtrl,
+                    textAlign: TextAlign.center,
+                    maxLength: 2,
+                    decoration: const InputDecoration(
+                        counterText: '', labelText: '图标'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: nameCtrl,
+                    enabled: !isBuiltin,
+                    maxLength: 20,
+                    decoration: const InputDecoration(
+                        labelText: '名称', counterText: ''),
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              TextField(
+                controller: descCtrl,
+                enabled: !isBuiltin,
+                maxLength: 50,
+                decoration: const InputDecoration(
+                    labelText: '一句话描述', counterText: ''),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: effort,
+                decoration: const InputDecoration(labelText: '推理档位（可选）'),
+                items: const [
+                  DropdownMenuItem(value: 'max', child: Text('深度（max）')),
+                  DropdownMenuItem(value: 'high', child: Text('均衡（high）')),
+                  DropdownMenuItem(value: 'low', child: Text('轻量（low）')),
+                  DropdownMenuItem(child: Text('不指定')),
+                ],
+                onChanged: isBuiltin
+                    ? null
+                    : (v) => effort = v,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: promptCtrl,
+                enabled: !isBuiltin,
+                maxLines: 8,
+                minLines: 4,
+                decoration: const InputDecoration(
+                  labelText: '系统提示词（System Prompt）',
+                  alignLabelWithHint: true,
+                  hintText: '定义这个 Agent 的身份、语气、行为准则…',
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
+            child: const Text('取消'),
+          ),
+          if (!isBuiltin)
+            FilledButton(
+              onPressed: () {
+                Haptics.light();
+                Navigator.pop(context, true);
+              },
+              child: const Text('保存'),
+            ),
+        ],
+      ),
+    );
+
+    if (saved != true || !context.mounted) return;
+
+    final name = nameCtrl.text.trim();
+    final prompt = promptCtrl.text.trim();
+    if (name.isEmpty || prompt.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('名称和提示词不能为空')),
+      );
+      return;
+    }
+
+    final provider = context.read<AgentProvider>();
+    if (agent == null) {
+      await provider.create(
+        name: name,
+        prompt: prompt,
+        icon: iconCtrl.text.trim().isEmpty
+            ? '🤖'
+            : iconCtrl.text.trim(),
+        description: descCtrl.text.trim(),
+        effort: effort,
+      );
+    } else {
+      await provider.update(Agent(
+        id: agent.id,
+        name: name,
+        icon: iconCtrl.text.trim(),
+        description: descCtrl.text.trim(),
+        prompt: prompt,
+        temperature: agent.temperature,
+        effort: effort,
+      ));
+    }
+  }
+
+  Future<void> _confirmDeleteAgent(BuildContext context, Agent agent) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除 Agent'),
+        content: Text('删除「${agent.name}」后，使用它的会话将回到默认助手。确定删除吗？'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      context.read<AgentProvider>().delete(agent.id);
+    }
+  }
+
+  // ===== Tag 3：API 配置 =====
   Widget _buildApiTab(ThemeData theme) {
     return ListView(
       padding: const EdgeInsets.all(16),
