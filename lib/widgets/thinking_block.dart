@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/theme_provider.dart';
+import '../utils/haptics.dart';
 
 /// 仿 DeepSeek 可折叠"深度思考"区域
 ///
@@ -71,6 +72,7 @@ class _ThinkingBlockState extends State<ThinkingBlock> {
               top: Radius.circular(radius),
             ),
             onTap: () {
+              Haptics.light();
               _userToggled = true;
               setState(() => _expanded = !_expanded);
             },

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../models/chat_message.dart';
 import '../providers/theme_provider.dart';
+import '../utils/haptics.dart';
 import 'code_block_widget.dart';
 import 'thinking_block.dart';
 
@@ -72,6 +73,7 @@ class MessageBubble extends StatelessWidget {
         child: GestureDetector(
           onLongPress: () async {
             if (message.content.isNotEmpty) {
+              Haptics.medium();
               await Clipboard.setData(ClipboardData(text: message.content));
               if (context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(

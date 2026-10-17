@@ -7,6 +7,7 @@ import '../providers/sessions_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/settings_service.dart';
+import '../utils/haptics.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/message_bubble.dart';
 
@@ -22,7 +23,6 @@ class ChatPage extends StatefulWidget {
 
 class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
-  bool _autoScrollEnabled = true;
   int _lastDisplayCount = 0;
   ChatSession? _session;
 
@@ -41,37 +41,23 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _maybeAutoScroll(int newCount) {
-    if (!_autoScrollEnabled || !_scrollController.hasClients) return;
+    if (!_scrollController.hasClients) return;
+    // reverse 列表：offset 0 即最新消息处。
+    // 发送新消息（数量增加）时跳回底部；流式增长时若用户停在底部则跟随。
     if (newCount != _lastDisplayCount) {
-      final isFirstLoad = _lastDisplayCount == 0 && newCount > 0;
+      final isNewMessage = newCount > _lastDisplayCount;
       _lastDisplayCount = newCount;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_scrollController.hasClients) return;
-        if (isFirstLoad) {
-          _jumpToBottomWithRetry(0);
-        } else {
-          _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-        }
-      });
-    } else if (_scrollController.position.maxScrollExtent > 0) {
-      // 流式增长时跟随滚动
-      _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
-    }
-  }
-
-  /// 首次加载时列表尚未完成布局，maxScrollExtent 可能为 0，
-  /// 逐帧重试直到列表完成布局后跳到底部
-  void _jumpToBottomWithRetry(int attempt) {
-    if (attempt > 10) return; // 最多重试 10 帧
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
-      final max = _scrollController.position.maxScrollExtent;
-      if (max > 0) {
-        _scrollController.jumpTo(max);
-      } else {
-        _jumpToBottomWithRetry(attempt + 1);
+      if (isNewMessage) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.jumpTo(0);
+          }
+        });
       }
-    });
+    } else if (_scrollController.offset <= 0.5) {
+      // 用户正停在底部，流式输出时跟随滚动
+      _scrollController.jumpTo(0);
+    }
   }
 
   @override
@@ -96,11 +82,6 @@ class _ChatPageState extends State<ChatPage> {
       },
       child: _ChatPageView(
         scrollController: _scrollController,
-        onScroll: (offset) {
-          // 用户向上滚动时暂停自动滚动
-          final max = _scrollController.position.maxScrollExtent;
-          _autoScrollEnabled = offset >= max - 80;
-        },
         onCountChanged: _maybeAutoScroll,
       ),
     );
@@ -110,12 +91,10 @@ class _ChatPageState extends State<ChatPage> {
 class _ChatPageView extends StatelessWidget {
   const _ChatPageView({
     required this.scrollController,
-    required this.onScroll,
     required this.onCountChanged,
   });
 
   final ScrollController scrollController;
-  final ValueChanged<double> onScroll;
   final void Function(int newCount) onCountChanged;
 
   @override
@@ -140,7 +119,10 @@ class _ChatPageView extends StatelessWidget {
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: '删除会话',
-              onPressed: () => _confirmDelete(context, chat, sessions),
+              onPressed: () {
+                Haptics.light();
+                _confirmDelete(context, chat, sessions);
+              },
             ),
           ],
         ),
@@ -149,34 +131,28 @@ class _ChatPageView extends StatelessWidget {
             // 错误提示条
             if (chat.status == ChatStatus.error)
               _ErrorBanner(message: chat.errorMessage),
-            // 消息列表
+            // 消息列表（reverse：底部锚定，天然显示最新消息）
             Expanded(
-              child: NotificationListener<ScrollNotification>(
-                onNotification: (n) {
-                  if (n is ScrollUpdateNotification) {
-                    onScroll(n.metrics.pixels);
-                  }
-                  return false;
-                },
-                child: chat.displayMessages.isEmpty
-                    ? _EmptyHint(effort: chat.session.effort)
-                    : ListView.builder(
-                        controller: scrollController,
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        itemCount: chat.displayMessages.length,
-                        itemBuilder: (context, index) {
-                          final msg = chat.displayMessages[index];
-                          final isLast =
-                              index == chat.displayMessages.length - 1;
-                          return MessageBubble(
-                            message: msg,
-                            isStreaming: isLast && chat.isStreaming,
-                            thinkingSeconds: chat.thinkingSeconds,
-                          );
-                        },
-                      ),
-              ),
+              child: chat.displayMessages.isEmpty
+                  ? _EmptyHint(effort: chat.session.effort)
+                  : ListView.builder(
+                      controller: scrollController,
+                      reverse: true,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      itemCount: chat.displayMessages.length,
+                      itemBuilder: (context, index) {
+                        // reverse 列表 index 0 = 列表末尾 = 最新消息
+                        final msg = chat
+                            .displayMessages[chat.displayMessages.length - 1 - index];
+                        final isLast = index == 0;
+                        return MessageBubble(
+                          message: msg,
+                          isStreaming: isLast && chat.isStreaming,
+                          thinkingSeconds: chat.thinkingSeconds,
+                        );
+                      },
+                    ),
             ),
             // 输入栏
             ChatInputBar(
@@ -204,11 +180,17 @@ class _ChatPageView extends StatelessWidget {
         content: const Text('删除后聊天记录无法恢复，确定删除吗？'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
             child: const Text('删除'),
           ),
         ],
@@ -252,7 +234,10 @@ class _ErrorBanner extends StatelessWidget {
             ),
           ),
           InkWell(
-            onTap: () => context.read<ChatProvider>().clearError(),
+            onTap: () {
+              Haptics.light();
+              context.read<ChatProvider>().clearError();
+            },
             child: Icon(Icons.close,
                 size: 16, color: colorScheme.onErrorContainer),
           ),
