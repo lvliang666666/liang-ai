@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 
+import '../utils/haptics.dart';
+
 /// 代码块：语言标签 + 复制按钮 + 语法高亮
 class CodeBlockWidget extends StatelessWidget {
   const CodeBlockWidget({super.key, required this.code, this.language});
@@ -40,6 +42,7 @@ class CodeBlockWidget extends StatelessWidget {
                 const Spacer(),
                 InkWell(
                   onTap: () async {
+                    Haptics.light();
                     await Clipboard.setData(ClipboardData(text: code));
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(

@@ -7,6 +7,7 @@ import '../providers/sessions_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/settings_service.dart';
+import '../utils/haptics.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/message_bubble.dart';
 
@@ -118,7 +119,10 @@ class _ChatPageView extends StatelessWidget {
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: '删除会话',
-              onPressed: () => _confirmDelete(context, chat, sessions),
+              onPressed: () {
+                Haptics.light();
+                _confirmDelete(context, chat, sessions);
+              },
             ),
           ],
         ),
@@ -176,11 +180,17 @@ class _ChatPageView extends StatelessWidget {
         content: const Text('删除后聊天记录无法恢复，确定删除吗？'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
             child: const Text('删除'),
           ),
         ],
@@ -224,7 +234,10 @@ class _ErrorBanner extends StatelessWidget {
             ),
           ),
           InkWell(
-            onTap: () => context.read<ChatProvider>().clearError(),
+            onTap: () {
+              Haptics.light();
+              context.read<ChatProvider>().clearError();
+            },
             child: Icon(Icons.close,
                 size: 16, color: colorScheme.onErrorContainer),
           ),

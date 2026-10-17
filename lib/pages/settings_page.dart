@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme_registry.dart';
+import '../utils/haptics.dart';
 
 /// 设置页：API Key / Base URL / 模型名 / 默认推理档位 / 温度
 class SettingsPage extends StatefulWidget {
@@ -55,7 +56,10 @@ class _SettingsPageState extends State<SettingsPage> {
         title: const Text('设置'),
         actions: [
           TextButton(
-            onPressed: _save,
+            onPressed: () {
+              Haptics.light();
+              _save();
+            },
             child: const Text('保存'),
           ),
         ],
@@ -74,8 +78,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   color: theme.colorScheme.primary,
                 ),
                 title: Text(entry.value.label),
-                onTap: () =>
-                    context.read<ThemeProvider>().setTheme(entry.key),
+                onTap: () {
+                  Haptics.selection();
+                  context.read<ThemeProvider>().setTheme(entry.key);
+                },
               )),
           const SizedBox(height: 24),
 
@@ -92,7 +98,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 icon: Icon(_obscureKey
                     ? Icons.visibility_off_outlined
                     : Icons.visibility_outlined),
-                onPressed: () => setState(() => _obscureKey = !_obscureKey),
+                onPressed: () {
+                  Haptics.light();
+                  setState(() => _obscureKey = !_obscureKey);
+                },
               ),
             ),
           ),
@@ -110,13 +119,19 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               ActionChip(
                 label: const Text('公网 focusaim'),
-                onPressed: () => setState(() =>
-                    _urlController.text = SettingsService.defaultBaseUrl),
+                onPressed: () {
+                  Haptics.selection();
+                  setState(() =>
+                      _urlController.text = SettingsService.defaultBaseUrl);
+                },
               ),
               ActionChip(
                 label: const Text('内网 vemic（更快）'),
-                onPressed: () => setState(
-                    () => _urlController.text = SettingsService.vemicBaseUrl),
+                onPressed: () {
+                  Haptics.selection();
+                  setState(
+                      () => _urlController.text = SettingsService.vemicBaseUrl);
+                },
               ),
             ],
           ),
@@ -147,7 +162,10 @@ class _SettingsPageState extends State<SettingsPage> {
                   'high' => '均衡推理',
                   _ => '轻量推理（最快）',
                 }),
-                onTap: () => setState(() => _effort = e),
+                onTap: () {
+                  Haptics.selection();
+                  setState(() => _effort = e);
+                },
               )),
           const SizedBox(height: 8),
           // 温度
@@ -161,7 +179,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   max: 2,
                   divisions: 20,
                   label: _temperature.toStringAsFixed(1),
+                  onChangeStart: (_) => Haptics.light(),
                   onChanged: (v) => setState(() => _temperature = v),
+                  onChangeEnd: (_) => Haptics.selection(),
                 ),
               ),
               SizedBox(

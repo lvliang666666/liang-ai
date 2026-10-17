@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/theme_provider.dart';
+import '../utils/haptics.dart';
 
 /// 聊天输入栏：推理档位选择 + 输入框 + 发送/停止按钮
 class ChatInputBar extends StatefulWidget {
@@ -47,12 +48,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
   void _send() {
     final text = _controller.text.trim();
     if (text.isEmpty) return;
+    Haptics.light();
     widget.onSend(text);
     _controller.clear();
     _focusNode.requestFocus();
   }
 
   Future<void> _pickEffort() async {
+    Haptics.light();
     final selected = await showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -79,7 +82,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 ),
                 title: Text(entry.value.$1),
                 subtitle: Text(entry.value.$2),
-                onTap: () => Navigator.pop(context, entry.key),
+                onTap: () {
+                  Haptics.selection();
+                  Navigator.pop(context, entry.key);
+                },
               ),
             const SizedBox(height: 8),
           ],
@@ -167,7 +173,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
             // 发送 / 停止按钮
             widget.isStreaming
                 ? IconButton.filled(
-                    onPressed: widget.onStop,
+                    onPressed: () {
+                      Haptics.medium();
+                      widget.onStop();
+                    },
                     style: IconButton.styleFrom(
                       backgroundColor: colorScheme.errorContainer,
                     ),
