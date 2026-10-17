@@ -48,6 +48,9 @@ dependencies:
   shared_preferences: ^2.3.4
   # 会话/消息 ID 生成
   uuid: ^4.5.1
+  # 文件导出：下载目录 + Markdown→HTML
+  path_provider: ^2.1.5
+  markdown: ^7.3.0
 
 dev_dependencies:
   flutter_test:
