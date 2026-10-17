@@ -31,6 +31,8 @@ class _SettingsPageState extends State<SettingsPage> {
   String _effort = 'max';
   bool _obscureKey = true;
   int _currentTab = 0;
+  String _agentQuery = '';
+  final _agentSearchController = TextEditingController();
 
   @override
   void initState() {
@@ -50,6 +52,7 @@ class _SettingsPageState extends State<SettingsPage> {
     _urlController.dispose();
     _modelController.dispose();
     _pageController.dispose();
+    _agentSearchController.dispose();
     super.dispose();
   }
 
@@ -155,82 +158,202 @@ class _SettingsPageState extends State<SettingsPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    // 搜索过滤（名称/描述，不区分大小写）
+    final query = _agentQuery.trim().toLowerCase();
+    final filtered = query.isEmpty
+        ? agents.agents
+        : agents.agents
+            .where((a) =>
+                a.name.toLowerCase().contains(query) ||
+                a.description.toLowerCase().contains(query))
+            .toList();
+
+    return Column(
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text('内置与自定义 Agent',
-                  style: theme.textTheme.titleSmall),
-            ),
-            FilledButton.icon(
-              onPressed: () {
-                Haptics.light();
-                _showAgentEditor(context);
-              },
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('新建'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ...agents.agents.map((a) => Card(
-              elevation: 0,
-              color: theme.colorScheme.surfaceContainerHighest
-                  .withValues(alpha: 0.5),
-              child: ListTile(
-                leading:
-                    Text(a.icon, style: const TextStyle(fontSize: 24)),
-                title: Text(a.name),
-                subtitle: Text(
-                  a.description.isEmpty ? '（无描述）' : a.description,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+        // 搜索框 + 新建按钮
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _agentSearchController,
+                  onChanged: (v) => setState(() => _agentQuery = v),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: '搜索 Agent',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _agentQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              Haptics.light();
+                              _agentSearchController.clear();
+                              setState(() => _agentQuery = '');
+                            },
+                          ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
                 ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: () {
+                  Haptics.light();
+                  _showAgentEditor(context);
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('新建'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: filtered.isEmpty
+              ? Center(
+                  child: Text(
+                    query.isEmpty ? '还没有 Agent' : '没有找到「$_agentQuery」',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant),
+                  ),
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                   children: [
-                    if (a.isBuiltin)
-                      IconButton(
-                        icon: const Icon(Icons.copy, size: 20),
-                        tooltip: '复制为自定义',
-                        onPressed: () {
-                          Haptics.light();
-                          context.read<AgentProvider>().duplicate(a);
-                        },
-                      )
-                    else
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline, size: 20),
-                        tooltip: '删除',
-                        onPressed: () {
-                          Haptics.medium();
-                          _confirmDeleteAgent(context, a);
-                        },
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.edit_outlined, size: 20),
-                      tooltip: a.isBuiltin ? '查看' : '编辑',
-                      onPressed: () {
-                        Haptics.light();
-                        _showAgentEditor(context, agent: a);
-                      },
+                    ...filtered.map((a) => Card(
+                          elevation: 0,
+                          color: theme.colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          child: ListTile(
+                            leading: Text(a.icon,
+                                style: const TextStyle(fontSize: 24)),
+                            title: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    a.name,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (a.isBuiltin) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: theme.colorScheme.primaryContainer,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      '内置',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        color: theme
+                                            .colorScheme.onPrimaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                            subtitle: Text(
+                              a.description.isEmpty
+                                  ? '（无描述）'
+                                  : a.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            // 操作按钮：编辑 + （内置→复制 / 自定义→删除）
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit_outlined,
+                                      size: 20),
+                                  tooltip: a.isBuiltin ? '查看' : '编辑',
+                                  onPressed: () {
+                                    Haptics.light();
+                                    _showAgentEditor(context, agent: a);
+                                  },
+                                ),
+                                if (a.isBuiltin)
+                                  IconButton(
+                                    icon: const Icon(Icons.copy, size: 20),
+                                    tooltip: '复制为自定义',
+                                    onPressed: () {
+                                      Haptics.medium();
+                                      _confirmDuplicateAgent(context, a);
+                                    },
+                                  )
+                                else
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline,
+                                        size: 20),
+                                    tooltip: '删除',
+                                    onPressed: () {
+                                      Haptics.medium();
+                                      _confirmDeleteAgent(context, a);
+                                    },
+                                  ),
+                              ],
+                            ),
+                          ),
+                        )),
+                    const SizedBox(height: 8),
+                    Text(
+                      '· 内置 Agent 不可删除，可复制一份后修改\n'
+                      '· Agent 的提示词会作为 system 消息注入对话\n'
+                      '· 在新建对话或聊天页顶部可切换 Agent',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.6),
                     ),
                   ],
                 ),
-              ),
-            )),
-        const SizedBox(height: 8),
-        Text(
-          '· 内置 Agent 不可删除，可复制一份后修改\n'
-          '· Agent 的提示词会作为 system 消息注入对话\n'
-          '· 在新建对话或聊天页顶部可切换 Agent',
-          style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant, height: 1.6),
         ),
       ],
     );
+  }
+
+  /// 复制内置 Agent：先确认再执行
+  Future<void> _confirmDuplicateAgent(
+      BuildContext context, Agent agent) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('复制 Agent'),
+        content: Text('将复制「${agent.name}」为自定义 Agent（名为「${agent.name} 副本」），可以随意修改。'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
+            child: const Text('复制'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      await context.read<AgentProvider>().duplicate(agent);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text('已复制为「${agent.name} 副本」'),
+              duration: const Duration(seconds: 1)),
+        );
+      }
+    }
   }
 
   /// Agent 新建/编辑弹窗（内置 Agent 只读查看）
