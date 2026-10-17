@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/sessions_provider.dart';
 import '../services/settings_service.dart';
+import '../utils/haptics.dart';
 import 'chat_page.dart';
 import 'settings_page.dart';
 
@@ -16,6 +17,8 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   String _query = '';
+  final _searchFocusNode = FocusNode();
+  final _searchController = TextEditingController();
 
   @override
   void initState() {
@@ -23,7 +26,22 @@ class _HomePageState extends State<HomePage> {
     context.read<SessionsProvider>().loadSessions();
   }
 
+  @override
+  void dispose() {
+    _searchFocusNode.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// 导航前收起键盘并清除搜索框焦点，避免返回主页时自动弹键盘
+  void _unfocusSearch() {
+    _searchFocusNode.unfocus();
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
   Future<void> _newChat() async {
+    Haptics.light();
+    _unfocusSearch();
     // 先确认，避免误触创建空会话
     final confirmed = await showDialog<bool>(
       context: context,
@@ -32,11 +50,17 @@ class _HomePageState extends State<HomePage> {
         content: const Text('确定要开始一个新的对话吗？'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
             child: const Text('确定'),
           ),
         ],
@@ -56,6 +80,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _openChat(String id) async {
+    Haptics.light();
+    _unfocusSearch();
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ChatPage(sessionId: id)),
@@ -77,11 +103,17 @@ class _HomePageState extends State<HomePage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context);
+            },
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, controller.text.trim());
+            },
             child: const Text('确定'),
           ),
         ],
@@ -102,11 +134,17 @@ class _HomePageState extends State<HomePage> {
         content: const Text('删除后聊天记录无法恢复，确定删除吗？'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
             child: const Text('删除'),
           ),
         ],
@@ -120,6 +158,7 @@ class _HomePageState extends State<HomePage> {
   /// 长按会话卡片：弹出操作菜单（重命名/删除）
   Future<void> _showSessionActions(
       BuildContext context, String id, String title) async {
+    Haptics.medium();
     final action = await showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -141,12 +180,18 @@ class _HomePageState extends State<HomePage> {
             ListTile(
               leading: const Icon(Icons.edit_outlined),
               title: const Text('重命名'),
-              onTap: () => Navigator.pop(context, 'rename'),
+              onTap: () {
+                Haptics.light();
+                Navigator.pop(context, 'rename');
+              },
             ),
             ListTile(
               leading: const Icon(Icons.delete_outline),
               title: const Text('删除'),
-              onTap: () => Navigator.pop(context, 'delete'),
+              onTap: () {
+                Haptics.light();
+                Navigator.pop(context, 'delete');
+              },
             ),
             const SizedBox(height: 8),
           ],
@@ -193,26 +238,37 @@ class _HomePageState extends State<HomePage> {
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: '设置',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const SettingsPage()),
-            ),
+            onPressed: () {
+              Haptics.light();
+              _unfocusSearch();
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SettingsPage()),
+              );
+            },
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _newChat,
-        icon: const Icon(Icons.add),
-        label: const Text('新对话'),
+      // 圆形新对话按钮：稍大、加号居中，位置略向左上偏移（仍在右下角）
+      floatingActionButton: Container(
+        margin: const EdgeInsets.only(right: 12, bottom: 12),
+        child: FloatingActionButton.large(
+          onPressed: _newChat,
+          shape: const CircleBorder(),
+          child: const Icon(Icons.add, size: 36),
+        ),
       ),
       body: !sessions.loaded
           ? const Center(child: CircularProgressIndicator())
           : Column(
               children: [
-                // 搜索框
+                // 搜索框（点击才聚焦，不默认弹键盘）
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
                   child: TextField(
+                    controller: _searchController,
+                    focusNode: _searchFocusNode,
+                    onTap: () => Haptics.selection(),
                     onChanged: (v) => setState(() => _query = v.trim()),
                     decoration: InputDecoration(
                       isDense: true,
@@ -223,8 +279,11 @@ class _HomePageState extends State<HomePage> {
                           : IconButton(
                               visualDensity: VisualDensity.compact,
                               icon: const Icon(Icons.close, size: 18),
-                              onPressed: () =>
-                                  setState(() => _query = ''),
+                              onPressed: () {
+                                Haptics.light();
+                                _searchController.clear();
+                                setState(() => _query = '');
+                              },
                             ),
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 10),
@@ -307,37 +366,6 @@ class _HomePageState extends State<HomePage> {
                                     subtitle: Text(
                                       '$effortText · ${_formatTime(s.updatedAt)}',
                                       style: theme.textTheme.bodySmall,
-                                    ),
-                                    trailing: PopupMenuButton<String>(
-                                      icon: Icon(Icons.more_vert,
-                                          color: theme
-                                              .colorScheme.onSurfaceVariant),
-                                      onSelected: (value) {
-                                        if (value == 'rename') {
-                                          _renameSession(
-                                              context, s.id, s.title);
-                                        } else if (value == 'delete') {
-                                          _deleteSession(context, s.id);
-                                        }
-                                      },
-                                      itemBuilder: (_) => const [
-                                        PopupMenuItem(
-                                            value: 'rename',
-                                            child: Row(children: [
-                                              Icon(Icons.edit_outlined,
-                                                  size: 18),
-                                              SizedBox(width: 8),
-                                              Text('重命名'),
-                                            ])),
-                                        PopupMenuItem(
-                                            value: 'delete',
-                                            child: Row(children: [
-                                              Icon(Icons.delete_outline,
-                                                  size: 18),
-                                              SizedBox(width: 8),
-                                              Text('删除'),
-                                            ])),
-                                      ],
                                     ),
                                     onTap: () => _openChat(s.id),
                                     onLongPress: () => _showSessionActions(
