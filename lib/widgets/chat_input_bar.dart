@@ -1,9 +1,11 @@
-import 'dart:convert';
+import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../models/message_attachment.dart';
@@ -11,6 +13,7 @@ import '../providers/chat_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/attachment_service.dart';
 import '../utils/haptics.dart';
+import 'attachment_thumbnail.dart';
 
 /// 聊天输入栏：附件按钮 + 推理档位选择 + 输入框 + 发送/停止按钮
 class ChatInputBar extends StatefulWidget {
@@ -37,7 +40,34 @@ class _ChatInputBarState extends State<ChatInputBar> {
   final _controller = TextEditingController();
   final _focusNode = FocusNode();
   final _picker = ImagePicker();
-  final _attachmentService = const AttachmentService();
+  // 文件附件沙箱目录异步初始化（就绪前选取的文件不保存原文件）
+  AttachmentService _attachmentService = const AttachmentService();
+
+  @override
+  void initState() {
+    super.initState();
+    _initAttachmentStorage();
+    // 焦点变化时刷新右侧动作区（+ ↔ 发送键切换）
+    _focusNode.addListener(() {
+      if (mounted) setState(() {});
+    });
+  }
+
+  /// 文件附件沙箱目录（应用文档目录/attachments）
+  Future<void> _initAttachmentStorage() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      if (mounted) {
+        setState(() {
+          _attachmentService = AttachmentService(
+            storageDir: Directory(p.join(docs.path, 'attachments')),
+          );
+        });
+      }
+    } catch (_) {
+      // 目录不可用时保持默认（不保存原文件，仅提取文本）
+    }
+  }
 
   static const _effortLabels = {
     'max': ('深度', '复杂编码 · 最强推理'),
@@ -64,12 +94,14 @@ class _ChatInputBarState extends State<ChatInputBar> {
     Haptics.light();
     widget.onSend(text);
     _controller.clear();
-    _focusNode.requestFocus();
+    // 不主动聚焦：键盘只在用户主动点输入框时弹出
   }
 
   /// 附件来源选择：拍照 / 相册 / 文件
   Future<void> _pickAttachment() async {
     Haptics.light();
+    // 打开弹层前收起键盘，避免弹层关闭时焦点自动回到输入框
+    FocusManager.instance.primaryFocus?.unfocus();
     final action = await showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -193,6 +225,17 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final chat = context.watch<ChatProvider>();
     final pending = chat.pendingAttachments;
 
+    // 豆包式右侧动作区逻辑：
+    // - 流式中：显示停止键
+    // - 聚焦或有文字/附件：显示发送键（输入文字后 + 消失）
+    // - 否则：只显示 +
+    final hasText = _controller.text.trim().isNotEmpty;
+    final showSend = widget.isStreaming ||
+        hasText ||
+        pending.isNotEmpty ||
+        _focusNode.hasFocus;
+    final showPlus = !widget.isStreaming && !hasText;
+
     return SafeArea(
       child: Container(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
@@ -208,16 +251,9 @@ class _ChatInputBarState extends State<ChatInputBar> {
             // 附件预览条
             if (pending.isNotEmpty) _AttachmentPreview(pending: pending),
             Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 附件按钮
-                IconButton(
-                  onPressed: widget.isStreaming ? null : _pickAttachment,
-                  icon: Icon(Icons.add_circle_outline,
-                      color: colorScheme.primary),
-                  tooltip: '添加附件',
-                ),
-                // 推理档位按钮
+                // 推理档位按钮（左侧，垂直居中）
                 InkWell(
                   onTap: _pickEffort,
                   borderRadius: BorderRadius.circular(radius + 2),
@@ -272,24 +308,32 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                // 发送 / 停止按钮
-                widget.isStreaming
-                    ? IconButton.filled(
-                        onPressed: () {
-                          Haptics.medium();
-                          widget.onStop();
-                        },
-                        style: IconButton.styleFrom(
-                          backgroundColor: colorScheme.errorContainer,
-                        ),
-                        icon: Icon(Icons.stop_rounded,
-                            color: colorScheme.onErrorContainer),
-                      )
-                    : IconButton.filled(
-                        onPressed: _canSend ? _send : null,
-                        icon: const Icon(Icons.arrow_upward_rounded),
-                      ),
+                const SizedBox(width: 4),
+                // 右侧动作区：+ 与 发送/停止
+                if (showPlus)
+                  IconButton(
+                    onPressed: _pickAttachment,
+                    icon: Icon(Icons.add_circle_outline,
+                        size: 28, color: colorScheme.onSurfaceVariant),
+                    tooltip: '添加附件',
+                  ),
+                if (widget.isStreaming)
+                  IconButton.filled(
+                    onPressed: () {
+                      Haptics.medium();
+                      widget.onStop();
+                    },
+                    style: IconButton.styleFrom(
+                      backgroundColor: colorScheme.errorContainer,
+                    ),
+                    icon: Icon(Icons.stop_rounded,
+                        color: colorScheme.onErrorContainer),
+                  )
+                else if (showSend)
+                  IconButton.filled(
+                    onPressed: _canSend ? _send : null,
+                    icon: const Icon(Icons.arrow_upward_rounded),
+                  ),
               ],
             ),
           ],
@@ -300,6 +344,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   Future<void> _pickEffort() async {
     Haptics.light();
+    // 打开弹层前收起键盘，避免弹层关闭时焦点自动回到输入框
+    FocusManager.instance.primaryFocus?.unfocus();
     final selected = await showModalBottomSheet<String>(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -372,15 +418,10 @@ class _AttachmentPreview extends StatelessWidget {
                       Border.all(color: colorScheme.outlineVariant, width: 0.5),
                 ),
                 child: att.isImage
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: Image.memory(
-                          base64Decode(att.base64Data ?? ''),
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => const Icon(
-                              Icons.broken_image_outlined,
-                              size: 28),
-                        ),
+                    ? AttachmentThumbnail(
+                        base64: att.base64Data ?? '',
+                        size: 72,
+                        borderRadius: 10,
                       )
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,

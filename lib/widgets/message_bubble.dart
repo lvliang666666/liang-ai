@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
+import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -10,6 +11,7 @@ import '../models/chat_message.dart';
 import '../providers/theme_provider.dart';
 import '../services/file_export_service.dart';
 import '../utils/haptics.dart';
+import 'attachment_thumbnail.dart';
 import 'code_block_widget.dart';
 import 'thinking_block.dart';
 
@@ -258,7 +260,7 @@ class MessageBubble extends StatelessWidget {
   }
 }
 
-/// 用户消息附件区：图片缩略图网格 + 文件卡片
+/// 用户消息附件区：图片缩略图网格 + 豆包式文件卡片（可点开）
 class _UserAttachments extends StatelessWidget {
   const _UserAttachments({required this.message});
 
@@ -281,52 +283,22 @@ class _UserAttachments extends StatelessWidget {
               for (final img in images)
                 GestureDetector(
                   onTap: () => _openImageViewer(context, images, img),
-                  child: Container(
-                    width: 96,
-                    height: 96,
-                    margin: const EdgeInsets.all(2),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.memory(
-                        base64Decode(img.base64Data ?? ''),
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, __, ___) => Container(
-                          color: Colors.white24,
-                          child: const Icon(Icons.broken_image_outlined,
-                              color: Colors.white70),
-                        ),
-                      ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: AttachmentThumbnail(
+                      base64: img.base64Data ?? '',
+                      size: 96,
                     ),
                   ),
                 ),
             ],
           ),
-        // 文件卡片
+        // 豆包式文件卡片（点击打开原文件）
         for (final f in files)
-          Container(
-            margin: const EdgeInsets.all(2),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            constraints: const BoxConstraints(maxWidth: 220),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.description_outlined,
-                    size: 18, color: Colors.white),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    f.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                ),
-              ],
-            ),
+          _FileCard(
+            name: f.name,
+            hasFile: f.hasFile,
+            onTap: () => _openFile(context, f),
           ),
       ],
     );
@@ -334,6 +306,7 @@ class _UserAttachments extends StatelessWidget {
 
   void _openImageViewer(
       BuildContext context, List images, current) {
+    FocusManager.instance.primaryFocus?.unfocus();
     Navigator.push(
       context,
       PageRouteBuilder(
@@ -344,6 +317,111 @@ class _UserAttachments extends StatelessWidget {
         ),
         transitionsBuilder: (_, animation, __, child) =>
             FadeTransition(opacity: animation, child: child),
+      ),
+    );
+  }
+
+  /// 打开文件附件原文件（系统应用接管：PDF→阅读器等）
+  Future<void> _openFile(BuildContext context, f) async {
+    Haptics.light();
+    if (!f.hasFile) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('旧版本消息未保存原文件，无法打开'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+    final result = await OpenFilex.open(f.filePath!);
+    if (result.type != ResultType.done && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(result.message),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+}
+
+/// 豆包式文件卡片：图标 + 文件名 + 类型标签，点击打开
+class _FileCard extends StatelessWidget {
+  const _FileCard({
+    required this.name,
+    required this.hasFile,
+    required this.onTap,
+  });
+
+  final String name;
+  final bool hasFile;
+  final VoidCallback onTap;
+
+  String get _extLabel {
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return '文件';
+    return name.substring(dot + 1).toUpperCase();
+  }
+
+  IconData get _icon {
+    final ext = _extLabel.toLowerCase();
+    if (ext == 'pdf') return Icons.picture_as_pdf_outlined;
+    if (ext == 'md') return Icons.article_outlined;
+    return Icons.description_outlined;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.all(2),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        constraints: const BoxConstraints(maxWidth: 230),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              alignment: Alignment.center,
+              child: Icon(_icon, size: 20, color: Colors.white),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    hasFile ? '$_extLabel 文件 · 点击打开' : '$_extLabel 文件',
+                    style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

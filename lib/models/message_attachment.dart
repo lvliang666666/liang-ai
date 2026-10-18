@@ -3,7 +3,7 @@ import 'dart:convert';
 /// 消息附件类型
 enum AttachmentType { image, file }
 
-/// 消息附件：图片（存 base64）或文件（存提取文本）
+/// 消息附件：图片（存 base64）或文件（存提取文本 + 原文件路径）
 class MessageAttachment {
   final AttachmentType type;
 
@@ -16,21 +16,29 @@ class MessageAttachment {
   /// 文件附件：提取出的纯文本内容
   final String? extractedText;
 
+  /// 文件附件：原文件在应用沙箱内的保存路径（用于点开）
+  final String? filePath;
+
   const MessageAttachment({
     required this.type,
     required this.name,
     this.base64Data,
     this.extractedText,
+    this.filePath,
   });
 
   bool get isImage => type == AttachmentType.image;
   bool get isFile => type == AttachmentType.file;
+
+  /// 原文件是否已保存（可点开）
+  bool get hasFile => filePath != null && filePath!.isNotEmpty;
 
   Map<String, dynamic> toJson() => {
         'type': type == AttachmentType.image ? 'image' : 'file',
         'name': name,
         if (base64Data != null) 'base64': base64Data,
         if (extractedText != null) 'text': extractedText,
+        if (filePath != null) 'path': filePath,
       };
 
   factory MessageAttachment.fromJson(Map<String, dynamic> json) =>
@@ -41,6 +49,7 @@ class MessageAttachment {
         name: json['name'] as String? ?? '',
         base64Data: json['base64'] as String?,
         extractedText: json['text'] as String?,
+        filePath: json['path'] as String?,
       );
 
   /// 列表序列化/反序列化（DB 存 JSON 字符串）
