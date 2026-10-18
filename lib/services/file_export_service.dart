@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 /// 导出格式
 enum ExportFormat { markdown, html, plainText }
@@ -36,6 +37,39 @@ class FileExportService {
     await File(path).writeAsBytes(bytes);
     return path;
   }
+
+  /// 导出内容并调起系统分享面板（QQ/微信/邮件等已装应用自动出现）
+  ///
+  /// 文件写入临时目录（分享后由系统/用户处理，不占用用户可见空间）。
+  /// 返回分享结果状态；用户取消分享返回 null。
+  static Future<ShareResult?> share({
+    required String content,
+    required String fileNameBase,
+    required ExportFormat format,
+  }) async {
+    final safeName = _sanitize(fileNameBase);
+    final (ext, bytes) = switch (format) {
+      ExportFormat.markdown => ('md', _utf8(content)),
+      ExportFormat.html => ('html', _utf8(_wrapHtml(content))),
+      ExportFormat.plainText => ('txt', _utf8(_stripMarkdown(content))),
+    };
+
+    final dir = await getTemporaryDirectory();
+    final path = '${dir.path}/$safeName.$ext';
+    await File(path).writeAsBytes(bytes);
+
+    return SharePlus.instance.share(ShareParams(
+      files: [XFile(path, mimeType: _mimeType(format))],
+      fileNameOverrides: ['$safeName.$ext'],
+    ));
+  }
+
+  /// 分享用的 MIME 类型（微信/QQ 据此决定以文件还是文本形式接收）
+  static String _mimeType(ExportFormat format) => switch (format) {
+        ExportFormat.markdown => 'text/markdown',
+        ExportFormat.html => 'text/html',
+        ExportFormat.plainText => 'text/plain',
+      };
 
   /// Markdown → 独立 HTML 文件（带基础样式，手机浏览器/WPS 可直接打开）
   static String _wrapHtml(String markdownText) {

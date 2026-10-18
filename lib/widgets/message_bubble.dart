@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/chat_message.dart';
 import '../providers/theme_provider.dart';
@@ -130,9 +131,9 @@ class MessageBubble extends StatelessWidget {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.file_download_outlined),
-              title: const Text('导出为文档'),
-              subtitle: const Text('Markdown / HTML / 纯文本'),
+              leading: const Icon(Icons.ios_share),
+              title: const Text('导出并分享'),
+              subtitle: const Text('Markdown / HTML / 纯文本，分享到 QQ、微信等'),
               onTap: () {
                 Haptics.light();
                 Navigator.pop(context, 'export');
@@ -175,7 +176,7 @@ class MessageBubble extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('选择导出格式',
+              child: Text('选择分享格式',
                   style: Theme.of(context).textTheme.titleMedium),
             ),
             ListTile(
@@ -215,18 +216,15 @@ class MessageBubble extends StatelessWidget {
     try {
       final fileNameBase =
           'LiangAI_${DateTime.now().toIso8601String().substring(0, 10)}';
-      final path = await FileExportService.export(
+      final result = await FileExportService.share(
         content: message.content,
         fileNameBase: fileNameBase,
         format: format,
       );
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('已导出：$path'),
-            duration: const Duration(seconds: 3),
-          ),
-        );
+      if (!context.mounted) return;
+      // 用户在分享面板点了取消：静默即可，不打扰
+      if (result == null || result.status == ShareResultStatus.dismissed) {
+        return;
       }
     } catch (e) {
       if (context.mounted) {

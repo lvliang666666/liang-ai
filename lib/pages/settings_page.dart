@@ -33,6 +33,7 @@ class _SettingsPageState extends State<SettingsPage> {
   int _currentTab = 0;
   String _agentQuery = '';
   final _agentSearchController = TextEditingController();
+  final _agentSearchFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -53,7 +54,15 @@ class _SettingsPageState extends State<SettingsPage> {
     _modelController.dispose();
     _pageController.dispose();
     _agentSearchController.dispose();
+    _agentSearchFocusNode.dispose();
     super.dispose();
+  }
+
+  /// 收起搜索框焦点：弹窗/操作完成后调用，防止焦点残留导致键盘反复弹出
+  void _unfocusAgentSearch() {
+    if (_agentSearchFocusNode.hasFocus) {
+      _agentSearchFocusNode.unfocus();
+    }
   }
 
   void _goToTab(int index) {
@@ -178,6 +187,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Expanded(
                 child: TextField(
                   controller: _agentSearchController,
+                  focusNode: _agentSearchFocusNode,
                   onChanged: (v) => setState(() => _agentQuery = v),
                   decoration: InputDecoration(
                     isDense: true,
@@ -203,6 +213,7 @@ class _SettingsPageState extends State<SettingsPage> {
               FilledButton.icon(
                 onPressed: () {
                   Haptics.light();
+                  _unfocusAgentSearch();
                   _showAgentEditor(context);
                 },
                 icon: const Icon(Icons.add, size: 18),
@@ -276,6 +287,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                   tooltip: a.isBuiltin ? '查看' : '编辑',
                                   onPressed: () {
                                     Haptics.light();
+                                    _unfocusAgentSearch();
                                     _showAgentEditor(context, agent: a);
                                   },
                                 ),
@@ -285,6 +297,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                     tooltip: '复制为自定义',
                                     onPressed: () {
                                       Haptics.medium();
+                                      _unfocusAgentSearch();
                                       _confirmDuplicateAgent(context, a);
                                     },
                                   )
@@ -295,6 +308,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                     tooltip: '删除',
                                     onPressed: () {
                                       Haptics.medium();
+                                      _unfocusAgentSearch();
                                       _confirmDeleteAgent(context, a);
                                     },
                                   ),
@@ -345,6 +359,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed == true && context.mounted) {
+      _unfocusAgentSearch();
       await context.read<AgentProvider>().duplicate(agent);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -457,6 +472,9 @@ class _SettingsPageState extends State<SettingsPage> {
 
     if (saved != true || !context.mounted) return;
 
+    // 弹窗关闭后兜底收起焦点：防止弹窗内输入框的焦点被框架还给搜索框
+    _unfocusAgentSearch();
+
     final name = nameCtrl.text.trim();
     final prompt = promptCtrl.text.trim();
     if (name.isEmpty || prompt.isEmpty) {
@@ -515,6 +533,7 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed == true && context.mounted) {
+      _unfocusAgentSearch();
       context.read<AgentProvider>().delete(agent.id);
     }
   }
