@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import '../models/agent.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/message_attachment.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/sse_parser.dart';
@@ -39,6 +40,9 @@ class ChatProvider extends ChangeNotifier {
   ChatStatus _status = ChatStatus.idle;
   String _errorMessage = '';
 
+  /// 待发送附件队列（随下一条消息一起发出）
+  List<MessageAttachment> _pendingAttachments = [];
+
   /// 当前流式中的 assistant 消息（未落库，done 时落库）
   ChatMessage? _streamingMessage;
 
@@ -61,34 +65,68 @@ class ChatProvider extends ChangeNotifier {
     return [..._messages, _streamingMessage!];
   }
 
+  /// 待发送附件（输入栏预览条渲染用）
+  List<MessageAttachment> get pendingAttachments =>
+      List.unmodifiable(_pendingAttachments);
+
+  bool get hasPendingAttachments => _pendingAttachments.isNotEmpty;
+
+  /// 添加附件（图片 ≤3、文件 ≤3，超限返回 false）
+  bool addAttachment(MessageAttachment attachment) {
+    final images = _pendingAttachments.where((a) => a.isImage).length;
+    final files = _pendingAttachments.where((a) => a.isFile).length;
+    if (attachment.isImage && images >= 3) return false;
+    if (attachment.isFile && files >= 3) return false;
+    _pendingAttachments = [..._pendingAttachments, attachment];
+    notifyListeners();
+    return true;
+  }
+
+  /// 移除待发送附件
+  void removeAttachment(MessageAttachment attachment) {
+    _pendingAttachments = [
+      for (final a in _pendingAttachments)
+        if (!identical(a, attachment)) a,
+    ];
+    notifyListeners();
+  }
+
   /// 加载历史消息
   Future<void> loadMessages() async {
     _messages = await _db.getMessages(_session.id);
     notifyListeners();
   }
 
-  /// 发送消息
+  /// 发送消息（可带待发送附件队列）
   Future<void> sendMessage(String text) async {
     final content = text.trim();
-    if (content.isEmpty || isStreaming) return;
+    if ((content.isEmpty && _pendingAttachments.isEmpty) || isStreaming) {
+      return;
+    }
 
     _errorMessage = '';
     final now = DateTime.now().millisecondsSinceEpoch;
 
-    // 1. 落库 user 消息
+    // 1. 落库 user 消息（含待发送附件，随后清空队列）
     final userMsg = ChatMessage(
       id: _genId(),
       sessionId: _session.id,
       role: 'user',
       content: content,
+      attachments: _pendingAttachments,
       createdAt: now,
     );
+    _pendingAttachments = [];
     await _db.insertMessage(userMsg);
     _messages = [..._messages, userMsg];
 
-    // 首条消息自动生成会话标题
+    // 首条消息自动生成会话标题（无文字时用附件名）
     if (_session.title.isEmpty || _session.title == '新对话') {
-      _session.title = content.length > 20 ? content.substring(0, 20) : content;
+      final titleSource = content.isNotEmpty
+          ? content
+          : userMsg.attachments.first.name;
+      _session.title =
+          titleSource.length > 20 ? titleSource.substring(0, 20) : titleSource;
       await _db.updateSessionTitle(_session.id, _session.title);
     }
     await _db.touchSession(_session.id);
