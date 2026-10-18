@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/agent.dart';
 import '../models/chat_session.dart';
+import '../providers/agent_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../services/api_service.dart';
@@ -72,11 +74,13 @@ class _ChatPageState extends State<ChatPage> {
     return ChangeNotifierProvider(
       key: ValueKey(widget.sessionId),
       create: (_) {
+        final agent = context.read<AgentProvider>().byId(session.agentId);
         final provider = ChatProvider(
           database: DatabaseService.instance,
           api: ApiService(baseUrl: settings.baseUrl, apiKey: settings.apiKey),
           session: session,
           model: settings.model,
+          agent: agent,
         )..loadMessages();
         return provider;
       },
@@ -110,10 +114,34 @@ class _ChatPageView extends StatelessWidget {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(
-            chat.session.title,
-            style: const TextStyle(fontSize: 17),
-            overflow: TextOverflow.ellipsis,
+          title: GestureDetector(
+            onTap: () => _showAgentSwitcher(context, chat),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  chat.session.title,
+                  style: const TextStyle(fontSize: 17),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      chat.agent != null
+                          ? '${chat.agent!.icon} ${chat.agent!.name}'
+                          : '🤖 默认助手',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                    const Icon(Icons.keyboard_arrow_down, size: 14),
+                  ],
+                ),
+              ],
+            ),
           ),
           actions: [
             IconButton(
@@ -166,6 +194,84 @@ class _ChatPageView extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// 切换当前会话的 Agent
+  Future<void> _showAgentSwitcher(
+      BuildContext context, ChatProvider chat) async {
+    Haptics.light();
+    final agentsProvider = context.read<AgentProvider>();
+    if (!agentsProvider.loaded) await agentsProvider.load();
+    if (!context.mounted) return;
+
+    final selected = await showModalBottomSheet<Agent?>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('切换 Agent',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  // 默认助手（解绑 Agent）
+                  ListTile(
+                    leading: const Text('🤖',
+                        style: TextStyle(fontSize: 24)),
+                    title: const Text('默认助手'),
+                    subtitle: const Text('无人格提示词，通用问答'),
+                    trailing: chat.agent == null
+                        ? Icon(Icons.check_circle,
+                            color: Theme.of(context).colorScheme.primary)
+                        : null,
+                    onTap: () {
+                      Haptics.selection();
+                      Navigator.pop(context, null);
+                    },
+                  ),
+                  for (final a in agentsProvider.agents)
+                    ListTile(
+                      leading: Text(a.icon,
+                          style: const TextStyle(fontSize: 24)),
+                      title: Text(a.name),
+                      subtitle: a.description.isEmpty
+                          ? null
+                          : Text(
+                              a.description,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                      trailing: chat.agent?.id == a.id
+                          ? Icon(Icons.check_circle,
+                              color: Theme.of(context).colorScheme.primary)
+                          : null,
+                      onTap: () {
+                        Haptics.selection();
+                        Navigator.pop(context, a);
+                      },
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    // 未选择（点击遮罩关闭）不改动
+    if (!context.mounted) return;
+    if (selected == null && chat.agent == null) return;
+    if (selected?.id == chat.agent?.id) return;
+    await chat.setAgent(selected);
   }
 
   Future<void> _confirmDelete(

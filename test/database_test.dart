@@ -17,7 +17,7 @@ void main() {
     final inMemory = await databaseFactory.openDatabase(
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 1,
+        version: 2,
         onCreate: (d, v) async {
         await d.execute('''
           CREATE TABLE sessions (
@@ -25,7 +25,8 @@ void main() {
             title TEXT NOT NULL,
             created_at INTEGER NOT NULL,
             updated_at INTEGER NOT NULL,
-            effort TEXT NOT NULL DEFAULT 'max'
+            effort TEXT NOT NULL DEFAULT 'max',
+            agent_id TEXT
           )
         ''');
         await d.execute('''
@@ -41,6 +42,18 @@ void main() {
         await d.execute(
           'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
         );
+        await d.execute('''
+          CREATE TABLE agents (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            icon TEXT NOT NULL DEFAULT '🤖',
+            description TEXT NOT NULL DEFAULT '',
+            prompt TEXT NOT NULL DEFAULT '',
+            temperature REAL,
+            effort TEXT,
+            is_builtin INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
       },
       ),
     );

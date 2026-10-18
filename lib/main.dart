@@ -3,8 +3,10 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'pages/home_page.dart';
+import 'providers/agent_provider.dart';
 import 'providers/sessions_provider.dart';
 import 'providers/theme_provider.dart';
+import 'services/agent_service.dart';
 import 'services/database_service.dart';
 import 'services/settings_service.dart';
 
@@ -35,6 +37,11 @@ class AiChatApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (_) => ThemeProvider(settings: settings),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => AgentProvider(
+            service: AgentService(database: DatabaseService.instance),
+          ),
         ),
       ],
       child: Consumer<ThemeProvider>(

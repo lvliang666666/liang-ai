@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
+import '../models/agent.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../services/api_service.dart';
@@ -19,15 +20,20 @@ class ChatProvider extends ChangeNotifier {
     required ApiService api,
     required ChatSession session,
     required String model,
+    Agent? agent,
   })  : _db = database,
         _api = api,
         _session = session,
-        _model = model;
+        _model = model,
+        _agent = agent;
 
   final DatabaseService _db;
   final ApiService _api;
   final ChatSession _session;
   final String _model;
+
+  /// 当前会话绑定的 Agent（null = 默认助手，无 system prompt）
+  Agent? _agent;
 
   List<ChatMessage> _messages = [];
   ChatStatus _status = ChatStatus.idle;
@@ -42,6 +48,7 @@ class ChatProvider extends ChangeNotifier {
 
   // ===== Getters =====
   ChatSession get session => _session;
+  Agent? get agent => _agent;
   List<ChatMessage> get messages => _messages;
   ChatStatus get status => _status;
   String get errorMessage => _errorMessage;
@@ -97,18 +104,17 @@ class ChatProvider extends ChangeNotifier {
     _thinkingStart = DateTime.now();
     notifyListeners();
 
-    // 3. 发起流式请求
+    // 3. 发起流式请求（Agent system prompt 插入消息头部）
     _cancelToken = CancelToken();
-    final history = [
-      ..._messages.map((m) => m.toApiMessage()),
-    ];
+    final history = _buildApiMessages();
 
     _subscription = _api
         .chatStream(
       messages: history,
       model: _model,
-      effort: _session.effort,
+      effort: _effectiveEffort,
       cancelToken: _cancelToken!,
+      temperature: _effectiveTemperature,
     )
         .listen(
       (event) {
@@ -191,6 +197,40 @@ class ChatProvider extends ChangeNotifier {
     await _db.updateSessionEffort(_session.id, effort);
     notifyListeners();
   }
+
+  /// 切换会话绑定的 Agent（null = 默认助手）
+  Future<void> setAgent(Agent? agent) async {
+    if (_agent?.id == agent?.id) return;
+    _agent = agent;
+    await _db.updateSessionAgent(_session.id, agent?.id);
+    notifyListeners();
+  }
+
+  /// 组装 API 请求消息：Agent system prompt 在头部 + 全部历史
+  List<Map<String, String>> _buildApiMessages() {
+    final prompt = _agent?.prompt;
+    return [
+      if (prompt != null && prompt.isNotEmpty)
+        {'role': 'system', 'content': prompt},
+      ..._messages.map((m) => m.toApiMessage()),
+    ];
+  }
+
+  /// 生效的推理档位：Agent 预设优先于会话设置
+  ///
+  /// 会话 effort 是用户在聊天中可手动调整的值；Agent 预设只在
+  /// 会话仍为初始默认值时生效，用户手动改过则以用户为准。
+  String get _effectiveEffort {
+    final agentEffort = _agent?.effort;
+    if (agentEffort != null && _session.effort == 'max') {
+      // 会话未手动调整过（保持默认 max），采用 Agent 预设
+      return agentEffort;
+    }
+    return _session.effort;
+  }
+
+  /// 生效的温度：Agent 预设优先（会话级温度暂未开放手动调整）
+  double get _effectiveTemperature => _agent?.temperature ?? 0.7;
 
   /// 思考用时（秒）
   int get thinkingSeconds {

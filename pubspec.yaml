@@ -48,6 +48,10 @@ dependencies:
   shared_preferences: ^2.3.4
   # 会话/消息 ID 生成
   uuid: ^4.5.1
+  # 文件导出：下载目录 + Markdown→HTML
+  path_provider: ^2.1.5
+  markdown: ^7.3.0
+  share_plus: ^13.3.1
 
 dev_dependencies:
   flutter_test:
@@ -72,6 +76,10 @@ flutter:
   # assets:
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
+
+  # 内置 Agent 提示词文档（Markdown + YAML front matter 规范）
+  assets:
+    - assets/agents/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

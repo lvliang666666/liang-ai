@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/agent.dart' as agent_model;
+import '../providers/agent_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
@@ -24,6 +26,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     context.read<SessionsProvider>().loadSessions();
+    // 启动即加载 Agent 列表：否则会话卡片的 agent 图标在首次懒加载前显示兜底 emoji
+    context.read<AgentProvider>().load();
   }
 
   @override
@@ -42,41 +46,50 @@ class _HomePageState extends State<HomePage> {
   Future<void> _newChat() async {
     Haptics.light();
     _unfocusSearch();
-    // 先确认，避免误触创建空会话
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('新对话'),
-        content: const Text('确定要开始一个新的对话吗？'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Haptics.light();
-              Navigator.pop(context, false);
-            },
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              Haptics.light();
-              Navigator.pop(context, true);
-            },
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
+    // 选 Agent + 确认（null = 默认助手）
+    final agentId = await _showAgentPicker();
+    if (agentId == _agentPickerCancelled || !mounted) return;
 
     final settings = context.read<SettingsService>();
+    // 记录最近使用（LRU），供下次选择页展示
+    if (agentId != null) {
+      await settings.touchRecentAgent(agentId);
+      if (!mounted) return;
+    }
     final sessions = context.read<SessionsProvider>();
-    final session = await sessions.createSession(settings.defaultEffortValue);
+    final session = await sessions.createSession(
+      settings.defaultEffortValue,
+      agentId: agentId,
+    );
     if (!mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ChatPage(sessionId: session.id)),
     );
     sessions.refresh();
+  }
+
+  /// Agent 选择弹窗：搜索 + 最近使用（3 个）+ 全部折叠；返回 agentId，取消返回哨兵值
+  static const _agentPickerCancelled = '__cancelled__';
+
+  Future<String?> _showAgentPicker() async {
+    final agents = context.read<AgentProvider>();
+    if (!agents.loaded) await agents.load();
+
+    if (!mounted) return _agentPickerCancelled;
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => _AgentPickerSheet(
+        agents: agents,
+        recentIds: context.read<SettingsService>().recentAgentIds,
+        onSelected: (id) => Navigator.pop(context, id),
+      ),
+    );
+    return result ?? _agentPickerCancelled;
   }
 
   Future<void> _openChat(String id) async {
@@ -221,6 +234,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sessions = context.watch<SessionsProvider>();
+    final agentsProvider = context.watch<AgentProvider>();
 
     // 按标题过滤（不区分大小写）
     final allSessions = sessions.sessions;
@@ -347,6 +361,8 @@ class _HomePageState extends State<HomePage> {
                                   'low' => '轻量',
                                   _ => s.effort,
                                 };
+                                final agent =
+                                    agentsProvider.byId(s.agentId);
                                 return Card(
                                   elevation: 0,
                                   color: theme
@@ -356,9 +372,9 @@ class _HomePageState extends State<HomePage> {
                                     contentPadding:
                                         const EdgeInsets.symmetric(
                                             horizontal: 16, vertical: 4),
-                                    leading: Icon(
-                                      Icons.chat_bubble_outline,
-                                      color: theme.colorScheme.primary,
+                                    leading: Text(
+                                      agent?.icon ?? '💬',
+                                      style: const TextStyle(fontSize: 22),
                                     ),
                                     title: Text(
                                       s.title,
@@ -366,6 +382,7 @@ class _HomePageState extends State<HomePage> {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     subtitle: Text(
+                                      '${agent != null ? '${agent.name} · ' : ''}'
                                       '$effortText · ${_formatTime(s.updatedAt)}',
                                       style: theme.textTheme.bodySmall,
                                     ),
@@ -379,6 +396,191 @@ class _HomePageState extends State<HomePage> {
                 ),
               ],
             ),
+    );
+  }
+}
+
+/// Agent 选择弹窗内容：搜索 + 最近使用 + 全部折叠
+class _AgentPickerSheet extends StatefulWidget {
+  const _AgentPickerSheet({
+    required this.agents,
+    required this.recentIds,
+    required this.onSelected,
+  });
+
+  final AgentProvider agents;
+
+  /// 最近使用的 agentId（index 0 = 最近）
+  final List<String> recentIds;
+  final ValueChanged<String> onSelected;
+
+  @override
+  State<_AgentPickerSheet> createState() => _AgentPickerSheetState();
+}
+
+class _AgentPickerSheetState extends State<_AgentPickerSheet> {
+  String _query = '';
+  bool _showAll = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final all = widget.agents.agents;
+
+    // 搜索过滤
+    final q = _query.trim().toLowerCase();
+    final filtered = q.isEmpty
+        ? all
+        : all
+            .where((a) =>
+                a.name.toLowerCase().contains(q) ||
+                a.description.toLowerCase().contains(q))
+            .toList();
+
+    // 最近使用：按 LRU 顺序取存在的 Agent；无历史时随机取 3 个
+    final recent = <agent_model.Agent>[];
+    if (widget.recentIds.isEmpty) {
+      recent.addAll(all);
+      recent.shuffle();
+      if (recent.length > 3) recent.length = 3;
+    } else {
+      for (final id in widget.recentIds) {
+        final a = widget.agents.byId(id);
+        if (a != null) recent.add(a);
+      }
+    }
+    final recentIdsInFiltered = recent.map((a) => a.id).toSet();
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('选择 Agent 开始新对话',
+                style: theme.textTheme.titleMedium),
+          ),
+          // 搜索框
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: TextField(
+              autofocus: false,
+              onChanged: (v) => setState(() => _query = v),
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '搜索 Agent',
+                prefixIcon: const Icon(Icons.search, size: 20),
+                contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 10),
+              ),
+            ),
+          ),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.only(bottom: 8),
+              children: [
+                // ===== 最近使用（搜索时隐藏） =====
+                if (q.isEmpty && recent.isNotEmpty) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                    child: Text('最近使用',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant)),
+                  ),
+                  Row(
+                    children: [
+                      for (final a in recent)
+                        Expanded(
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(12),
+                            onTap: () {
+                              Haptics.selection();
+                              widget.onSelected(a.id);
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  vertical: 8),
+                              child: Column(
+                                children: [
+                                  Text(a.icon,
+                                      style: const TextStyle(
+                                          fontSize: 28)),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    a.name,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      // 不足 3 个时占位对齐
+                      for (var i = recent.length; i < 3; i++)
+                        const Expanded(child: SizedBox()),
+                    ],
+                  ),
+                  const Divider(height: 16),
+                ],
+                // ===== 全部 Agent =====
+                if (q.isEmpty)
+                  ListTile(
+                    leading: Icon(
+                      _showAll
+                          ? Icons.expand_less
+                          : Icons.expand_more,
+                      color: theme.colorScheme.primary,
+                    ),
+                    title: Text('全部 Agent（${all.length}）',
+                        style: theme.textTheme.titleSmall),
+                    onTap: () {
+                      Haptics.light();
+                      setState(() => _showAll = !_showAll);
+                    },
+                  ),
+                // 搜索时直接展示全部结果；未搜索时按折叠状态
+                if (q.isNotEmpty || _showAll)
+                  ...filtered.map((a) => ListTile(
+                        leading: Text(a.icon,
+                            style: const TextStyle(fontSize: 24)),
+                        title: Text(a.name),
+                        subtitle: a.description.isEmpty
+                            ? null
+                            : Text(
+                                a.description,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                        // 最近使用过的标记小圆点
+                        trailing: q.isEmpty &&
+                                recentIdsInFiltered.contains(a.id)
+                            ? Icon(Icons.circle,
+                                size: 8,
+                                color: theme.colorScheme.primary)
+                            : null,
+                        onTap: () {
+                          Haptics.selection();
+                          widget.onSelected(a.id);
+                        },
+                      )),
+                if (q.isNotEmpty && filtered.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Center(
+                      child: Text('没有找到「$_query」',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                              color:
+                                  theme.colorScheme.onSurfaceVariant)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
