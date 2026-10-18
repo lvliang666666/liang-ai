@@ -29,10 +29,11 @@ class ApiService {
 
   /// 发起流式对话请求
   ///
-  /// [messages] 为 OpenAI 格式消息列表；[effort] 为推理档位 max/high/low。
+  /// [messages] 为 OpenAI 格式消息列表（content 可为字符串或多模态数组）；
+  /// [effort] 为推理档位 max/high/low。
   /// 返回 SSE 事件流；通过取消返回的 Stream 订阅或 [cancelToken] 可中断。
   Stream<SseEvent> chatStream({
-    required List<Map<String, String>> messages,
+    required List<Map<String, Object?>> messages,
     required String model,
     required String effort,
     required CancelToken cancelToken,

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
@@ -31,11 +33,14 @@ class MessageBubble extends StatelessWidget {
     final radius = context.read<ThemeProvider>().cornerRadius;
 
     if (message.isUser) {
+      final hasImages = message.attachments.any((a) => a.isImage);
       return Align(
         alignment: Alignment.centerRight,
         child: Container(
           margin: const EdgeInsets.only(left: 60, top: 4, bottom: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: EdgeInsets.fromLTRB(
+              hasImages ? 6 : 14, hasImages ? 6 : 10, hasImages ? 6 : 14,
+              hasImages ? 6 : 10),
           constraints: BoxConstraints(
             maxWidth: MediaQuery.widthOf(context) * 0.78,
           ),
@@ -45,12 +50,29 @@ class MessageBubble extends StatelessWidget {
               bottomRight: Radius.circular(radius > 0 ? 4 : 0),
             ),
           ),
-          child: SelectableText(
-            message.content,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: colorScheme.onPrimary,
-              height: 1.5,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // 附件区：图片缩略图 / 文件卡片
+              if (message.hasAttachments)
+                _UserAttachments(message: message),
+              // 正文（有附件但无文字时不渲染空文本）
+              if (message.content.isNotEmpty)
+                Padding(
+                  padding: EdgeInsets.only(
+                      top: message.hasAttachments ? 6 : 0,
+                      left: hasImages ? 8 : 0,
+                      right: hasImages ? 8 : 0),
+                  child: SelectableText(
+                    message.content,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: colorScheme.onPrimary,
+                      height: 1.5,
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
       );
@@ -233,6 +255,127 @@ class MessageBubble extends StatelessWidget {
         );
       }
     }
+  }
+}
+
+/// 用户消息附件区：图片缩略图网格 + 文件卡片
+class _UserAttachments extends StatelessWidget {
+  const _UserAttachments({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final images = message.attachments.where((a) => a.isImage).toList();
+    final files = message.attachments.where((a) => a.isFile).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 图片缩略图（≤3 张，一行排开）
+        if (images.isNotEmpty)
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (final img in images)
+                GestureDetector(
+                  onTap: () => _openImageViewer(context, images, img),
+                  child: Container(
+                    width: 96,
+                    height: 96,
+                    margin: const EdgeInsets.all(2),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        base64Decode(img.base64Data ?? ''),
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => Container(
+                          color: Colors.white24,
+                          child: const Icon(Icons.broken_image_outlined,
+                              color: Colors.white70),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        // 文件卡片
+        for (final f in files)
+          Container(
+            margin: const EdgeInsets.all(2),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            constraints: const BoxConstraints(maxWidth: 220),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.description_outlined,
+                    size: 18, color: Colors.white),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    f.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _openImageViewer(
+      BuildContext context, List images, current) {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        opaque: false,
+        pageBuilder: (_, __, ___) => _ImageViewer(
+          images: [for (final i in images) i.base64Data ?? ''],
+          initialIndex: images.indexOf(current),
+        ),
+        transitionsBuilder: (_, animation, __, child) =>
+            FadeTransition(opacity: animation, child: child),
+      ),
+    );
+  }
+}
+
+/// 全屏图片查看器（黑底，点击关闭，多图可左右滑动）
+class _ImageViewer extends StatelessWidget {
+  const _ImageViewer({required this.images, required this.initialIndex});
+
+  final List<String> images;
+  final int initialIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => Navigator.pop(context),
+      child: Container(
+        color: Colors.black87,
+        alignment: Alignment.center,
+        child: images.length == 1
+            ? InteractiveViewer(
+                child: Image.memory(base64Decode(images.first)),
+              )
+            : PageView.builder(
+                controller: PageController(initialPage: initialIndex),
+                itemCount: images.length,
+                itemBuilder: (_, i) => InteractiveViewer(
+                  child: Image.memory(base64Decode(images[i])),
+                ),
+              ),
+      ),
+    );
   }
 }
 

@@ -36,6 +36,7 @@ void main() {
             role TEXT NOT NULL,
             content TEXT NOT NULL DEFAULT '',
             reasoning TEXT NOT NULL DEFAULT '',
+            attachments TEXT NOT NULL DEFAULT '[]',
             created_at INTEGER NOT NULL
           )
         ''');

@@ -28,6 +28,7 @@ void main() {
           CREATE TABLE messages (
             id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
             content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
+            attachments TEXT NOT NULL DEFAULT '[]',
             created_at INTEGER NOT NULL
           )
         ''');
@@ -145,7 +146,7 @@ void main() {
 }
 
 /// 复刻 ChatProvider._buildApiMessages 的组装规则（保持同步验证）
-List<Map<String, String>> buildApiMessagesForTest(
+List<Map<String, Object?>> buildApiMessagesForTest(
     Agent? agent, List<ChatMessage> messages) {
   final prompt = agent?.prompt;
   return [
