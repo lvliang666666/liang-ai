@@ -68,6 +68,8 @@ class _SettingsPageState extends State<SettingsPage> {
   void _goToTab(int index) {
     if (index == _currentTab) return;
     Haptics.selection();
+    // 切页收起焦点：PageView 页面保活，焦点残留会导致键盘自动弹出
+    FocusManager.instance.primaryFocus?.unfocus();
     _pageController.animateToPage(
       index,
       duration: const Duration(milliseconds: 250),
@@ -119,6 +121,8 @@ class _SettingsPageState extends State<SettingsPage> {
               controller: _pageController,
               onPageChanged: (index) {
                 Haptics.selection();
+                // 滑动切页同样收起焦点，避免键盘残留
+                FocusManager.instance.primaryFocus?.unfocus();
                 setState(() => _currentTab = index);
               },
               children: [

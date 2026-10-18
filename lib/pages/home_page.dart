@@ -26,6 +26,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     context.read<SessionsProvider>().loadSessions();
+    // 启动即加载 Agent 列表：否则会话卡片的 agent 图标在首次懒加载前显示兜底 emoji
+    context.read<AgentProvider>().load();
   }
 
   @override
