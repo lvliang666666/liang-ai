@@ -28,6 +28,7 @@ void main() {
           CREATE TABLE messages (
             id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
             content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
+            attachments TEXT NOT NULL DEFAULT '[]',
             created_at INTEGER NOT NULL
           )
         ''');

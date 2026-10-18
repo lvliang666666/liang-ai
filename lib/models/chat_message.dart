@@ -1,3 +1,5 @@
+import 'message_attachment.dart';
+
 /// 消息模型
 class ChatMessage {
   final String id;
@@ -12,6 +14,9 @@ class ChatMessage {
   /// 思考过程内容（仅 assistant 消息）
   String reasoning;
 
+  /// 附件（仅 user 消息：图片/文件）
+  List<MessageAttachment> attachments;
+
   final int createdAt;
 
   ChatMessage({
@@ -20,10 +25,13 @@ class ChatMessage {
     required this.role,
     this.content = '',
     this.reasoning = '',
+    List<MessageAttachment>? attachments,
     required this.createdAt,
-  });
+  }) : attachments = attachments ?? const [];
 
   bool get isUser => role == 'user';
+
+  bool get hasAttachments => attachments.isNotEmpty;
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -31,6 +39,7 @@ class ChatMessage {
         'role': role,
         'content': content,
         'reasoning': reasoning,
+        'attachments': MessageAttachment.encodeList(attachments),
         'created_at': createdAt,
       };
 
@@ -40,9 +49,11 @@ class ChatMessage {
         role: map['role'] as String,
         content: (map['content'] as String?) ?? '',
         reasoning: (map['reasoning'] as String?) ?? '',
+        attachments:
+            MessageAttachment.decodeList(map['attachments'] as String?),
         createdAt: map['created_at'] as int,
       );
 
-  /// 转为 API 请求的 messages 格式
+  /// 转为 API 请求的 messages 格式（纯文本场景；多模态组装在 ApiService）
   Map<String, String> toApiMessage() => {'role': role, 'content': content};
 }
