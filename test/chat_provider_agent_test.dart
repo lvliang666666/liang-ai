@@ -146,7 +146,7 @@ void main() {
 }
 
 /// 复刻 ChatProvider._buildApiMessages 的组装规则（保持同步验证）
-List<Map<String, String>> buildApiMessagesForTest(
+List<Map<String, Object?>> buildApiMessagesForTest(
     Agent? agent, List<ChatMessage> messages) {
   final prompt = agent?.prompt;
   return [

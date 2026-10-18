@@ -207,7 +207,7 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// 组装 API 请求消息：Agent system prompt 在头部 + 全部历史
-  List<Map<String, String>> _buildApiMessages() {
+  List<Map<String, Object?>> _buildApiMessages() {
     final prompt = _agent?.prompt;
     return [
       if (prompt != null && prompt.isNotEmpty)

@@ -22,7 +22,7 @@ class MockApiService implements ApiService {
 
   @override
   Stream<SseEvent> chatStream({
-    required List<Map<String, String>> messages,
+    required List<Map<String, Object?>> messages,
     required String model,
     required String effort,
     required CancelToken cancelToken,

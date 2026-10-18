@@ -54,6 +54,36 @@ class ChatMessage {
         createdAt: map['created_at'] as int,
       );
 
-  /// 转为 API 请求的 messages 格式（纯文本场景；多模态组装在 ApiService）
-  Map<String, String> toApiMessage() => {'role': role, 'content': content};
+  /// 转为 API 请求的 messages 格式
+  ///
+  /// 无附件：content 为字符串；带图片附件：content 为 OpenAI 多模态数组
+  /// （text + image_url，图片走 data URL）；带文件附件：提取文本以
+  /// 【附件：name】块拼进正文。
+  Map<String, Object?> toApiMessage() {
+    if (!hasAttachments) return {'role': role, 'content': content};
+
+    // 文件附件：文本注入正文
+    final fileBlocks = [
+      for (final a in attachments.where((a) => a.isFile))
+        '【附件：${a.name}】\n${a.extractedText ?? ''}',
+    ];
+    final textContent =
+        fileBlocks.isEmpty ? content : '${fileBlocks.join('\n\n')}\n\n$content';
+
+    // 图片附件：OpenAI 多模态数组
+    final images = attachments.where((a) => a.isImage).toList();
+    if (images.isEmpty) return {'role': role, 'content': textContent};
+
+    return {
+      'role': role,
+      'content': [
+        {'type': 'text', 'text': textContent},
+        for (final img in images)
+          {
+            'type': 'image_url',
+            'image_url': {'url': 'data:image/jpeg;base64,${img.base64Data}'},
+          },
+      ],
+    };
+  }
 }
