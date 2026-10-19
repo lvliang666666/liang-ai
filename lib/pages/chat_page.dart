@@ -6,6 +6,7 @@ import '../models/chat_session.dart';
 import '../models/provider_profile.dart';
 import '../providers/agent_provider.dart';
 import '../providers/chat_provider.dart';
+import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
@@ -167,7 +168,9 @@ class _ChatPageView extends StatelessWidget {
               ],
             ),
           ),
+          // 模型切换（会话级，仿豆包）
           actions: [
+            _ModelSwitchButton(chat: chat),
             IconButton(
               icon: const Icon(Icons.delete_outline),
               tooltip: '删除会话',
@@ -206,13 +209,15 @@ class _ChatPageView extends StatelessWidget {
                       },
                     ),
             ),
-            // 输入栏
+            // 输入栏（按钮按供应商能力显隐）
             ChatInputBar(
               isStreaming: chat.isStreaming,
               effort: chat.session.effort,
               onSend: chat.sendMessage,
               onStop: chat.stopGeneration,
               onEffortChanged: chat.setEffort,
+              showAttachmentButton: chat.supportsVision,
+              showEffortButton: chat.supportsReasoning,
             ),
           ],
         ),
@@ -410,5 +415,131 @@ class _EmptyHint extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// AppBar 模型切换按钮：显示当前模型名，点击弹出供应商/模型选择
+class _ModelSwitchButton extends StatelessWidget {
+  const _ModelSwitchButton({required this.chat});
+
+  final ChatProvider chat;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton(
+      onPressed: () => _showModelSwitcher(context, chat),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        minimumSize: const Size(0, 36),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.tune,
+              size: 16, color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 4),
+          Flexible(
+            child: Text(
+              chat.model,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 供应商/模型选择弹窗：按供应商分组列出，选中即切换（会话级）
+  Future<void> _showModelSwitcher(
+      BuildContext context, ChatProvider chat) async {
+    Haptics.light();
+    final providersProvider = context.read<ProviderProvider>();
+    if (!providersProvider.loaded) await providersProvider.load();
+    if (!context.mounted) return;
+
+    // 自定义模型名输入（会话级临时模型）
+    final customCtrl = TextEditingController(text: chat.model);
+    final selected = await showModalBottomSheet<(ProviderProfile, String)>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text('切换模型',
+                  style: Theme.of(context).textTheme.titleMedium),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final p in providersProvider.profiles) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+                      child: Text(
+                        p.name,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: Theme.of(context).colorScheme.primary,
+                            ),
+                      ),
+                    ),
+                    if (p.defaultModel.isNotEmpty)
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.model_training, size: 20),
+                        title: Text(p.defaultModel),
+                        trailing: chat.profile.id == p.id &&
+                                chat.model == p.defaultModel
+                            ? Icon(Icons.check_circle,
+                                color: Theme.of(context).colorScheme.primary)
+                            : null,
+                        onTap: () => Navigator.pop(context, (p, p.defaultModel)),
+                      ),
+                  ],
+                  const Divider(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                    child: TextField(
+                      controller: customCtrl,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: '自定义模型名（当前供应商）',
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.check, size: 20),
+                          onPressed: () => Navigator.pop(
+                              context, (chat.profile, customCtrl.text.trim())),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+
+    final (profile, model) = selected;
+    if (model.isEmpty) return;
+    final ok = await chat.switchProvider(profile, model);
+    if (context.mounted && !ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('生成进行中，无法切换模型'),
+            duration: Duration(seconds: 2)),
+      );
+    }
   }
 }
