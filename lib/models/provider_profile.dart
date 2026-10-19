@@ -104,7 +104,7 @@ class ProviderProfile {
     required this.id,
     required this.name,
     required this.baseUrl,
-    required this.apiKey,
+    this.apiKey = '',
     this.defaultModel = '',
     this.capabilities = const ProviderCapabilities(),
     this.dialect = const ProviderDialect(),
