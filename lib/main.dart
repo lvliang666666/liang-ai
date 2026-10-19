@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'models/provider_profile.dart';
 import 'pages/home_page.dart';
 import 'providers/agent_provider.dart';
 import 'providers/sessions_provider.dart';
@@ -16,8 +17,12 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   final settings = SettingsService(prefs);
 
-  // 预热数据库
-  await DatabaseService.instance.database;
+  // 预热数据库 + 种子内置供应商（幂等）
+  final db = DatabaseService.instance;
+  await db.database;
+  if (!await db.hasBuiltinProviders()) {
+    await db.insertProvider(ProviderProfile.builtinCompany());
+  }
 
   runApp(AiChatApp(settings: settings));
 }
