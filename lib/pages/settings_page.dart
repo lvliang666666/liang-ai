@@ -10,6 +10,7 @@ import '../services/settings_service.dart';
 import '../services/tools/builtin_tools.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
+import '../widgets/tag_bar.dart';
 
 /// 设置页：顶部可滑动 Tags 栏 + 分页内容
 ///
@@ -100,7 +101,7 @@ class _SettingsPageState extends State<SettingsPage> {
       body: Column(
         children: [
           // ===== 顶部 Tags 栏（可横向滑动） =====
-          _TagBar(
+          TagBar(
             tabs: _tabs,
             current: _currentTab,
             onTap: _goToTab,
@@ -946,64 +947,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 顶部 Tags 栏：横向滑动 + 选中高亮
-class _TagBar extends StatelessWidget {
-  const _TagBar({
-    required this.tabs,
-    required this.current,
-    required this.onTap,
-  });
-
-  final List<String> tabs;
-  final int current;
-  final ValueChanged<int> onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return SizedBox(
-      height: 52,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        itemCount: tabs.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final selected = index == current;
-          return InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: () => onTap(index),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: selected
-                    ? colorScheme.primary
-                    : colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                tabs[index],
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  color: selected
-                      ? colorScheme.onPrimary
-                      : colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          );
-        },
-      ),
     );
   }
 }
