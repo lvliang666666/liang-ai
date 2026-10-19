@@ -7,7 +7,7 @@ import '../providers/provider_provider.dart';
 import '../providers/skill_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
-import '../services/tools/builtin_tools.dart';
+import 'skill_editor_page.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
 import '../widgets/tag_bar.dart';
@@ -209,7 +209,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 onPressed: () {
                   Haptics.light();
                   _unfocusSkillSearch();
-                  _showSkillEditor(context);
+                  _openSkillEditor(context);
                 },
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('新建'),
@@ -283,7 +283,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                   onPressed: () {
                                     Haptics.light();
                                     _unfocusSkillSearch();
-                                    _showSkillEditor(context, skill: a);
+                                    _openSkillEditor(context, skill: a);
                                   },
                                 ),
                                 if (a.isBuiltin)
@@ -367,189 +367,17 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// Skill 新建/编辑弹窗（内置 Skill 只读查看）
-  ///
-  /// 工具子集编辑：toolNames null 视为「全部勾选」；保存时写显式列表。
-  Future<void> _showSkillEditor(BuildContext context, {Skill? skill}) async {
-    final isBuiltin = skill?.isBuiltin ?? false;
-    final nameCtrl = TextEditingController(text: skill?.name ?? '');
-    final descCtrl = TextEditingController(text: skill?.description ?? '');
-    final iconCtrl = TextEditingController(text: skill?.icon ?? '🤖');
-    final promptCtrl = TextEditingController(text: skill?.prompt ?? '');
-    String? effort = skill?.effort;
-    // 工具勾选初始值：null（全部）展开为全部工具名
-    final declaredTools = skill?.toolNames;
-    final toolChecked = {
-      for (final t in builtinTools)
-        t.name: declaredTools == null || declaredTools.contains(t.name),
-    };
-
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-        title: Text(skill == null
-            ? '新建 Skill'
-            : (isBuiltin ? '查看 Skill' : '编辑 Skill')),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              Row(children: [
-                SizedBox(
-                  width: 64,
-                  child: TextField(
-                    controller: iconCtrl,
-                    textAlign: TextAlign.center,
-                    maxLength: 2,
-                    decoration: const InputDecoration(
-                        counterText: '', labelText: '图标'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: nameCtrl,
-                    enabled: !isBuiltin,
-                    maxLength: 20,
-                    decoration: const InputDecoration(
-                        labelText: '名称', counterText: ''),
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 8),
-              TextField(
-                controller: descCtrl,
-                enabled: !isBuiltin,
-                maxLength: 50,
-                decoration: const InputDecoration(
-                    labelText: '一句话描述', counterText: ''),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: effort,
-                decoration: const InputDecoration(labelText: '推理档位（可选）'),
-                items: const [
-                  DropdownMenuItem(value: 'max', child: Text('深度（max）')),
-                  DropdownMenuItem(value: 'high', child: Text('均衡（high）')),
-                  DropdownMenuItem(value: 'low', child: Text('轻量（low）')),
-                  DropdownMenuItem(child: Text('不指定')),
-                ],
-                onChanged: isBuiltin
-                    ? null
-                    : (v) => effort = v,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: promptCtrl,
-                enabled: !isBuiltin,
-                maxLines: 8,
-                minLines: 4,
-                decoration: const InputDecoration(
-                  labelText: '系统提示词（System Prompt）',
-                  alignLabelWithHint: true,
-                  hintText: '定义这个 Skill 的身份、语气、行为准则…',
-                ),
-              ),
-              const SizedBox(height: 12),
-              // ===== 可用工具（Skill 特有：工具子集声明） =====
-              Text('可用工具', style: Theme.of(context).textTheme.titleSmall),
-              Text(
-                '勾选该 Skill 允许模型调用的工具（全不勾 = 无工具）',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-              for (final t in builtinTools)
-                CheckboxListTile(
-                  value: toolChecked[t.name],
-                  onChanged: isBuiltin
-                      ? null
-                      : (v) =>
-                          setDialogState(() => toolChecked[t.name] = v ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  title: Text(t.name,
-                      style: const TextStyle(
-                          fontSize: 13, fontFamily: 'Monocraft')),
-                  subtitle: Text(
-                    t.description,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Haptics.light();
-              Navigator.pop(context, false);
-            },
-            child: const Text('取消'),
-          ),
-          if (!isBuiltin)
-            FilledButton(
-              onPressed: () {
-                Haptics.light();
-                Navigator.pop(context, true);
-              },
-              child: const Text('保存'),
-            ),
-        ],
-      ),
-      ),
+  /// Skill 新建/编辑整页（内置 Skill 只读查看）
+  Future<void> _openSkillEditor(BuildContext context, {Skill? skill}) async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => SkillEditorPage(skill: skill)),
     );
 
-    if (saved != true || !context.mounted) return;
+    if (saved != true || !mounted) return;
 
-    // 弹窗关闭后兜底收起焦点：防止弹窗内输入框的焦点被框架还给搜索框
+    // 页面关闭后兜底收起焦点：防止编辑页输入框的焦点被框架还给搜索框
     _unfocusSkillSearch();
-
-    final name = nameCtrl.text.trim();
-    final prompt = promptCtrl.text.trim();
-    if (name.isEmpty || prompt.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('名称和提示词不能为空')),
-      );
-      return;
-    }
-
-    // 勾选结果转 toolNames：全勾 = null（全部，语义等价且便于后续加新工具）
-    final checkedNames = [
-      for (final t in builtinTools)
-        if (toolChecked[t.name] == true) t.name,
-    ];
-    final toolNames =
-        checkedNames.length == builtinTools.length ? null : checkedNames;
-
-    final provider = context.read<SkillProvider>();
-    if (skill == null) {
-      await provider.create(
-        name: name,
-        prompt: prompt,
-        icon: iconCtrl.text.trim().isEmpty
-            ? '🤖'
-            : iconCtrl.text.trim(),
-        description: descCtrl.text.trim(),
-        effort: effort,
-        toolNames: toolNames,
-      );
-    } else {
-      await provider.update(Skill(
-        id: skill.id,
-        name: name,
-        icon: iconCtrl.text.trim(),
-        description: descCtrl.text.trim(),
-        prompt: prompt,
-        temperature: skill.temperature,
-        effort: effort,
-        toolNames: toolNames,
-      ));
-    }
   }
 
   Future<void> _confirmDeleteSkill(BuildContext context, Skill skill) async {
