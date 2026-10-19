@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/agent.dart';
+import '../models/provider_profile.dart';
 import '../providers/agent_provider.dart';
+import '../providers/provider_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
 import '../theme/app_theme_registry.dart';
@@ -23,13 +25,9 @@ class _SettingsPageState extends State<SettingsPage> {
   static const _tabs = ['外观', 'Agent 管理', 'API 配置', '对话参数', '说明'];
 
   late final SettingsService _settings;
-  late final TextEditingController _keyController;
-  late final TextEditingController _urlController;
-  late final TextEditingController _modelController;
   late final PageController _pageController;
   double _temperature = 0.7;
   String _effort = 'max';
-  bool _obscureKey = true;
   int _currentTab = 0;
   String _agentQuery = '';
   final _agentSearchController = TextEditingController();
@@ -39,9 +37,6 @@ class _SettingsPageState extends State<SettingsPage> {
   void initState() {
     super.initState();
     _settings = context.read<SettingsService>();
-    _keyController = TextEditingController(text: _settings.apiKey);
-    _urlController = TextEditingController(text: _settings.baseUrl);
-    _modelController = TextEditingController(text: _settings.model);
     _temperature = _settings.temperature;
     _effort = _settings.defaultEffortValue;
     _pageController = PageController();
@@ -49,9 +44,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   void dispose() {
-    _keyController.dispose();
-    _urlController.dispose();
-    _modelController.dispose();
     _pageController.dispose();
     _agentSearchController.dispose();
     _agentSearchFocusNode.dispose();
@@ -78,9 +70,6 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _save() async {
-    await _settings.setApiKey(_keyController.text.trim());
-    await _settings.setBaseUrl(_urlController.text.trim());
-    await _settings.setModel(_modelController.text.trim());
     await _settings.setDefaultEffort(_effort);
     await _settings.setTemperature(_temperature);
     if (mounted) {
@@ -542,69 +531,288 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  // ===== Tag 3：API 配置 =====
+  // ===== Tag 3：API 配置（供应商列表） =====
   Widget _buildApiTab(ThemeData theme) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
+    final providers = context.watch<ProviderProvider>();
+    if (!providers.loaded) {
+      providers.load();
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Column(
       children: [
-        TextField(
-          controller: _keyController,
-          obscureText: _obscureKey,
-          decoration: InputDecoration(
-            labelText: 'API Key',
-            hintText: '填入公司分配的 Key（必填）',
-            border: const OutlineInputBorder(),
-            suffixIcon: IconButton(
-              icon: Icon(_obscureKey
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined),
-              onPressed: () {
-                Haptics.light();
-                setState(() => _obscureKey = !_obscureKey);
-              },
-            ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text('供应商', style: theme.textTheme.titleSmall),
+              ),
+              FilledButton.icon(
+                onPressed: () {
+                  Haptics.light();
+                  _showProviderEditor(context);
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('新增'),
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _urlController,
-          decoration: const InputDecoration(
-            labelText: 'Base URL',
-            hintText: 'https://aep.focusaim.com/focus_coding_local/v1',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        Wrap(
-          spacing: 8,
-          children: [
-            ActionChip(
-              label: const Text('公网 focusaim'),
-              onPressed: () {
-                Haptics.selection();
-                setState(() =>
-                    _urlController.text = SettingsService.defaultBaseUrl);
-              },
-            ),
-            ActionChip(
-              label: const Text('内网 vemic（更快）'),
-              onPressed: () {
-                Haptics.selection();
-                setState(
-                    () => _urlController.text = SettingsService.vemicBaseUrl);
-              },
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _modelController,
-          decoration: const InputDecoration(
-            labelText: '模型名',
-            border: OutlineInputBorder(),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+            children: [
+              ...providers.profiles.map((p) => Card(
+                    elevation: 0,
+                    color: theme.colorScheme.surfaceContainerHighest
+                        .withValues(alpha: 0.5),
+                    child: ListTile(
+                      leading: Icon(
+                        Icons.cloud_outlined,
+                        color: theme.colorScheme.primary,
+                      ),
+                      title: Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              p.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (p.isBuiltin) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.primaryContainer,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '内置',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  color:
+                                      theme.colorScheme.onPrimaryContainer,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      subtitle: Text(
+                        '${p.defaultModel.isEmpty ? '未设模型' : p.defaultModel}'
+                        ' · ${p.apiKey.isEmpty ? '未填 Key' : '已填 Key'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit_outlined, size: 20),
+                            tooltip: '编辑',
+                            onPressed: () {
+                              Haptics.light();
+                              _showProviderEditor(context, profile: p);
+                            },
+                          ),
+                          if (!p.isBuiltin)
+                            IconButton(
+                              icon: const Icon(Icons.delete_outline,
+                                  size: 20),
+                              tooltip: '删除',
+                              onPressed: () {
+                                Haptics.medium();
+                                _confirmDeleteProvider(context, p);
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
+                  )),
+              const SizedBox(height: 8),
+              Text(
+                '· 供应商 = 一组 API 端点 + Key + 能力声明\n'
+                '· 新会话默认用第一个供应商，聊天页顶部可按会话切换\n'
+                '· 内置供应商不可删除，可编辑 Key 与模型',
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant, height: 1.6),
+              ),
+            ],
           ),
         ),
       ],
     );
+  }
+
+  /// 供应商编辑弹窗（新增/编辑共用）
+  Future<void> _showProviderEditor(BuildContext context,
+      {ProviderProfile? profile}) async {
+    final isBuiltin = profile?.isBuiltin ?? false;
+    final nameCtrl = TextEditingController(text: profile?.name ?? '');
+    final urlCtrl = TextEditingController(text: profile?.baseUrl ?? '');
+    final keyCtrl = TextEditingController(text: profile?.apiKey ?? '');
+    final modelCtrl = TextEditingController(text: profile?.defaultModel ?? '');
+    var vision = profile?.capabilities.vision ?? false;
+    var reasoning = profile?.capabilities.reasoning ?? false;
+    var effortParam = profile?.dialect.effortParam;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(profile == null ? '新增供应商' : '编辑供应商'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  enabled: !isBuiltin,
+                  maxLength: 20,
+                  decoration: const InputDecoration(
+                      labelText: '名称', counterText: ''),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: urlCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Base URL',
+                    hintText: 'https://api.example.com/v1',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: keyCtrl,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'API Key',
+                    hintText: '留空 = 未配置',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: modelCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '默认模型名',
+                    hintText: '如 glm5.1 / deepseek-chat',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('支持图片输入'),
+                  subtitle: const Text('开启后聊天页显示拍照/相册按钮'),
+                  value: vision,
+                  onChanged: (v) => setDialogState(() => vision = v),
+                ),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('支持思考流'),
+                  subtitle: const Text('开启后展示深度思考过程'),
+                  value: reasoning,
+                  onChanged: (v) => setDialogState(() => reasoning = v),
+                ),
+                DropdownButtonFormField<String>(
+                  initialValue: effortParam,
+                  decoration: const InputDecoration(
+                      labelText: '推理档位参数（方言）'),
+                  items: const [
+                    DropdownMenuItem(
+                        value: 'reasoning_effort',
+                        child: Text('reasoning_effort（GLM 系）')),
+                    DropdownMenuItem(child: Text('不发送（其他供应商）')),
+                  ],
+                  onChanged: (v) => setDialogState(() => effortParam = v),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Haptics.light();
+                Navigator.pop(context, false);
+              },
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Haptics.light();
+                Navigator.pop(context, true);
+              },
+              child: const Text('保存'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (saved != true || !context.mounted) return;
+
+    final name = nameCtrl.text.trim();
+    final url = urlCtrl.text.trim();
+    if (name.isEmpty || url.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('名称和 Base URL 不能为空')),
+      );
+      return;
+    }
+
+    final providers = context.read<ProviderProvider>();
+    final capabilities = (profile?.capabilities ?? const ProviderCapabilities())
+        .copyWith(vision: vision, reasoning: reasoning);
+    final dialect = (profile?.dialect ?? const ProviderDialect())
+        .copyWith(effortParam: effortParam);
+
+    if (profile == null) {
+      await providers.create(ProviderProfile(
+        id: DateTime.now().microsecondsSinceEpoch.toRadixString(36),
+        name: name,
+        baseUrl: url,
+        apiKey: keyCtrl.text.trim(),
+        defaultModel: modelCtrl.text.trim(),
+        capabilities: capabilities,
+        dialect: dialect,
+      ));
+    } else {
+      await providers.update(profile.copyWith(
+        name: name,
+        baseUrl: url,
+        apiKey: keyCtrl.text.trim(),
+        defaultModel: modelCtrl.text.trim(),
+        capabilities: capabilities,
+        dialect: dialect,
+      ));
+    }
+  }
+
+  /// 删除供应商：先确认再执行
+  Future<void> _confirmDeleteProvider(
+      BuildContext context, ProviderProfile profile) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除供应商'),
+        content: Text('确定删除「${profile.name}」吗？\n绑定它的会话将回退到默认供应商。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      await context.read<ProviderProvider>().delete(profile.id);
+    }
   }
 
   // ===== Tag 3：对话参数 =====

@@ -1,6 +1,7 @@
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/message_attachment.dart';
+import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/providers/theme_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
@@ -30,13 +31,14 @@ void main() {
     setUp(() async {
       final inMemory = await databaseFactory.openDatabase(
         inMemoryDatabasePath,
-        options: OpenDatabaseOptions(version: 3),
+        options: OpenDatabaseOptions(version: 4),
       );
       await inMemory.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
           id TEXT PRIMARY KEY, title TEXT NOT NULL,
           created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-          effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT
+          effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
+          provider_id TEXT, model TEXT
         )
       ''');
       await inMemory.execute('''
@@ -54,6 +56,7 @@ void main() {
         api: api,
         session: ChatSession(
             id: 's1', title: '新对话', createdAt: 1, updatedAt: 1),
+        profile: ProviderProfile.builtinCompany(),
         model: 'glm5.1',
       );
     });

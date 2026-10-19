@@ -7,6 +7,7 @@ import '../models/agent.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/message_attachment.dart';
+import '../models/provider_profile.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/sse_parser.dart';
@@ -20,21 +21,31 @@ class ChatProvider extends ChangeNotifier {
     required DatabaseService database,
     required ApiService api,
     required ChatSession session,
+    required ProviderProfile profile,
     required String model,
     Agent? agent,
   })  : _db = database,
         _api = api,
         _session = session,
+        _profile = profile,
         _model = model,
         _agent = agent;
 
   final DatabaseService _db;
-  final ApiService _api;
+  ApiService _api;
   final ChatSession _session;
-  final String _model;
+  ProviderProfile _profile;
+  String _model;
 
   /// 当前会话绑定的 Agent（null = 默认助手，无 system prompt）
   Agent? _agent;
+
+  /// 会话绑定的供应商 profile（请求组装与能力判断依据）
+  ProviderProfile get profile => _profile;
+
+  /// 能力快捷判断（UI 显隐用）
+  bool get supportsVision => _profile.capabilities.vision;
+  bool get supportsReasoning => _profile.capabilities.reasoning;
 
   List<ChatMessage> _messages = [];
   ChatStatus _status = ChatStatus.idle;
@@ -148,6 +159,7 @@ class ChatProvider extends ChangeNotifier {
 
     _subscription = _api
         .chatStream(
+      profile: _profile,
       messages: history,
       model: _model,
       effort: _effectiveEffort,
@@ -242,6 +254,24 @@ class ChatProvider extends ChangeNotifier {
     _agent = agent;
     await _db.updateSessionAgent(_session.id, agent?.id);
     notifyListeners();
+  }
+
+  /// 当前生效的模型名
+  String get model => _model;
+
+  /// 切换会话的供应商与模型（流式中禁止）
+  ///
+  /// 重建 ApiService（baseUrl/Key 可能变化）；供应商 null = 回退默认。
+  Future<bool> switchProvider(ProviderProfile profile, String model) async {
+    if (isStreaming) return false;
+    if (profile.id == _profile.id && model == _model) return true;
+    _api.dispose();
+    _profile = profile;
+    _model = model;
+    _api = ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
+    await _db.updateSessionProvider(_session.id, profile.id, model);
+    notifyListeners();
+    return true;
   }
 
   /// 组装 API 请求消息：Agent system prompt 在头部 + 全部历史

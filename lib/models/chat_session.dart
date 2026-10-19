@@ -1,5 +1,16 @@
 /// 会话模型
 class ChatSession {
+  ChatSession({
+    required this.id,
+    required this.title,
+    required this.createdAt,
+    required this.updatedAt,
+    this.effort = 'max',
+    this.agentId,
+    this.providerId,
+    this.model,
+  });
+
   final String id;
   String title;
   final int createdAt;
@@ -11,14 +22,11 @@ class ChatSession {
   /// 绑定的 Agent id（null = 默认助手，无人格提示词）
   String? agentId;
 
-  ChatSession({
-    required this.id,
-    required this.title,
-    required this.createdAt,
-    required this.updatedAt,
-    this.effort = 'max',
-    this.agentId,
-  });
+  /// 绑定的供应商 id（null = 用默认供应商）
+  String? providerId;
+
+  /// 该会话使用的模型名（null = 用供应商默认模型）
+  String? model;
 
   Map<String, dynamic> toMap() => {
         'id': id,
@@ -27,6 +35,8 @@ class ChatSession {
         'updated_at': updatedAt,
         'effort': effort,
         'agent_id': agentId,
+        'provider_id': providerId,
+        'model': model,
       };
 
   factory ChatSession.fromMap(Map<String, dynamic> map) => ChatSession(
@@ -36,5 +46,7 @@ class ChatSession {
         updatedAt: map['updated_at'] as int,
         effort: (map['effort'] as String?) ?? 'max',
         agentId: map['agent_id'] as String?,
+        providerId: map['provider_id'] as String?,
+        model: map['model'] as String?,
       );
 }

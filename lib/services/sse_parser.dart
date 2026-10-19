@@ -32,7 +32,15 @@ class SseError extends SseEvent {
 ///
 /// 处理跨 chunk 的行边界缓冲、`data: ` 前缀、`[DONE]` 终止标记、
 /// 心跳注释行（`: keep-alive`）、坏 JSON 容错（静默跳过）。
+///
+/// [reasoningField] 指定思考流字段名（供应商方言，如 vLLM 的
+/// reasoning / DeepSeek 的 reasoning_content）；null 时不解析思考流。
 class SseParser {
+  SseParser({this.reasoningField = 'reasoning'});
+
+  /// 思考流字段名；空串或 null = 不解析思考流
+  final String? reasoningField;
+
   final StringBuffer _buffer = StringBuffer();
   bool _done = false;
 
@@ -128,9 +136,14 @@ class SseParser {
     final delta = choice['delta'];
     final events = <SseEvent>[];
     if (delta is Map<String, dynamic>) {
-      final reasoning = delta['reasoning'] ?? delta['reasoning_content'];
-      if (reasoning is String && reasoning.isNotEmpty) {
-        events.add(SseDeltaReasoning(reasoning));
+      // 思考流：按方言字段名解析（兼容 DeepSeek 系 reasoning_content）
+      final field = reasoningField;
+      if (field != null && field.isNotEmpty) {
+        final reasoning =
+            delta[field] ?? (field == 'reasoning' ? delta['reasoning_content'] : null);
+        if (reasoning is String && reasoning.isNotEmpty) {
+          events.add(SseDeltaReasoning(reasoning));
+        }
       }
       final content = delta['content'];
       if (content is String && content.isNotEmpty) {

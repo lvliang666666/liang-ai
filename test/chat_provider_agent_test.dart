@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
+import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
@@ -16,12 +17,13 @@ void main() {
   setUp(() async {
     db = await databaseFactory.openDatabase(
       inMemoryDatabasePath,
-      options: OpenDatabaseOptions(version: 2, onCreate: (db, version) async {
+      options: OpenDatabaseOptions(version: 4, onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE sessions (
             id TEXT PRIMARY KEY, title TEXT NOT NULL,
             created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-            effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT
+            effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
+            provider_id TEXT, model TEXT
           )
         ''');
         await db.execute('''
@@ -37,6 +39,16 @@ void main() {
             id TEXT PRIMARY KEY, name TEXT NOT NULL,
             icon TEXT NOT NULL DEFAULT '🤖', description TEXT NOT NULL DEFAULT '',
             prompt TEXT NOT NULL DEFAULT '', temperature REAL, effort TEXT,
+            is_builtin INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute('''
+          CREATE TABLE providers (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL,
+            base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
+            default_model TEXT NOT NULL DEFAULT '',
+            capabilities TEXT NOT NULL DEFAULT '{}',
+            dialect TEXT NOT NULL DEFAULT '{}',
             is_builtin INTEGER NOT NULL DEFAULT 0
           )
         ''');
@@ -131,6 +143,7 @@ void main() {
         api: ApiService(baseUrl: 'http://127.0.0.1:1', apiKey: 'test'),
         session: ChatSession(
             id: 's1', title: 't', createdAt: 1, updatedAt: 1),
+        profile: ProviderProfile.builtinCompany(),
         model: 'glm5.1',
       );
 
