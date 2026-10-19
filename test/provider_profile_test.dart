@@ -282,11 +282,6 @@ void main() {
   });
 
   group('SseParser 方言参数化', () {
-    List<SseEvent> parse(String json) {
-      final parser = SseParser(reasoningField: 'reasoning');
-      return parser.addChunk('data: $json\n\n');
-    }
-
     test('reasoningField=null：不解析思考流', () {
       final parser = SseParser(reasoningField: null);
       final events = parser.addChunk(
