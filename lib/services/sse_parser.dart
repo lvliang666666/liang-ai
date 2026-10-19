@@ -17,6 +17,32 @@ class SseDeltaReasoning extends SseEvent {
   final String text;
 }
 
+/// 工具调用分片（OpenAI 流式 tool_calls 增量）
+///
+/// 首片带 [id] 和 [name]，后续片只带 [argumentsFragment] 增量；
+/// 多工具并行调用时以 [index] 区分。分片累积由上层（ChatProvider）完成，
+/// parser 保持无状态。
+class SseToolCallDelta extends SseEvent {
+  const SseToolCallDelta({
+    required this.index,
+    this.id,
+    this.name,
+    this.argumentsFragment,
+  });
+  final int index;
+  final String? id;
+  final String? name;
+  final String? argumentsFragment;
+}
+
+/// 工具调用轮结束（finish_reason == 'tool_calls'）
+///
+/// 注意与 [SseDone] 区分：这不是整条回答的结束，
+/// 而是本轮工具调用参数已发完，等待上层执行工具后继续下一轮。
+class SseToolCallsFinished extends SseEvent {
+  const SseToolCallsFinished();
+}
+
 /// 流正常结束（收到 [DONE]）
 class SseDone extends SseEvent {
   const SseDone();
@@ -149,11 +175,37 @@ class SseParser {
       if (content is String && content.isNotEmpty) {
         events.add(SseDeltaContent(content));
       }
+      // 工具调用分片：透传增量，累积由上层完成
+      final toolCalls = delta['tool_calls'];
+      if (toolCalls is List) {
+        for (final tc in toolCalls) {
+          if (tc is! Map<String, dynamic>) continue;
+          final fn = tc['function'];
+          final index = tc['index'];
+          events.add(SseToolCallDelta(
+            index: index is int ? index : 0,
+            id: tc['id'] is String ? tc['id'] as String : null,
+            name: fn is Map<String, dynamic> && fn['name'] is String
+                ? fn['name'] as String
+                : null,
+            argumentsFragment:
+                fn is Map<String, dynamic> && fn['arguments'] is String
+                    ? fn['arguments'] as String
+                    : null,
+          ));
+        }
+      }
     }
 
     if (finish != null) {
-      _done = true;
-      events.add(const SseDone());
+      if (finish == 'tool_calls') {
+        // 工具调用轮结束：不是整条回答的结束，不置 _done，
+        // 上层执行工具后会发起新一轮请求（新 parser 实例）
+        events.add(const SseToolCallsFinished());
+      } else {
+        _done = true;
+        events.add(const SseDone());
+      }
     }
     return events;
   }
