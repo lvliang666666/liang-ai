@@ -56,6 +56,9 @@ dependencies:
   file_picker: ^13.1.0
   syncfusion_flutter_pdf: ^35.1.40+1
   open_filex: ^5.0.0
+  # 内置工具：设备信息 + 电量
+  device_info_plus: ^13.3.0
+  battery_plus: ^7.0.1
 
 dev_dependencies:
   flutter_test:
