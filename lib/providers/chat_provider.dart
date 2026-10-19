@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
@@ -8,14 +9,16 @@ import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
+import '../models/tool_call.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/sse_parser.dart';
+import '../services/tool_registry.dart';
 
 /// 聊天流式状态
-enum ChatStatus { idle, thinking, answering, error }
+enum ChatStatus { idle, thinking, answering, toolCalling, error }
 
-/// 聊天页状态：消息列表 + 流式状态机
+/// 聊天页状态：消息列表 + 流式状态机 + agentic loop
 class ChatProvider extends ChangeNotifier {
   ChatProvider({
     required DatabaseService database,
@@ -24,12 +27,14 @@ class ChatProvider extends ChangeNotifier {
     required ProviderProfile profile,
     required String model,
     Agent? agent,
+    ToolRegistry? toolRegistry,
   })  : _db = database,
         _api = api,
         _session = session,
         _profile = profile,
         _model = model,
-        _agent = agent;
+        _agent = agent,
+        _tools = toolRegistry;
 
   final DatabaseService _db;
   ApiService _api;
@@ -40,12 +45,22 @@ class ChatProvider extends ChangeNotifier {
   /// 当前会话绑定的 Agent（null = 默认助手，无 system prompt）
   Agent? _agent;
 
+  /// 工具注册表（null = 不启用工具；是否随请求发送还看 profile 能力）
+  final ToolRegistry? _tools;
+
   /// 会话绑定的供应商 profile（请求组装与能力判断依据）
   ProviderProfile get profile => _profile;
 
   /// 能力快捷判断（UI 显隐用）
   bool get supportsVision => _profile.capabilities.vision;
   bool get supportsReasoning => _profile.capabilities.reasoning;
+
+  /// 工具调用是否随请求发送（能力 + 注册表非空）
+  bool get _toolsEnabled =>
+      _profile.capabilities.toolCalls && _tools != null && _tools.isNotEmpty;
+
+  /// agentic loop 最大轮数（防死循环 + token 膨胀）
+  static const _maxLoopIterations = 8;
 
   List<ChatMessage> _messages = [];
   ChatStatus _status = ChatStatus.idle;
@@ -61,14 +76,33 @@ class ChatProvider extends ChangeNotifier {
   StreamSubscription<SseEvent>? _subscription;
   DateTime? _thinkingStart;
 
+  /// dispose 标记：loop 在后台推进，dispose 后不再通知 UI
+  bool _disposed = false;
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  /// 工具调用分片累积（按 index 拼接，SseToolCallsFinished 时成完整调用）
+  final Map<int, _ToolCallAccumulator> _toolCallAccumulators = {};
+
+  /// 本轮已完成的工具执行结果（UI 卡片渲染用，随 streamingMessage 生命周期）
+  List<ToolCallResult> _toolResults = [];
+
   // ===== Getters =====
   ChatSession get session => _session;
   Agent? get agent => _agent;
   List<ChatMessage> get messages => _messages;
   ChatStatus get status => _status;
   String get errorMessage => _errorMessage;
-  bool get isStreaming => _status == ChatStatus.thinking || _status == ChatStatus.answering;
+  bool get isStreaming =>
+      _status == ChatStatus.thinking ||
+      _status == ChatStatus.answering ||
+      _status == ChatStatus.toolCalling;
   ChatMessage? get streamingMessage => _streamingMessage;
+
+  /// 本轮工具执行结果（UI 工具卡片用）
+  List<ToolCallResult> get toolResults => _toolResults;
 
   /// 页面渲染用的完整消息列表（含流式中消息）
   List<ChatMessage> get displayMessages {
@@ -89,7 +123,7 @@ class ChatProvider extends ChangeNotifier {
     if (attachment.isImage && images >= 3) return false;
     if (attachment.isFile && files >= 3) return false;
     _pendingAttachments = [..._pendingAttachments, attachment];
-    notifyListeners();
+    _notify();
     return true;
   }
 
@@ -99,13 +133,13 @@ class ChatProvider extends ChangeNotifier {
       for (final a in _pendingAttachments)
         if (!identical(a, attachment)) a,
     ];
-    notifyListeners();
+    _notify();
   }
 
   /// 加载历史消息
   Future<void> loadMessages() async {
     _messages = await _db.getMessages(_session.id);
-    notifyListeners();
+    _notify();
   }
 
   /// 发送消息（可带待发送附件队列）
@@ -142,64 +176,176 @@ class ChatProvider extends ChangeNotifier {
     }
     await _db.touchSession(_session.id);
 
-    // 2. 创建流式 assistant 消息
-    _streamingMessage = ChatMessage(
-      id: _genId(),
-      sessionId: _session.id,
-      role: 'assistant',
-      createdAt: DateTime.now().millisecondsSinceEpoch,
-    );
+    // 2. 启动 agentic loop（fire-and-forget：sendMessage 立即返回，
+    // loop 在后台推进，与旧版「启动流即返回」语义一致）
+    _toolResults = [];
+    unawaited(_runLoop());
+  }
+
+  /// agentic loop：请求 → 流式收包 →（工具调用？执行 → 再请求）→ 收尾
+  ///
+  /// 每轮创建新的流式 assistant 消息；工具轮结束后 assistant 消息
+  /// （含 tool_calls）立即落库，工具结果以 role='tool' 消息落库，
+  /// 然后进入下一轮。取消 = 终止整个 loop，已落库内容保留。
+  Future<void> _runLoop() async {
+    for (var iteration = 0; iteration < _maxLoopIterations; iteration++) {
+      // 超上限保护：最后一轮注入系统提示强制模型总结
+      final forceSummary = iteration == _maxLoopIterations - 1;
+
+      // 创建本轮流式 assistant 消息
+      _streamingMessage = ChatMessage(
+        id: _genId(),
+        sessionId: _session.id,
+        role: 'assistant',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      _status = ChatStatus.thinking;
+      _thinkingStart ??= DateTime.now();
+      _notify();
+
+      // 发起流式请求（Agent system prompt 插入消息头部）
+      _cancelToken = CancelToken();
+      final history = _buildApiMessages(forceSummary: forceSummary);
+      final completer = Completer<void>();
+      // 本轮是否已进入工具执行流程（防止 [DONE] 尾随分片重复收尾）
+      var toolRoundStarted = false;
+
+      _subscription = _api
+          .chatStream(
+        profile: _profile,
+        messages: history,
+        model: _model,
+        effort: _effectiveEffort,
+        cancelToken: _cancelToken!,
+        temperature: _effectiveTemperature,
+        tools: _toolsEnabled ? _tools!.toOpenAiTools() : null,
+      )
+          .listen(
+        (event) {
+          switch (event) {
+            case SseDeltaReasoning(:final text):
+              _streamingMessage = _streamingMessage!..reasoning += text;
+              if (_status == ChatStatus.thinking) _notify();
+            case SseDeltaContent(:final text):
+              _streamingMessage = _streamingMessage!..content += text;
+              _status = ChatStatus.answering;
+              _notify();
+            case SseToolCallDelta():
+              _accumulateToolCallFragment(event);
+            case SseToolCallsFinished():
+              toolRoundStarted = true;
+              if (!completer.isCompleted) completer.complete();
+            case SseDone():
+              // 工具轮后服务端常尾随 [DONE]：此时本轮已交给工具流程，忽略
+              if (toolRoundStarted) return;
+              _finishStreaming();
+              if (!completer.isCompleted) completer.complete();
+            case SseError(:final message):
+              if (toolRoundStarted) return;
+              _failStreaming(message);
+              if (!completer.isCompleted) completer.complete();
+          }
+        },
+        onError: (Object e) {
+          if (e is DioException && e.type == DioExceptionType.cancel) {
+            _finishStreaming(); // 手动停止：保留已收内容
+          } else if (e is ApiException) {
+            _failStreaming(e.message);
+          } else {
+            _failStreaming('请求失败：$e');
+          }
+          if (!completer.isCompleted) completer.complete();
+        },
+        onDone: () {
+          if (isStreaming) _finishStreaming();
+          if (!completer.isCompleted) completer.complete();
+        },
+      );
+
+      await completer.future;
+      // 旧订阅不再需要：广播流下不取消会重复消费下一轮事件
+      await _subscription?.cancel();
+
+      // 流结束后判定：正常收尾 / 工具轮继续 / 出错终止
+      if (_status == ChatStatus.error || _status == ChatStatus.idle) {
+        return; // SseDone / SseError / 取消：loop 结束
+      }
+      // toolCalling：执行工具 → 落库 → 下一轮
+      final continueLoop = await _executeToolRound();
+      if (!continueLoop) return;
+    }
+    // 轮数耗尽（理论上 forceSummary 已让模型收尾，这里兜底）
+    _finishStreaming();
+  }
+
+  /// 累积工具调用分片（按 index 拼接：首片 id/name，后续片 arguments 增量）
+  void _accumulateToolCallFragment(SseToolCallDelta event) {
+    final acc = _toolCallAccumulators.putIfAbsent(
+        event.index, () => _ToolCallAccumulator());
+    if (event.id != null) acc.id = event.id!;
+    if (event.name != null) acc.name = event.name!;
+    if (event.argumentsFragment != null) {
+      acc.arguments.write(event.argumentsFragment!);
+    }
+  }
+
+  /// 执行工具轮：assistant 消息（含 tool_calls）落库 → 逐个执行 →
+  /// 结果消息落库 → 返回是否继续下一轮
+  Future<bool> _executeToolRound() async {
+    // 1. 分片累积成完整 ToolCall 列表
+    final calls = <ToolCall>[
+      for (final entry in _toolCallAccumulators.entries)
+        ToolCall(
+          id: entry.value.id.isEmpty ? 'call_${entry.key}' : entry.value.id,
+          name: entry.value.name,
+          argumentsJson: entry.value.arguments.toString(),
+        ),
+    ];
+    _toolCallAccumulators.clear();
+
+    // 2. 当前 assistant 消息（含 tool_calls + 已收 content/reasoning）落库
+    final assistantMsg = _streamingMessage!;
+    assistantMsg.toolCalls = calls;
+    await _db.insertMessage(assistantMsg);
+    _messages = [..._messages, assistantMsg];
+    _streamingMessage = null;
+
+    // 3. 逐个执行工具（toolCalling 态供 UI 显示进度）
+    _status = ChatStatus.toolCalling;
+    _toolResults = [];
+    _notify();
+
+    final results = await _tools!.executeAll(calls);
+    _toolResults = results;
+
+    // 4. 每个结果生成 role='tool' 消息落库
+    var at = DateTime.now().millisecondsSinceEpoch;
+    for (final r in results) {
+      final toolMsg = ChatMessage(
+        id: _genId(),
+        sessionId: _session.id,
+        role: 'tool',
+        content: r.content,
+        toolCallId: r.callId,
+        createdAt: at++,
+      );
+      await _db.insertMessage(toolMsg);
+      _messages = [..._messages, toolMsg];
+    }
+
+    // 5. 取消检查：用户在工具执行期间点了停止 → 终止 loop（已落库保留）
+    if (_cancelToken?.isCancelled == true) {
+      _status = ChatStatus.idle;
+      _subscription = null;
+      _cancelToken = null;
+      _notify();
+      return false;
+    }
+
+    // 6. 继续下一轮
     _status = ChatStatus.thinking;
-    _thinkingStart = DateTime.now();
-    notifyListeners();
-
-    // 3. 发起流式请求（Agent system prompt 插入消息头部）
-    _cancelToken = CancelToken();
-    final history = _buildApiMessages();
-
-    _subscription = _api
-        .chatStream(
-      profile: _profile,
-      messages: history,
-      model: _model,
-      effort: _effectiveEffort,
-      cancelToken: _cancelToken!,
-      temperature: _effectiveTemperature,
-    )
-        .listen(
-      (event) {
-        switch (event) {
-          case SseDeltaReasoning(:final text):
-            _streamingMessage = _streamingMessage!..reasoning += text;
-            if (_status == ChatStatus.thinking) notifyListeners();
-          case SseDeltaContent(:final text):
-            _streamingMessage = _streamingMessage!..content += text;
-            _status = ChatStatus.answering;
-            notifyListeners();
-          case SseDone():
-            _finishStreaming();
-          case SseError(:final message):
-            _failStreaming(message);
-          // 工具调用事件：阶段 1 仅透传解析，loop 接入在后续阶段
-          case SseToolCallDelta():
-            break;
-          case SseToolCallsFinished():
-            break;
-        }
-      },
-      onError: (Object e) {
-        if (e is DioException && e.type == DioExceptionType.cancel) {
-          _finishStreaming(); // 手动停止：保留已收内容
-        } else if (e is ApiException) {
-          _failStreaming(e.message);
-        } else {
-          _failStreaming('请求失败：$e');
-        }
-      },
-      onDone: () {
-        if (isStreaming) _finishStreaming();
-      },
-    );
+    _notify();
+    return true;
   }
 
   /// 停止生成（保留已收内容）
@@ -211,14 +357,21 @@ class ChatProvider extends ChangeNotifier {
   void _finishStreaming() {
     final msg = _streamingMessage;
     if (msg != null) {
-      _db.insertMessage(msg);
-      _messages = [..._messages, msg];
+      // 空消息（取消时刚创建、未收到任何内容）不落库
+      if (msg.content.isNotEmpty ||
+          msg.reasoning.isNotEmpty ||
+          msg.toolCalls.isNotEmpty) {
+        _db.insertMessage(msg);
+        _messages = [..._messages, msg];
+      }
     }
     _streamingMessage = null;
     _status = ChatStatus.idle;
     _subscription = null;
     _cancelToken = null;
-    notifyListeners();
+    _toolCallAccumulators.clear();
+    _thinkingStart = null;
+    _notify();
   }
 
   /// 出错：保留已收内容落库，显示错误
@@ -233,7 +386,9 @@ class ChatProvider extends ChangeNotifier {
     _errorMessage = message;
     _subscription = null;
     _cancelToken = null;
-    notifyListeners();
+    _toolCallAccumulators.clear();
+    _thinkingStart = null;
+    _notify();
   }
 
   /// 清除错误状态
@@ -241,7 +396,7 @@ class ChatProvider extends ChangeNotifier {
     if (_status == ChatStatus.error) {
       _status = ChatStatus.idle;
       _errorMessage = '';
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -250,7 +405,7 @@ class ChatProvider extends ChangeNotifier {
     if (_session.effort == effort) return;
     _session.effort = effort;
     await _db.updateSessionEffort(_session.id, effort);
-    notifyListeners();
+    _notify();
   }
 
   /// 切换会话绑定的 Agent（null = 默认助手）
@@ -258,7 +413,7 @@ class ChatProvider extends ChangeNotifier {
     if (_agent?.id == agent?.id) return;
     _agent = agent;
     await _db.updateSessionAgent(_session.id, agent?.id);
-    notifyListeners();
+    _notify();
   }
 
   /// 当前生效的模型名
@@ -275,17 +430,24 @@ class ChatProvider extends ChangeNotifier {
     _model = model;
     _api = ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
     await _db.updateSessionProvider(_session.id, profile.id, model);
-    notifyListeners();
+    _notify();
     return true;
   }
 
   /// 组装 API 请求消息：Agent system prompt 在头部 + 全部历史
-  List<Map<String, Object?>> _buildApiMessages() {
+  ///
+  /// [forceSummary] 为 true 时（loop 轮数耗尽）追加系统提示强制模型总结。
+  List<Map<String, Object?>> _buildApiMessages({bool forceSummary = false}) {
     final prompt = _agent?.prompt;
     return [
       if (prompt != null && prompt.isNotEmpty)
         {'role': 'system', 'content': prompt},
       ..._messages.map((m) => m.toApiMessage()),
+      if (forceSummary)
+        const {
+          'role': 'system',
+          'content': '工具调用轮数已达上限，请立即基于已有信息给出最终回答，不要再调用任何工具。',
+        },
     ];
   }
 
@@ -314,12 +476,28 @@ class ChatProvider extends ChangeNotifier {
 
   String _genId() =>
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
-      (_messages.length.toString());
+      (_messages.length.toString()) +
+      _randomSuffix();
+
+  /// 随机后缀：同微秒内多条消息（工具结果批量落库）防碰撞
+  String _randomSuffix() {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    final rng = Random();
+    return [for (var i = 0; i < 4; i++) chars[rng.nextInt(chars.length)]].join();
+  }
 
   @override
   void dispose() {
+    _disposed = true;
     _subscription?.cancel();
     _cancelToken?.cancel();
     super.dispose();
   }
+}
+
+/// 工具调用分片累积器（OpenAI 流式：首片 id/name，后续片 arguments 增量）
+class _ToolCallAccumulator {
+  String id = '';
+  String name = '';
+  final StringBuffer arguments = StringBuffer();
 }

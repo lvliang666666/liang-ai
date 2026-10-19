@@ -35,7 +35,8 @@ class ApiService {
   /// 发起流式对话请求
   ///
   /// [messages] 为 OpenAI 格式消息列表（content 可为字符串或多模态数组）；
-  /// [effort] 为推理档位 max/high/low（仅方言声明 effortParam 时发送）。
+  /// [effort] 为推理档位 max/high/low（仅方言声明 effortParam 时发送）；
+  /// [tools] 为 OpenAI function calling 工具定义（null/空 = 不发送）。
   /// 返回 SSE 事件流；通过取消返回的 Stream 订阅或 [cancelToken] 可中断。
   Stream<SseEvent> chatStream({
     required ProviderProfile profile,
@@ -44,6 +45,7 @@ class ApiService {
     required String effort,
     required CancelToken cancelToken,
     double temperature = 0.7,
+    List<Map<String, Object?>>? tools,
   }) async* {
     final parser = SseParser(reasoningField: profile.dialect.reasoningField);
     try {
@@ -57,6 +59,7 @@ class ApiService {
           model: model,
           effort: effort,
           temperature: temperature,
+          tools: tools,
         ),
       );
 
@@ -90,6 +93,7 @@ class ApiService {
     required String model,
     required String effort,
     required double temperature,
+    List<Map<String, Object?>>? tools,
   }) {
     final body = <String, Object?>{
       'model': model,
@@ -97,6 +101,9 @@ class ApiService {
       'stream': true,
       'temperature': temperature,
     };
+    if (tools != null && tools.isNotEmpty) {
+      body['tools'] = tools;
+    }
     // glm 方言：chat_template_kwargs.reasoning_effort
     final effortParam = profile.dialect.effortParam;
     if (effortParam != null && effortParam.isNotEmpty) {
@@ -112,6 +119,7 @@ class ApiService {
     required String model,
     required String effort,
     required double temperature,
+    List<Map<String, Object?>>? tools,
   }) =>
       _buildBody(
         profile: profile,
@@ -119,6 +127,7 @@ class ApiService {
         model: model,
         effort: effort,
         temperature: temperature,
+        tools: tools,
       );
 
   /// 错误映射为用户可读文案（供应商专属提示按 profile 定制）
