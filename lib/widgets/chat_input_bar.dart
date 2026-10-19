@@ -287,6 +287,10 @@ class _ChatInputBarState extends State<ChatInputBar> {
                     minLines: 1,
                     textInputAction: TextInputAction.newline,
                     onChanged: (_) => setState(() {}),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyLarge
+                        ?.copyWith(height: 1.6),
                     decoration: InputDecoration(
                       hintText: pending.isEmpty ? '输入消息…' : '补充说明（可空）…',
                       isDense: true,

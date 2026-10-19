@@ -70,7 +70,7 @@ class MessageBubble extends StatelessWidget {
                     message.content,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: colorScheme.onPrimary,
-                      height: 1.5,
+                      height: 1.6,
                     ),
                   ),
                 ),
@@ -119,6 +119,8 @@ class MessageBubble extends StatelessWidget {
                   message.content,
                   isStreaming: isStreaming,
                   charactersPerSecond: 40,
+                  style: theme.textTheme.bodyMedium
+                      ?.copyWith(height: 1.6),
                   codeBuilder: (context, name, code, closed) =>
                       CodeBlockWidget(code: code, language: name),
                 ),
