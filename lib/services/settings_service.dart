@@ -16,8 +16,8 @@ class SettingsService {
   static const _kRecentAgentIds = 'recent_agent_ids';
 
   // ===== 默认值 =====
-  static const defaultApiKey =
-      '6AETR6DxFrgj95A6YkROIN832VnYM2vS82pdpGY0UXE';
+  // API Key 不预填（凭据不入代码库）；首次使用请在设置页填入公司分配的 Key
+  static const defaultApiKey = '';
   static const defaultBaseUrl =
       'https://aep.focusaim.com/focus_coding_local/v1';
   static const vemicBaseUrl = 'https://aep.vemic.com/focus_coding_local/v1';

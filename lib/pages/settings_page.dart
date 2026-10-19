@@ -552,6 +552,7 @@ class _SettingsPageState extends State<SettingsPage> {
           obscureText: _obscureKey,
           decoration: InputDecoration(
             labelText: 'API Key',
+            hintText: '填入公司分配的 Key（必填）',
             border: const OutlineInputBorder(),
             suffixIcon: IconButton(
               icon: Icon(_obscureKey
