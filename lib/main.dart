@@ -19,10 +19,21 @@ Future<void> main() async {
   final settings = SettingsService(prefs);
 
   // 预热数据库 + 种子内置供应商（幂等）
+  // 迁移：老用户在旧版设置页填过的 Key/URL/模型自动带入内置 profile，
+  // 升级后无需重新填写
   final db = DatabaseService.instance;
   await db.database;
   if (!await db.hasBuiltinProviders()) {
-    await db.insertProvider(ProviderProfile.builtinCompany());
+    final seed = ProviderProfile.builtinCompany();
+    final legacyKey = settings.apiKey;
+    final legacyModel = settings.model;
+    await db.insertProvider(legacyKey.isEmpty
+        ? seed
+        : seed.copyWith(
+            apiKey: legacyKey,
+            defaultModel:
+                legacyModel.isEmpty ? seed.defaultModel : legacyModel,
+          ));
   }
 
   runApp(AiChatApp(settings: settings));
