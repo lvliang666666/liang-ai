@@ -1,17 +1,20 @@
+import 'dart:convert';
+
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
 import '../models/agent.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/provider_profile.dart';
 
-/// 本地数据库服务：sessions / messages / agents 三表
+/// 本地数据库服务：sessions / messages / agents / providers 四表
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'ai_chat.db';
-  static const _dbVersion = 3;
+  static const _dbVersion = 4;
 
   Database? _db;
 
@@ -43,7 +46,9 @@ class DatabaseService {
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         effort TEXT NOT NULL DEFAULT 'max',
-        agent_id TEXT
+        agent_id TEXT,
+        provider_id TEXT,
+        model TEXT
       )
     ''');
     await db.execute('''
@@ -61,6 +66,7 @@ class DatabaseService {
       'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
     );
     await _createAgentsTable(db);
+    await _createProvidersTable(db);
   }
 
   /// 版本迁移：老用户数据无损升级
@@ -75,6 +81,12 @@ class DatabaseService {
       await db.execute(
           "ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
     }
+    if (oldVersion < 4) {
+      // v3 → v4：多供应商——sessions 加 provider_id/model 列 + 新建 providers 表
+      await db.execute('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
+      await db.execute('ALTER TABLE sessions ADD COLUMN model TEXT');
+      await _createProvidersTable(db);
+    }
   }
 
   Future<void> _createAgentsTable(Database db) async {
@@ -87,6 +99,21 @@ class DatabaseService {
         prompt TEXT NOT NULL DEFAULT '',
         temperature REAL,
         effort TEXT,
+        is_builtin INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
+  Future<void> _createProvidersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS providers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        base_url TEXT NOT NULL DEFAULT '',
+        api_key TEXT NOT NULL DEFAULT '',
+        default_model TEXT NOT NULL DEFAULT '',
+        capabilities TEXT NOT NULL DEFAULT '{}',
+        dialect TEXT NOT NULL DEFAULT '{}',
         is_builtin INTEGER NOT NULL DEFAULT 0
       )
     ''');
@@ -136,6 +163,18 @@ class DatabaseService {
     await db.update(
       'sessions',
       {'agent_id': agentId},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// 更新会话绑定的供应商与模型（null = 回退默认供应商/默认模型）
+  Future<void> updateSessionProvider(
+      String id, String? providerId, String? model) async {
+    final db = await database;
+    await db.update(
+      'sessions',
+      {'provider_id': providerId, 'model': model},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -242,6 +281,90 @@ class DatabaseService {
     final rows = await db.query('agents',
         where: 'is_builtin = 1', limit: 1);
     return rows.isNotEmpty;
+  }
+
+  // ===== Providers =====
+
+  Future<void> insertProvider(ProviderProfile profile) async {
+    final db = await database;
+    await db.insert('providers', _providerRow(profile),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 全部供应商（内置在前，自定义在后，各按名称排序）
+  Future<List<ProviderProfile>> getAllProviders() async {
+    final db = await database;
+    final rows = await db.query(
+      'providers',
+      orderBy: 'is_builtin DESC, name ASC',
+    );
+    return rows.map(_profileFromRow).toList();
+  }
+
+  Future<ProviderProfile?> getProvider(String id) async {
+    final db = await database;
+    final rows =
+        await db.query('providers', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : _profileFromRow(rows.first);
+  }
+
+  Future<void> updateProvider(ProviderProfile profile) async {
+    final db = await database;
+    await db.update('providers', _providerRow(profile),
+        where: 'id = ?', whereArgs: [profile.id]);
+  }
+
+  /// 删除自定义供应商；同时把引用它的会话解绑（回退默认供应商）
+  Future<void> deleteProvider(String id) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.update('sessions', {'provider_id': null, 'model': null},
+          where: 'provider_id = ?', whereArgs: [id]);
+      await txn.delete('providers', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  /// 内置供应商是否已入库（首次启动种子判断）
+  Future<bool> hasBuiltinProviders() async {
+    final db = await database;
+    final rows = await db
+        .query('providers', where: 'is_builtin = 1', limit: 1);
+    return rows.isNotEmpty;
+  }
+
+  Map<String, Object?> _providerRow(ProviderProfile profile) => {
+        'id': profile.id,
+        'name': profile.name,
+        'base_url': profile.baseUrl,
+        'api_key': profile.apiKey,
+        'default_model': profile.defaultModel,
+        'capabilities': jsonEncode(profile.capabilities.toMap()),
+        'dialect': jsonEncode(profile.dialect.toMap()),
+        'is_builtin': profile.isBuiltin ? 1 : 0,
+      };
+
+  ProviderProfile _profileFromRow(Map<String, dynamic> row) {
+    Map<String, dynamic> decodeJson(Object? raw) {
+      if (raw is String && raw.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(raw);
+          if (decoded is Map<String, dynamic>) return decoded;
+        } catch (_) {}
+      }
+      return const {};
+    }
+
+    return ProviderProfile(
+      id: row['id'] as String,
+      name: (row['name'] as String?) ?? '',
+      baseUrl: (row['base_url'] as String?) ?? '',
+      apiKey: (row['api_key'] as String?) ?? '',
+      defaultModel: (row['default_model'] as String?) ?? '',
+      capabilities: ProviderCapabilities.fromMap(
+          decodeJson(row['capabilities'])),
+      dialect: ProviderDialect.fromMap(decodeJson(row['dialect'])),
+      isBuiltin: (row['is_builtin'] as int?) == 1,
+    );
   }
 
   Future<void> close() async {

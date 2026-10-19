@@ -3,12 +3,12 @@ import 'package:provider/provider.dart';
 
 import '../models/agent.dart';
 import '../models/chat_session.dart';
+import '../models/provider_profile.dart';
 import '../providers/agent_provider.dart';
 import '../providers/chat_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
-import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/message_bubble.dart';
@@ -27,13 +27,34 @@ class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
   int _lastDisplayCount = 0;
   ChatSession? _session;
+  ProviderProfile? _profile;
 
   @override
   void initState() {
     super.initState();
-    DatabaseService.instance
-        .getSession(widget.sessionId)
-        .then((s) => setState(() => _session = s));
+    _loadSession();
+  }
+
+  /// 加载会话与其绑定的供应商 profile（未绑定或已删除时回退默认）
+  Future<void> _loadSession() async {
+    final db = DatabaseService.instance;
+    final s = await db.getSession(widget.sessionId);
+    if (!mounted) return;
+    final profiles = await db.getAllProviders();
+    ProviderProfile profile;
+    if (s?.providerId != null) {
+      profile = profiles.firstWhere(
+        (p) => p.id == s!.providerId,
+        orElse: () => profiles.first,
+      );
+    } else {
+      profile = profiles.first;
+    }
+    if (!mounted) return;
+    setState(() {
+      _session = s;
+      _profile = profile;
+    });
   }
 
   @override
@@ -64,10 +85,10 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.read<SettingsService>();
     final session = _session;
+    final profile = _profile;
 
-    if (session == null) {
+    if (session == null || profile == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
@@ -77,9 +98,12 @@ class _ChatPageState extends State<ChatPage> {
         final agent = context.read<AgentProvider>().byId(session.agentId);
         final provider = ChatProvider(
           database: DatabaseService.instance,
-          api: ApiService(baseUrl: settings.baseUrl, apiKey: settings.apiKey),
+          api: ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey),
           session: session,
-          model: settings.model,
+          profile: profile,
+          model: session.model?.isNotEmpty == true
+              ? session.model!
+              : profile.defaultModel,
           agent: agent,
         )..loadMessages();
         return provider;

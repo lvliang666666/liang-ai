@@ -7,6 +7,7 @@ import '../models/agent.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/message_attachment.dart';
+import '../models/provider_profile.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/sse_parser.dart';
@@ -20,21 +21,27 @@ class ChatProvider extends ChangeNotifier {
     required DatabaseService database,
     required ApiService api,
     required ChatSession session,
+    required ProviderProfile profile,
     required String model,
     Agent? agent,
   })  : _db = database,
         _api = api,
         _session = session,
+        _profile = profile,
         _model = model,
         _agent = agent;
 
   final DatabaseService _db;
   final ApiService _api;
   final ChatSession _session;
+  final ProviderProfile _profile;
   final String _model;
 
   /// 当前会话绑定的 Agent（null = 默认助手，无 system prompt）
   Agent? _agent;
+
+  /// 会话绑定的供应商 profile（请求组装与能力判断依据）
+  ProviderProfile get profile => _profile;
 
   List<ChatMessage> _messages = [];
   ChatStatus _status = ChatStatus.idle;
@@ -148,6 +155,7 @@ class ChatProvider extends ChangeNotifier {
 
     _subscription = _api
         .chatStream(
+      profile: _profile,
       messages: history,
       model: _model,
       effort: _effectiveEffort,
