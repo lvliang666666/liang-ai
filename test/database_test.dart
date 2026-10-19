@@ -17,7 +17,7 @@ void main() {
     final inMemory = await databaseFactory.openDatabase(
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (d, v) async {
         await d.execute('''
           CREATE TABLE sessions (
@@ -39,6 +39,8 @@ void main() {
             content TEXT NOT NULL DEFAULT '',
             reasoning TEXT NOT NULL DEFAULT '',
             attachments TEXT NOT NULL DEFAULT '[]',
+            tool_calls TEXT NOT NULL DEFAULT '[]',
+            tool_call_id TEXT,
             created_at INTEGER NOT NULL
           )
         ''');

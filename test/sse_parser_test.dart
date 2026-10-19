@@ -3,6 +3,31 @@ import 'dart:convert';
 import 'package:ai_chat_app/services/sse_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+
+/// 构造单工具分片的 delta JSON（不含 data: 前缀与外层包裹）
+String _tcJson(int index, String? id, String? name, String args) {
+  final idPart = id == null ? '' : '"id":"$id",';
+  final namePart = name == null ? '' : '"name":"$name",';
+  final escaped = args.replaceAll('"', '\\"');
+  return '{"choices":[{"delta":{"tool_calls":[{"index":$index,$idPart"type":"function","function":{$namePart"arguments":"$escaped"}}]}}]}';
+}
+
+/// 构造单个 tool_call 对象片段（不含 delta/choices 包裹）
+String _tcFragment(int index, String? id, String? name, String args) {
+  final idPart = id == null ? '' : '"id":"$id",';
+  final namePart = name == null ? '' : '"name":"$name",';
+  final escaped = args.replaceAll('"', '\\"');
+  return '{"index":$index,$idPart"type":"function","function":{$namePart"arguments":"$escaped"}}';
+}
+
+/// 构造双工具并行分片 JSON
+String _twoToolsJson() {
+  return '{"choices":[{"delta":{"tool_calls":['
+      '{"index":0,"id":"a","type":"function","function":{"name":"f1","arguments":""}},'
+      '{"index":1,"id":"b","type":"function","function":{"name":"f2","arguments":""}}'
+      ']}}]}';
+}
+
 void main() {
   group('SseParser', () {
     test('单 chunk 完整流：content 增量 + [DONE]', () {
@@ -135,6 +160,80 @@ void main() {
       );
       expect(events.length, 1);
       expect((events[0] as SseDeltaReasoning).text, '思考');
+    });
+  });
+  group('SseParser tool_calls 解析', () {
+    test('首片带 id/name，arguments 为空串', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_current_time","arguments":""}}]}}]}\n',
+      );
+      expect(events.length, 1);
+      final tc = events[0] as SseToolCallDelta;
+      expect(tc.index, 0);
+      expect(tc.id, 'call_1');
+      expect(tc.name, 'get_current_time');
+      expect(tc.argumentsFragment, '');
+    });
+  });
+
+  group('SseParser tool_calls 分片与结束', () {
+    test('后续片只带 arguments 增量（无 id/name）', () {
+      final parser = SseParser();
+      final line1 = 'data: ${_tcJson(0, null, null, '{"city":"北')}\n';
+      final line2 = 'data: ${_tcJson(0, null, null, '京')}\n';
+      final events = [...parser.addChunk(line1), ...parser.addChunk(line2)];
+      expect(events.length, 2);
+      final t1 = events[0] as SseToolCallDelta;
+      final t2 = events[1] as SseToolCallDelta;
+      expect(t1.id, isNull);
+      expect(t1.name, isNull);
+      expect(t1.argumentsFragment, '{"city":"北');
+      expect(t2.argumentsFragment, '京');
+    });
+
+    test('多工具并行调用 index 交错透传', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: ${_twoToolsJson()}\n',
+      );
+      expect(events.length, 2);
+      expect((events[0] as SseToolCallDelta).index, 0);
+      expect((events[1] as SseToolCallDelta).index, 1);
+      expect((events[0] as SseToolCallDelta).name, 'f1');
+      expect((events[1] as SseToolCallDelta).name, 'f2');
+    });
+
+    test('finish_reason=tool_calls 发出 SseToolCallsFinished 且不置 done', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n',
+      );
+      expect(events.length, 1);
+      expect(events[0], isA<SseToolCallsFinished>());
+      expect(parser.isDone, isFalse);
+    });
+
+    test('tool_calls 轮不再误发 SseDone', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[{"delta":{"tool_calls":['
+            '${_tcFragment(0, 'c1', 'f', '{}')}'
+            ']},"finish_reason":"tool_calls"}]}\n',
+      );
+      expect(events.whereType<SseDone>(), isEmpty);
+      expect(events.whereType<SseToolCallDelta>(), hasLength(1));
+      expect(events.whereType<SseToolCallsFinished>(), hasLength(1));
+    });
+
+    test('tool_calls 与 content 同片共存（模型边说边调工具）', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[{"delta":{"content":"让我查一下","tool_calls":[{"index":0,"id":"c1","type":"function","function":{"name":"f","arguments":""}}]}}]}\n',
+      );
+      expect(events.length, 2);
+      expect((events[0] as SseDeltaContent).text, '让我查一下');
+      expect(events[1], isA<SseToolCallDelta>());
     });
   });
 }

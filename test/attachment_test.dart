@@ -204,11 +204,17 @@ void main() {
       // 2. 用 DatabaseService 重新打开（触发 v2→v3 迁移）
       final reopened = await databaseFactory.openDatabase(dbPath,
           options: OpenDatabaseOptions(
-            version: 3,
+            version: 5,
             onUpgrade: (db, oldV, newV) async {
               if (oldV < 3) {
                 await db.execute(
                     "ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
+              }
+              if (oldV < 5) {
+                await db.execute(
+                    "ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'");
+                await db.execute(
+                    'ALTER TABLE messages ADD COLUMN tool_call_id TEXT');
               }
             },
           ));
@@ -244,7 +250,7 @@ void main() {
 
     test('全新 v3 库直接建表含 attachments 列', () async {
       final db = await databaseFactory.openDatabase(dbPath,
-          options: OpenDatabaseOptions(version: 3, onCreate: (d, v) async {
+          options: OpenDatabaseOptions(version: 5, onCreate: (d, v) async {
         await d.execute('''
           CREATE TABLE messages (
             id TEXT PRIMARY KEY,
@@ -253,6 +259,8 @@ void main() {
             content TEXT NOT NULL DEFAULT '',
             reasoning TEXT NOT NULL DEFAULT '',
             attachments TEXT NOT NULL DEFAULT '[]',
+            tool_calls TEXT NOT NULL DEFAULT '[]',
+            tool_call_id TEXT,
             created_at INTEGER NOT NULL
           )
         ''');
