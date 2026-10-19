@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 
+import '../models/provider_profile.dart';
 import 'sse_parser.dart';
 
 /// API 调用异常（带用户可读信息）
@@ -16,6 +17,10 @@ class ApiException implements Exception {
 }
 
 /// OpenAI 兼容聊天 API 服务（SSE 流式）
+///
+/// 请求组装与响应解析由 [ProviderProfile] 驱动：
+/// - 方言参数（推理档位）仅在 profile.dialect.effortParam 声明时发送
+/// - 思考流字段按 profile.dialect.reasoningField 解析
 class ApiService {
   ApiService({required String baseUrl, required String apiKey})
       : _dio = Dio(BaseOptions(
@@ -30,28 +35,29 @@ class ApiService {
   /// 发起流式对话请求
   ///
   /// [messages] 为 OpenAI 格式消息列表（content 可为字符串或多模态数组）；
-  /// [effort] 为推理档位 max/high/low。
+  /// [effort] 为推理档位 max/high/low（仅方言声明 effortParam 时发送）。
   /// 返回 SSE 事件流；通过取消返回的 Stream 订阅或 [cancelToken] 可中断。
   Stream<SseEvent> chatStream({
+    required ProviderProfile profile,
     required List<Map<String, Object?>> messages,
     required String model,
     required String effort,
     required CancelToken cancelToken,
     double temperature = 0.7,
   }) async* {
-    final parser = SseParser();
+    final parser = SseParser(reasoningField: profile.dialect.reasoningField);
     try {
       final response = await _dio.post<ResponseBody>(
         '/chat/completions',
         options: Options(responseType: ResponseType.stream),
         cancelToken: cancelToken,
-        data: {
-          'model': model,
-          'messages': messages,
-          'stream': true,
-          'temperature': temperature,
-          'chat_template_kwargs': {'reasoning_effort': effort},
-        },
+        data: _buildBody(
+          profile: profile,
+          messages: messages,
+          model: model,
+          effort: effort,
+          temperature: temperature,
+        ),
       );
 
       final stream = response.data!.stream
@@ -73,12 +79,50 @@ class ApiService {
       if (!parser.isDone) yield const SseDone();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) rethrow; // 停止生成，由上层处理
-      throw ApiException(_mapError(e), statusCode: e.response?.statusCode);
+      throw ApiException(_mapError(e, profile), statusCode: e.response?.statusCode);
     }
   }
 
-  /// 错误映射为用户可读文案
-  static String _mapError(DioException e) {
+  /// 请求体组装：方言参数按 profile 声明注入
+  static Map<String, Object?> _buildBody({
+    required ProviderProfile profile,
+    required List<Map<String, Object?>> messages,
+    required String model,
+    required String effort,
+    required double temperature,
+  }) {
+    final body = <String, Object?>{
+      'model': model,
+      'messages': messages,
+      'stream': true,
+      'temperature': temperature,
+    };
+    // glm 方言：chat_template_kwargs.reasoning_effort
+    final effortParam = profile.dialect.effortParam;
+    if (effortParam != null && effortParam.isNotEmpty) {
+      body['chat_template_kwargs'] = {effortParam: effort};
+    }
+    return body;
+  }
+
+  /// 测试入口：暴露请求体组装逻辑
+  static Map<String, Object?> buildBodyForTest({
+    required ProviderProfile profile,
+    required List<Map<String, Object?>> messages,
+    required String model,
+    required String effort,
+    required double temperature,
+  }) =>
+      _buildBody(
+        profile: profile,
+        messages: messages,
+        model: model,
+        effort: effort,
+        temperature: temperature,
+      );
+
+  /// 错误映射为用户可读文案（供应商专属提示按 profile 定制）
+  static String _mapError(DioException e, ProviderProfile profile) {
     final code = e.response?.statusCode;
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
@@ -92,7 +136,9 @@ class ApiService {
           case 401:
             return 'API Key 无效或已过期，请在设置中检查';
           case 403:
-            return '访问被拒绝（域名白名单限制），请使用设置中的预设域名';
+            return profile.isBuiltin
+                ? '访问被拒绝（域名白名单限制），请使用设置中的预设域名'
+                : '访问被拒绝（HTTP 403），请检查 Base URL 与 Key';
           case 429:
             return '请求过于频繁，请稍后重试';
           default:
