@@ -47,10 +47,6 @@ class _ChatInputBarState extends State<ChatInputBar> {
   void initState() {
     super.initState();
     _initAttachmentStorage();
-    // 焦点变化时刷新右侧动作区（+ ↔ 发送键切换）
-    _focusNode.addListener(() {
-      if (mounted) setState(() {});
-    });
   }
 
   /// 文件附件沙箱目录（应用文档目录/attachments）
@@ -227,13 +223,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
     // 豆包式右侧动作区逻辑：
     // - 流式中：显示停止键
-    // - 聚焦或有文字/附件：显示发送键（输入文字后 + 消失）
-    // - 否则：只显示 +
+    // - 输入文字或有待发附件：显示发送键（覆盖 +）
+    // - 否则（含聚焦未输入）：只显示 +
     final hasText = _controller.text.trim().isNotEmpty;
-    final showSend = widget.isStreaming ||
-        hasText ||
-        pending.isNotEmpty ||
-        _focusNode.hasFocus;
+    final showSend =
+        widget.isStreaming || hasText || pending.isNotEmpty;
     final showPlus = !widget.isStreaming && !hasText;
 
     return SafeArea(
