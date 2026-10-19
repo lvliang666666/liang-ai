@@ -180,6 +180,11 @@ class ChatProvider extends ChangeNotifier {
             _finishStreaming();
           case SseError(:final message):
             _failStreaming(message);
+          // 工具调用事件：阶段 1 仅透传解析，loop 接入在后续阶段
+          case SseToolCallDelta():
+            break;
+          case SseToolCallsFinished():
+            break;
         }
       },
       onError: (Object e) {
