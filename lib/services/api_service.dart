@@ -105,6 +105,22 @@ class ApiService {
     return body;
   }
 
+  /// 测试入口：暴露请求体组装逻辑
+  static Map<String, Object?> buildBodyForTest({
+    required ProviderProfile profile,
+    required List<Map<String, Object?>> messages,
+    required String model,
+    required String effort,
+    required double temperature,
+  }) =>
+      _buildBody(
+        profile: profile,
+        messages: messages,
+        model: model,
+        effort: effort,
+        temperature: temperature,
+      );
+
   /// 错误映射为用户可读文案（供应商专属提示按 profile 定制）
   static String _mapError(DioException e, ProviderProfile profile) {
     final code = e.response?.statusCode;

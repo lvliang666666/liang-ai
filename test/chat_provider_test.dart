@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:ai_chat_app/models/chat_session.dart';
+import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
@@ -16,12 +17,16 @@ class MockApiService implements ApiService {
   final _controller = StreamController<SseEvent>.broadcast();
   int chatStreamCalls = 0;
 
+  /// 记录最近一次请求的 profile（方言断言用）
+  ProviderProfile? lastProfile;
+
   void emit(SseEvent event) => _controller.add(event);
 
   void emitError(Object error) => _controller.addError(error);
 
   @override
   Stream<SseEvent> chatStream({
+    required ProviderProfile profile,
     required List<Map<String, Object?>> messages,
     required String model,
     required String effort,
@@ -29,6 +34,7 @@ class MockApiService implements ApiService {
     double temperature = 0.7,
   }) {
     chatStreamCalls++;
+    lastProfile = profile;
     return _controller.stream;
   }
 
@@ -50,7 +56,7 @@ void main() {
     final inMemory = await databaseFactory.openDatabase(
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 2,
+        version: 4,
         onCreate: (d, v) async {
           await d.execute('''
             CREATE TABLE sessions (
@@ -59,7 +65,9 @@ void main() {
               created_at INTEGER NOT NULL,
               updated_at INTEGER NOT NULL,
               effort TEXT NOT NULL DEFAULT 'max',
-              agent_id TEXT
+              agent_id TEXT,
+              provider_id TEXT,
+              model TEXT
             )
           ''');
           await d.execute('''
@@ -85,6 +93,18 @@ void main() {
               is_builtin INTEGER NOT NULL DEFAULT 0
             )
           ''');
+          await d.execute('''
+            CREATE TABLE providers (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              base_url TEXT NOT NULL DEFAULT '',
+              api_key TEXT NOT NULL DEFAULT '',
+              default_model TEXT NOT NULL DEFAULT '',
+              capabilities TEXT NOT NULL DEFAULT '{}',
+              dialect TEXT NOT NULL DEFAULT '{}',
+              is_builtin INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
         },
       ),
     );
@@ -103,6 +123,7 @@ void main() {
       database: db,
       api: api,
       session: session,
+      profile: ProviderProfile.builtinCompany(),
       model: 'glm5.1',
     );
   });

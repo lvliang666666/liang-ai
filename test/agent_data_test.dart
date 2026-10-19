@@ -139,7 +139,8 @@ temperature: 0.8
             CREATE TABLE sessions (
               id TEXT PRIMARY KEY, title TEXT NOT NULL,
               created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-              effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT
+              effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
+              provider_id TEXT, model TEXT
             )
           ''');
           await db.execute('''
