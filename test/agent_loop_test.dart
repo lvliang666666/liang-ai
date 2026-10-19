@@ -308,7 +308,9 @@ void main() {
         api: api,
         session: ChatSession(
             id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
-        profile: ProviderProfile.builtinCompany(), // toolCalls 默认 false
+        // 内置 profile 现已声明 toolCalls（v1.6.0），显式关掉模拟无能力供应商
+        profile: ProviderProfile.builtinCompany()
+            .copyWith(capabilities: const ProviderCapabilities()),
         model: 'glm5.1',
         toolRegistry: ToolRegistry()..register(const StubTool('x')),
       );

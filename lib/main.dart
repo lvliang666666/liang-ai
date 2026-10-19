@@ -34,6 +34,9 @@ Future<void> main() async {
             defaultModel:
                 legacyModel.isEmpty ? seed.defaultModel : legacyModel,
           ));
+  } else {
+    // 老版本种子的能力声明缺后加能力位（如 v1.6.0 toolCalls），幂等补写
+    await db.upgradeBuiltinProviderCapabilities();
   }
 
   runApp(AiChatApp(settings: settings));
