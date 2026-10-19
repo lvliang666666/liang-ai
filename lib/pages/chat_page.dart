@@ -26,6 +26,15 @@ class ChatPage extends StatefulWidget {
   State<ChatPage> createState() => _ChatPageState();
 }
 
+/// AppBar 内强调文字颜色：跟随主题 AppBar 前景色。
+///
+/// 默认主题 AppBar 浅色底 → 深色字（appBarTheme 未显式设置时回退 onSurface）；
+/// Minecraft 主题 AppBar 深色底 → 白色字（appBarTheme.foregroundColor=textLight）。
+/// 之前直接用 colorScheme.onPrimary（默认主题下是白色）导致浅色底上看不清。
+Color _appBarForeground(BuildContext context) =>
+    Theme.of(context).appBarTheme.foregroundColor ??
+    Theme.of(context).colorScheme.onSurface;
+
 class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
   int _lastDisplayCount = 0;
@@ -162,12 +171,11 @@ class _ChatPageView extends StatelessWidget {
                           : '🤖 默认助手',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Theme.of(context).colorScheme.onPrimary,
+                        color: _appBarForeground(context),
                       ),
                     ),
                     Icon(Icons.keyboard_arrow_down,
-                        size: 14,
-                        color: Theme.of(context).colorScheme.onPrimary),
+                        size: 14, color: _appBarForeground(context)),
                   ],
                 ),
               ],
@@ -450,15 +458,14 @@ class _ModelSwitchButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.tune,
-              size: 16, color: Theme.of(context).colorScheme.onPrimary),
+          Icon(Icons.tune, size: 16, color: _appBarForeground(context)),
           const SizedBox(width: 4),
           Flexible(
             child: Text(
               chat.model,
               style: TextStyle(
                 fontSize: 12,
-                color: Theme.of(context).colorScheme.onPrimary,
+                color: _appBarForeground(context),
               ),
               overflow: TextOverflow.ellipsis,
             ),
