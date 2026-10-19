@@ -31,7 +31,7 @@ void main() {
     setUp(() async {
       final inMemory = await databaseFactory.openDatabase(
         inMemoryDatabasePath,
-        options: OpenDatabaseOptions(version: 4),
+        options: OpenDatabaseOptions(version: 5),
       );
       await inMemory.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
@@ -45,7 +45,9 @@ void main() {
         CREATE TABLE IF NOT EXISTS messages (
           id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
           content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
-          attachments TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]', tool_call_id TEXT,
+          created_at INTEGER NOT NULL
         )
       ''');
       db = DatabaseService.instance;
