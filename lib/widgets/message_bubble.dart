@@ -8,25 +8,35 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/chat_message.dart';
+import '../models/tool_call.dart';
 import '../providers/theme_provider.dart';
 import '../services/file_export_service.dart';
 import '../utils/haptics.dart';
 import 'attachment_thumbnail.dart';
 import 'code_block_widget.dart';
 import 'thinking_block.dart';
+import 'tool_call_block.dart';
 
-/// 消息气泡：用户右侧蓝色，助手左侧含思考块 + Markdown
+/// 消息气泡：用户右侧蓝色，助手左侧含思考块 + 工具卡片 + Markdown
 class MessageBubble extends StatelessWidget {
   const MessageBubble({
     super.key,
     required this.message,
     this.isStreaming = false,
     this.thinkingSeconds = 0,
+    this.toolResults = const [],
+    this.toolExecuting = false,
   });
 
   final ChatMessage message;
   final bool isStreaming;
   final int thinkingSeconds;
+
+  /// 本消息 tool_calls 对应的执行结果（UI 卡片展示）
+  final List<ToolCallResult> toolResults;
+
+  /// 工具是否正在执行（toolCalling 状态）
+  final bool toolExecuting;
 
   @override
   Widget build(BuildContext context) {
@@ -112,6 +122,13 @@ class MessageBubble extends StatelessWidget {
                   reasoning: message.reasoning,
                   streaming: thinkingStreaming,
                   seconds: thinkingSeconds,
+                ),
+              // 工具调用卡片（assistant 发起过调用时显示）
+              if (message.toolCalls.isNotEmpty)
+                ToolCallBlock(
+                  calls: message.toolCalls,
+                  results: toolResults,
+                  executing: toolExecuting,
                 ),
               // 正文 Markdown
               if (message.content.isNotEmpty)
