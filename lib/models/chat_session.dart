@@ -6,7 +6,7 @@ class ChatSession {
     required this.createdAt,
     required this.updatedAt,
     this.effort = 'max',
-    this.agentId,
+    this.skillId,
     this.providerId,
     this.model,
   });
@@ -19,8 +19,8 @@ class ChatSession {
   /// 该会话的推理档位：max / high / low
   String effort;
 
-  /// 绑定的 Agent id（null = 默认助手，无人格提示词）
-  String? agentId;
+  /// 绑定的 Skill id（null = 默认助手，无人格提示词 + 全部工具）
+  String? skillId;
 
   /// 绑定的供应商 id（null = 用默认供应商）
   String? providerId;
@@ -34,7 +34,7 @@ class ChatSession {
         'created_at': createdAt,
         'updated_at': updatedAt,
         'effort': effort,
-        'agent_id': agentId,
+        'skill_id': skillId,
         'provider_id': providerId,
         'model': model,
       };
@@ -45,7 +45,7 @@ class ChatSession {
         createdAt: map['created_at'] as int,
         updatedAt: map['updated_at'] as int,
         effort: (map['effort'] as String?) ?? 'max',
-        agentId: map['agent_id'] as String?,
+        skillId: map['skill_id'] as String?,
         providerId: map['provider_id'] as String?,
         model: map['model'] as String?,
       );
