@@ -14,7 +14,7 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'ai_chat.db';
-  static const _dbVersion = 4;
+  static const _dbVersion = 5;
 
   Database? _db;
 
@@ -59,6 +59,8 @@ class DatabaseService {
         content TEXT NOT NULL DEFAULT '',
         reasoning TEXT NOT NULL DEFAULT '',
         attachments TEXT NOT NULL DEFAULT '[]',
+        tool_calls TEXT NOT NULL DEFAULT '[]',
+        tool_call_id TEXT,
         created_at INTEGER NOT NULL
       )
     ''');
@@ -86,6 +88,13 @@ class DatabaseService {
       await db.execute('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
       await db.execute('ALTER TABLE sessions ADD COLUMN model TEXT');
       await _createProvidersTable(db);
+    }
+    if (oldVersion < 5) {
+      // v4 → v5：工具调用——messages 加 tool_calls（JSON 数组）与
+      // tool_call_id（tool 结果消息关联）列
+      await db.execute(
+          "ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'");
+      await db.execute('ALTER TABLE messages ADD COLUMN tool_call_id TEXT');
     }
   }
 

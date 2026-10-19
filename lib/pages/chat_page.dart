@@ -10,6 +10,8 @@ import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
+import '../services/tool_registry.dart';
+import '../services/tools/builtin_tools.dart';
 import '../utils/haptics.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/message_bubble.dart';
@@ -106,6 +108,7 @@ class _ChatPageState extends State<ChatPage> {
               ? session.model!
               : profile.defaultModel,
           agent: agent,
+          toolRegistry: ToolRegistry()..registerAll(builtinTools),
         )..loadMessages();
         return provider;
       },
@@ -202,6 +205,9 @@ class _ChatPageView extends StatelessWidget {
                         // reverse 列表 index 0 = 列表末尾 = 最新消息
                         final msg = chat
                             .displayMessages[chat.displayMessages.length - 1 - index];
+                        // tool 结果消息不单独渲染（存档上下文用，
+                        // 结果展示在对应 assistant 消息的工具卡片内）
+                        if (msg.isToolResult) return const SizedBox.shrink();
                         final isLast = index == 0;
                         return MessageBubble(
                           message: msg,

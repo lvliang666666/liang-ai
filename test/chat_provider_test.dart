@@ -20,6 +20,12 @@ class MockApiService implements ApiService {
   /// 记录最近一次请求的 profile（方言断言用）
   ProviderProfile? lastProfile;
 
+  /// 记录最近一次请求的 tools 参数（工具链路断言用）
+  List<Map<String, Object?>>? lastTools;
+
+  /// 记录最近一次请求的 messages（多轮上下文断言用）
+  List<Map<String, Object?>>? lastMessages;
+
   void emit(SseEvent event) => _controller.add(event);
 
   void emitError(Object error) => _controller.addError(error);
@@ -32,9 +38,12 @@ class MockApiService implements ApiService {
     required String effort,
     required CancelToken cancelToken,
     double temperature = 0.7,
+    List<Map<String, Object?>>? tools,
   }) {
     chatStreamCalls++;
     lastProfile = profile;
+    lastTools = tools;
+    lastMessages = messages;
     return _controller.stream;
   }
 
@@ -56,7 +65,7 @@ void main() {
     final inMemory = await databaseFactory.openDatabase(
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 4,
+        version: 5,
         onCreate: (d, v) async {
           await d.execute('''
             CREATE TABLE sessions (
@@ -78,6 +87,8 @@ void main() {
               content TEXT NOT NULL DEFAULT '',
               reasoning TEXT NOT NULL DEFAULT '',
               attachments TEXT NOT NULL DEFAULT '[]',
+              tool_calls TEXT NOT NULL DEFAULT '[]',
+              tool_call_id TEXT,
               created_at INTEGER NOT NULL
             )
           ''');
