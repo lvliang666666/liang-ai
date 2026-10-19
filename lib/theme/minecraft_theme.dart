@@ -37,6 +37,8 @@ class MinecraftTheme {
     final scheme = ColorScheme(
       brightness: brightness,
       primary: grassGreen,
+      // AppBar 深色底（panelBg/stoneGray）上 primary 绿色可读性差，
+      // onPrimary 固定白色，供 AppBar 内强调文字（Agent/模型名）使用
       onPrimary: Colors.white,
       primaryContainer: isDark ? grassDark : Color(0xFFDCEBC8),
       onPrimaryContainer: isDark ? Color(0xFFDCEBC8) : grassDark,

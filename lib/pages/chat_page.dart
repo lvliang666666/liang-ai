@@ -159,10 +159,12 @@ class _ChatPageView extends StatelessWidget {
                           : '🤖 默认助手',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Theme.of(context).colorScheme.primary,
+                        color: Theme.of(context).colorScheme.onPrimary,
                       ),
                     ),
-                    const Icon(Icons.keyboard_arrow_down, size: 14),
+                    Icon(Icons.keyboard_arrow_down,
+                        size: 14,
+                        color: Theme.of(context).colorScheme.onPrimary),
                   ],
                 ),
               ],
@@ -436,14 +438,14 @@ class _ModelSwitchButton extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(Icons.tune,
-              size: 16, color: Theme.of(context).colorScheme.primary),
+              size: 16, color: Theme.of(context).colorScheme.onPrimary),
           const SizedBox(width: 4),
           Flexible(
             child: Text(
               chat.model,
               style: TextStyle(
                 fontSize: 12,
-                color: Theme.of(context).colorScheme.primary,
+                color: Theme.of(context).colorScheme.onPrimary,
               ),
               overflow: TextOverflow.ellipsis,
             ),
