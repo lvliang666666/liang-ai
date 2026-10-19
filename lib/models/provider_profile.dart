@@ -76,6 +76,15 @@ class ProviderDialect {
         effortParam: map['effort_param'] as String?,
       );
 
+  ProviderDialect copyWith({
+    String? reasoningField,
+    String? effortParam,
+  }) =>
+      ProviderDialect(
+        reasoningField: reasoningField ?? this.reasoningField,
+        effortParam: effortParam ?? this.effortParam,
+      );
+
   @override
   bool operator ==(Object other) =>
       other is ProviderDialect &&

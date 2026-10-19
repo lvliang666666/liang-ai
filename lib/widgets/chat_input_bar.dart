@@ -24,6 +24,8 @@ class ChatInputBar extends StatefulWidget {
     required this.onSend,
     required this.onStop,
     required this.onEffortChanged,
+    this.showAttachmentButton = true,
+    this.showEffortButton = true,
   });
 
   final bool isStreaming;
@@ -31,6 +33,10 @@ class ChatInputBar extends StatefulWidget {
   final ValueChanged<String> onSend;
   final VoidCallback onStop;
   final ValueChanged<String> onEffortChanged;
+
+  /// 供应商能力开关：不支持时隐藏对应按钮
+  final bool showAttachmentButton;
+  final bool showEffortButton;
 
   @override
   State<ChatInputBar> createState() => _ChatInputBarState();
@@ -247,37 +253,39 @@ class _ChatInputBarState extends State<ChatInputBar> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // 推理档位按钮（左侧，垂直居中）
-                InkWell(
-                  onTap: _pickEffort,
-                  borderRadius: BorderRadius.circular(radius + 2),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 8),
-                    decoration: BoxDecoration(
-                      color:
-                          colorScheme.primaryContainer.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(radius + 2),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.bolt,
-                            size: 16, color: colorScheme.primary),
-                        const SizedBox(width: 4),
-                        Text(
-                          effortLabel,
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: colorScheme.primary,
-                            fontWeight: FontWeight.w500,
+                // 推理档位按钮（左侧，垂直居中；供应商不支持思考流时隐藏）
+                if (widget.showEffortButton) ...[
+                  InkWell(
+                    onTap: _pickEffort,
+                    borderRadius: BorderRadius.circular(radius + 2),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: colorScheme.primaryContainer
+                            .withValues(alpha: 0.6),
+                        borderRadius: BorderRadius.circular(radius + 2),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.bolt,
+                              size: 16, color: colorScheme.primary),
+                          const SizedBox(width: 4),
+                          Text(
+                            effortLabel,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: colorScheme.primary,
+                              fontWeight: FontWeight.w500,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 8),
+                  const SizedBox(width: 8),
+                ],
                 // 输入框
                 Expanded(
                   child: TextField(
@@ -307,8 +315,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   ),
                 ),
                 const SizedBox(width: 4),
-                // 右侧动作区：+ 与 发送/停止
-                if (showPlus)
+                // 右侧动作区：+ 与 发送/停止（供应商不支持视觉时隐藏 +）
+                if (showPlus && widget.showAttachmentButton)
                   IconButton(
                     onPressed: _pickAttachment,
                     icon: Icon(Icons.add_circle_outline,
