@@ -20,8 +20,8 @@ class SessionsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 创建新会话并返回（[agentId] 为选中的 Agent，null = 默认助手）
-  Future<ChatSession> createSession(String effort, {String? agentId}) async {
+  /// 创建新会话并返回（[skillId] 为选中的 Skill，null = 默认助手）
+  Future<ChatSession> createSession(String effort, {String? skillId}) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final session = ChatSession(
       id: DateTime.now().microsecondsSinceEpoch.toRadixString(36),
@@ -29,7 +29,7 @@ class SessionsProvider extends ChangeNotifier {
       createdAt: now,
       updatedAt: now,
       effort: effort,
-      agentId: agentId,
+      skillId: skillId,
     );
     await _db.insertSession(session);
     _sessions = [session, ..._sessions];
