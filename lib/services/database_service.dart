@@ -341,6 +341,49 @@ class DatabaseService {
     return rows.isNotEmpty;
   }
 
+  /// 内置供应商能力升级（幂等，随版本演进）
+  ///
+  /// 老版本种子的 capabilities JSON 缺少后加的能力位（如 v1.6.0 的
+  /// toolCalls），DB 里的旧数据不会随代码更新——启动时检测并补写。
+  /// 只补内置 profile，用户自定义供应商不受影响。
+  Future<void> upgradeBuiltinProviderCapabilities() async {
+    final db = await database;
+    final rows = await db.query('providers', where: 'is_builtin = 1');
+    for (final row in rows) {
+      final profile = _profileFromRow(row);
+      // 按内置 id 找到对应的能力声明模板，缺什么补什么
+      final template = _builtinCapabilityTemplates[profile.id];
+      if (template == null) continue;
+      var updated = profile;
+      if (!profile.capabilities.vision && template.vision) {
+        updated = updated.copyWith(
+            capabilities: updated.capabilities.copyWith(vision: true));
+      }
+      if (!profile.capabilities.reasoning && template.reasoning) {
+        updated = updated.copyWith(
+            capabilities: updated.capabilities.copyWith(reasoning: true));
+      }
+      if (!profile.capabilities.toolCalls && template.toolCalls) {
+        updated = updated.copyWith(
+            capabilities: updated.capabilities.copyWith(toolCalls: true));
+      }
+      if (updated.capabilities != profile.capabilities) {
+        await db.update('providers', _providerRow(updated),
+            where: 'id = ?', whereArgs: [profile.id]);
+      }
+    }
+  }
+
+  /// 内置供应商应具备的能力模板（按 id 索引，随版本演进维护）
+  static const Map<String, ProviderCapabilities> _builtinCapabilityTemplates =
+      {
+    ProviderProfile.builtinCompanyId: ProviderCapabilities(
+      vision: true,
+      reasoning: true,
+      toolCalls: true,
+    ),
+  };
+
   Map<String, Object?> _providerRow(ProviderProfile profile) => {
         'id': profile.id,
         'name': profile.name,

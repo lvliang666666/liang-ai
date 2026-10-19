@@ -49,13 +49,14 @@ void main() {
       expect(restored.dialect.reasoningField, isNull);
     });
 
-    test('内置公司 profile：glm 方言 + 视觉/思考能力，Key 为空', () {
+    test('内置公司 profile：glm 方言 + 视觉/思考/工具能力，Key 为空', () {
       final p = ProviderProfile.builtinCompany();
       expect(p.id, ProviderProfile.builtinCompanyId);
       expect(p.isBuiltin, isTrue);
       expect(p.apiKey, ''); // 凭据不入代码库
       expect(p.capabilities.vision, isTrue);
       expect(p.capabilities.reasoning, isTrue);
+      expect(p.capabilities.toolCalls, isTrue); // v1.6.0 工具调用
       expect(p.dialect.effortParam, 'reasoning_effort');
       expect(p.dialect.reasoningField, 'reasoning');
     });
@@ -187,6 +188,54 @@ void main() {
       expect(await db.hasBuiltinProviders(), isFalse);
       await db.insertProvider(ProviderProfile.builtinCompany());
       expect(await db.hasBuiltinProviders(), isTrue);
+    });
+
+    test('能力升级：老种子缺 toolCalls 补写，其他字段不动', () async {
+      // 模拟 v1.5.0 老种子：capabilities JSON 缺 tool_calls 位
+      final oldProfile = ProviderProfile.builtinCompany().copyWith(
+        apiKey: 'sk-legacy',
+        capabilities: const ProviderCapabilities(
+            vision: true, reasoning: true),
+      );
+      await db.insertProvider(oldProfile);
+
+      await db.upgradeBuiltinProviderCapabilities();
+
+      final upgraded = (await db.getProvider(
+              ProviderProfile.builtinCompanyId))!;
+      expect(upgraded.capabilities.toolCalls, isTrue); // 补上了
+      expect(upgraded.capabilities.vision, isTrue); // 原有能力保留
+      expect(upgraded.capabilities.reasoning, isTrue);
+      expect(upgraded.apiKey, 'sk-legacy'); // 凭据不动
+      expect(upgraded.dialect.effortParam, 'reasoning_effort');
+    });
+
+    test('能力升级幂等：已齐全的 profile 再跑一遍不变', () async {
+      await db.insertProvider(ProviderProfile.builtinCompany());
+
+      await db.upgradeBuiltinProviderCapabilities();
+      await db.upgradeBuiltinProviderCapabilities(); // 跑两遍
+
+      final p = (await db.getProvider(
+              ProviderProfile.builtinCompanyId))!;
+      expect(p.capabilities.toolCalls, isTrue);
+      expect(p.capabilities.vision, isTrue);
+      expect(p.capabilities.reasoning, isTrue);
+    });
+
+    test('能力升级不碰自定义供应商', () async {
+      final custom = ProviderProfile(
+        id: 'custom1',
+        name: '自定义',
+        baseUrl: 'https://x/v1',
+        // 自定义供应商故意不开 toolCalls（用户自己的选择）
+      );
+      await db.insertProvider(custom);
+
+      await db.upgradeBuiltinProviderCapabilities();
+
+      final p = (await db.getProvider('custom1'))!;
+      expect(p.capabilities.toolCalls, isFalse); // 未被误改
     });
   });
 

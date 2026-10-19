@@ -196,6 +196,7 @@ class ProviderProfile {
         capabilities: const ProviderCapabilities(
           vision: true,
           reasoning: true,
+          toolCalls: true,
         ),
         dialect: const ProviderDialect(
           reasoningField: 'reasoning',
