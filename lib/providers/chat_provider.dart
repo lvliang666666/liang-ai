@@ -89,6 +89,9 @@ class ChatProvider extends ChangeNotifier {
   /// 本轮已完成的工具执行结果（UI 卡片渲染用，随 streamingMessage 生命周期）
   List<ToolCallResult> _toolResults = [];
 
+  /// 最近一次发起工具调用的 assistant 消息 ID（UI 卡片归属判断）
+  String? _lastToolCallMessageId;
+
   // ===== Getters =====
   ChatSession get session => _session;
   Agent? get agent => _agent;
@@ -103,6 +106,9 @@ class ChatProvider extends ChangeNotifier {
 
   /// 本轮工具执行结果（UI 工具卡片用）
   List<ToolCallResult> get toolResults => _toolResults;
+
+  /// 最近一次发起工具调用的 assistant 消息 ID（UI 工具卡片归属判断）
+  String? get lastToolCallMessageId => _lastToolCallMessageId;
 
   /// 页面渲染用的完整消息列表（含流式中消息）
   List<ChatMessage> get displayMessages {
@@ -308,6 +314,7 @@ class ChatProvider extends ChangeNotifier {
     assistantMsg.toolCalls = calls;
     await _db.insertMessage(assistantMsg);
     _messages = [..._messages, assistantMsg];
+    _lastToolCallMessageId = assistantMsg.id;
     _streamingMessage = null;
 
     // 3. 逐个执行工具（toolCalling 态供 UI 显示进度）

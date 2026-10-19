@@ -213,6 +213,13 @@ class _ChatPageView extends StatelessWidget {
                           message: msg,
                           isStreaming: isLast && chat.isStreaming,
                           thinkingSeconds: chat.thinkingSeconds,
+                          toolResults:
+                              msg.id == chat.lastToolCallMessageId
+                                  ? chat.toolResults
+                                  : const [],
+                          toolExecuting:
+                              msg.id == chat.lastToolCallMessageId &&
+                                  chat.status == ChatStatus.toolCalling,
                         );
                       },
                     ),
