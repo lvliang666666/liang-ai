@@ -5,33 +5,28 @@ import '../models/chat_session.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart';
 import '../providers/chat_provider.dart';
-import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../utils/haptics.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/chat_tags_bar.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/model_picker_sheet.dart';
 
 /// 聊天页
 class ChatPage extends StatefulWidget {
-  const ChatPage({super.key, required this.sessionId});
+  const ChatPage({super.key, required this.sessionId, this.initialMessage});
 
   final String sessionId;
+
+  /// 进入后自动发送的首条消息（主页打开即聊：发送时才创建会话）
+  final String? initialMessage;
 
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
-
-/// AppBar 内强调文字颜色：跟随主题 AppBar 前景色。
-///
-/// 默认主题 AppBar 浅色底 → 深色字（appBarTheme 未显式设置时回退 onSurface）；
-/// Minecraft 主题 AppBar 深色底 → 白色字（appBarTheme.foregroundColor=textLight）。
-/// 之前直接用 colorScheme.onPrimary（默认主题下是白色）导致浅色底上看不清。
-Color _appBarForeground(BuildContext context) =>
-    Theme.of(context).appBarTheme.foregroundColor ??
-    Theme.of(context).colorScheme.onSurface;
 
 class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
@@ -117,6 +112,13 @@ class _ChatPageState extends State<ChatPage> {
               : profile.defaultModel,
           skill: skill,
         )..loadMessages();
+        // 主页打开即聊：进入后自动发送首条消息（等首帧完成再发）
+        final initial = widget.initialMessage;
+        if (initial != null && initial.isNotEmpty) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            provider.sendMessage(initial);
+          });
+        }
         return provider;
       },
       child: _ChatPageView(
@@ -159,39 +161,13 @@ class _ChatPageView extends StatelessWidget {
               // 上滑收起、下滑立即出现（沉浸阅读，回滑即导航）
               expandedHeight: 0,
               toolbarHeight: kToolbarHeight,
-              title: GestureDetector(
-                onTap: () => _showSkillSwitcher(context, chat),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      chat.session.title,
-                      style: const TextStyle(fontSize: 17),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          chat.skill != null
-                              ? '${chat.skill!.icon} ${chat.skill!.name}'
-                              : '🤖 默认助手',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: _appBarForeground(context),
-                          ),
-                        ),
-                        Icon(Icons.keyboard_arrow_down,
-                            size: 14, color: _appBarForeground(context)),
-                      ],
-                    ),
-                  ],
-                ),
+              // 标题不再承担切换入口（agent/model 移到输入框上方 tags）
+              title: Text(
+                chat.session.title,
+                style: const TextStyle(fontSize: 17),
+                overflow: TextOverflow.ellipsis,
               ),
-              // 模型切换（会话级，仿豆包）
               actions: [
-                _ModelSwitchButton(chat: chat),
                 IconButton(
                   icon: const Icon(Icons.delete_outline),
                   tooltip: '删除会话',
@@ -242,6 +218,7 @@ class _ChatPageView extends StatelessWidget {
           ],
         ),
         // 输入栏固定在底部（不随 AppBar 收起，按钮按供应商能力显隐）
+        // tags 行：agent/model 切换入口（DeepSeek 式，从 AppBar 移来）
         bottomNavigationBar: ChatInputBar(
           isStreaming: chat.isStreaming,
           effort: chat.session.effort,
@@ -250,6 +227,20 @@ class _ChatPageView extends StatelessWidget {
           onEffortChanged: chat.setEffort,
           showAttachmentButton: chat.supportsVision,
           showEffortButton: chat.supportsReasoning,
+          tags: [
+            ChatTag(
+              icon: Icons.smart_toy_outlined,
+              label: chat.skill != null
+                  ? '${chat.skill!.icon} ${chat.skill!.name}'
+                  : '默认助手',
+              onTap: () => _showSkillSwitcher(context, chat),
+            ),
+            ChatTag(
+              icon: Icons.tune,
+              label: chat.model,
+              onTap: () => showModelSwitcher(context, chat),
+            ),
+          ],
         ),
       ),
     );
@@ -448,127 +439,3 @@ class _EmptyHint extends StatelessWidget {
   }
 }
 
-/// AppBar 模型切换按钮：显示当前模型名，点击弹出供应商/模型选择
-class _ModelSwitchButton extends StatelessWidget {
-  const _ModelSwitchButton({required this.chat});
-
-  final ChatProvider chat;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextButton(
-      onPressed: () => _showModelSwitcher(context, chat),
-      style: TextButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        minimumSize: const Size(0, 36),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.tune, size: 16, color: _appBarForeground(context)),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              chat.model,
-              style: TextStyle(
-                fontSize: 12,
-                color: _appBarForeground(context),
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  /// 供应商/模型选择弹窗：按供应商分组列出，选中即切换（会话级）
-  Future<void> _showModelSwitcher(
-      BuildContext context, ChatProvider chat) async {
-    Haptics.light();
-    final providersProvider = context.read<ProviderProvider>();
-    if (!providersProvider.loaded) await providersProvider.load();
-    if (!context.mounted) return;
-
-    // 自定义模型名输入（会话级临时模型）
-    final customCtrl = TextEditingController(text: chat.model);
-    final selected = await showModalBottomSheet<(ProviderProfile, String)>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text('切换模型',
-                  style: Theme.of(context).textTheme.titleMedium),
-            ),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  for (final p in providersProvider.profiles) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
-                      child: Text(
-                        p.name,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: Theme.of(context).colorScheme.primary,
-                            ),
-                      ),
-                    ),
-                    if (p.defaultModel.isNotEmpty)
-                      ListTile(
-                        dense: true,
-                        leading: const Icon(Icons.model_training, size: 20),
-                        title: Text(p.defaultModel),
-                        trailing: chat.profile.id == p.id &&
-                                chat.model == p.defaultModel
-                            ? Icon(Icons.check_circle,
-                                color: Theme.of(context).colorScheme.primary)
-                            : null,
-                        onTap: () => Navigator.pop(context, (p, p.defaultModel)),
-                      ),
-                  ],
-                  const Divider(height: 16),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                    child: TextField(
-                      controller: customCtrl,
-                      decoration: InputDecoration(
-                        isDense: true,
-                        labelText: '自定义模型名（当前供应商）',
-                        suffixIcon: IconButton(
-                          icon: const Icon(Icons.check, size: 20),
-                          onPressed: () => Navigator.pop(
-                              context, (chat.profile, customCtrl.text.trim())),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
-    if (selected == null || !context.mounted) return;
-
-    final (profile, model) = selected;
-    if (model.isEmpty) return;
-    final ok = await chat.switchProvider(profile, model);
-    if (context.mounted && !ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('生成进行中，无法切换模型'),
-            duration: Duration(seconds: 2)),
-      );
-    }
-  }
-}

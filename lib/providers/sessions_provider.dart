@@ -20,8 +20,16 @@ class SessionsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 创建新会话并返回（[skillId] 为选中的 Skill，null = 默认助手）
-  Future<ChatSession> createSession(String effort, {String? skillId}) async {
+  /// 创建新会话并返回
+  ///
+  /// [skillId] 选中的 Skill（null = 默认助手）；
+  /// [providerId]/[model] 主页打开即聊时预选的供应商与模型（null = 用默认）。
+  Future<ChatSession> createSession(
+    String effort, {
+    String? skillId,
+    String? providerId,
+    String? model,
+  }) async {
     final now = DateTime.now().millisecondsSinceEpoch;
     final session = ChatSession(
       id: DateTime.now().microsecondsSinceEpoch.toRadixString(36),
@@ -30,6 +38,8 @@ class SessionsProvider extends ChangeNotifier {
       updatedAt: now,
       effort: effort,
       skillId: skillId,
+      providerId: providerId,
+      model: model,
     );
     await _db.insertSession(session);
     _sessions = [session, ..._sessions];
