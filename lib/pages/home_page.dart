@@ -168,10 +168,37 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 新增对话：退出聊天态回到空闲态（右上角 + 按钮）
-  void _newChat() {
+  /// 新增对话：确认后退出聊天态回到空闲态（右上角 + 按钮）
+  Future<void> _newChat() async {
     Haptics.light();
     _unfocus();
+    // 聊天态先确认（与删除会话弹窗同款样式）
+    if (_chat != null) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('打开新对话'),
+          content: const Text('当前对话已自动保存，可在左侧列表中找回。确定打开新对话吗？'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Haptics.light();
+                Navigator.pop(context, false);
+              },
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Haptics.light();
+                Navigator.pop(context, true);
+              },
+              child: const Text('确定'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
     final chat = _chat;
     if (chat != null) {
       if (chat.isStreaming) chat.stopGeneration();
@@ -393,7 +420,7 @@ class _HomePageState extends State<HomePage> {
           : SafeArea(
               child: Column(
                 children: [
-                  // ===== header：抽屉入口 + 新增对话（标题内嵌消息区顶部） =====
+                  // ===== header：抽屉入口 + 会话标题（聊天态）+ 新增对话 =====
                   Padding(
                     padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
                     child: Row(
@@ -406,8 +433,19 @@ class _HomePageState extends State<HomePage> {
                             _scaffoldKey.currentState?.openDrawer();
                           },
                         ),
-                        const Spacer(),
-                        // 右上角：新增对话（聊天态退出回空闲态）
+                        // 聊天态：header 显示会话标题
+                        Expanded(
+                          child: _chat != null
+                              ? Text(
+                                  _chat!.session.title,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium,
+                                )
+                              : const SizedBox(),
+                        ),
+                        // 右上角：新增对话（聊天态确认后退出回空闲态）
                         IconButton(
                           icon: const Icon(Icons.add),
                           tooltip: '新对话',
@@ -833,7 +871,7 @@ class _ChatArea extends StatelessWidget {
               ],
             ),
           ),
-        // 消息列表（reverse：底部锚定；列表末尾 = 会话标题，随消息上滚）
+        // 消息列表（reverse：底部锚定，内容置顶显示）
         Expanded(
           child: chat.displayMessages.isEmpty
               ? const Center(child: CircularProgressIndicator())
@@ -842,24 +880,8 @@ class _ChatArea extends StatelessWidget {
                   reverse: true,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  // +1：index 末尾是会话标题（reverse 列表滚到最顶才可见）
-                  itemCount: chat.displayMessages.length + 1,
+                  itemCount: chat.displayMessages.length,
                   itemBuilder: (context, index) {
-                    // 标题项：reverse 列表最后一个位置
-                    if (index == chat.displayMessages.length) {
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 24, bottom: 16),
-                        child: Text(
-                          chat.session.title,
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      );
-                    }
                     final msg = chat.displayMessages[
                         chat.displayMessages.length - 1 - index];
                     if (msg.isToolResult) return const SizedBox.shrink();
