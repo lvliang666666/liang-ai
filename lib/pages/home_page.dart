@@ -369,16 +369,26 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 长按会话卡片：锚点菜单栏（重命名/删除/批量管理）
+  ///
+  /// [pressPosition] = 长按点的全局坐标，菜单锚定在该处弹出（微信/桌面右键菜单风格）
   Future<void> _showSessionActions(
-      BuildContext context, String id, String title) async {
+      BuildContext context, String id, String title, Offset pressPosition) async {
     Haptics.medium();
-    // 菜单栏式：锚定长按位置弹出（微信/桌面右键菜单风格）
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
+    final box = overlay.size;
+    // 菜单估算尺寸：3 项（44 高）+ divider ≈ 145 高，宽约 160
+    const menuWidth = 160.0;
+    const menuHeight = 145.0;
+    // 锚定长按点，超出屏幕右/下边界时向内收
+    var left = pressPosition.dx;
+    var top = pressPosition.dy;
+    if (left + menuWidth > box.width) left = box.width - menuWidth - 8;
+    if (top + menuHeight > box.height) top = box.height - menuHeight - 8;
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
-        60, 200, overlay.size.width - 60, overlay.size.height - 400,
+        left, top, box.width - left - menuWidth, box.height - top - menuHeight,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       items: [
@@ -475,8 +485,8 @@ class _HomePageState extends State<HomePage> {
             MaterialPageRoute(builder: (_) => const SettingsPage()),
           );
         },
-        onShowActions: (ctx, id, title) =>
-            _showSessionActions(ctx, id, title),
+        onShowActions: (ctx, id, title, pos) =>
+            _showSessionActions(ctx, id, title, pos),
       ),
       // 圆形新对话按钮已移除：主页即聊天入口，历史对话走抽屉
       body: !sessions.loaded
@@ -1413,7 +1423,8 @@ class _SessionDrawer extends StatefulWidget {
   final Future<void> Function(List<String> ids) onDeleteSelected;
   final ValueChanged<String> onOpenChat;
   final VoidCallback onOpenSettings;
-  final void Function(BuildContext, String, String) onShowActions;
+  final void Function(
+      BuildContext, String, String, Offset pressPosition) onShowActions;
 
   @override
   State<_SessionDrawer> createState() => _SessionDrawerState();
@@ -1708,55 +1719,64 @@ class _SessionDrawerState extends State<_SessionDrawer> {
                                                       .onSurfaceVariant)),
                                     ),
                                     for (final s in entry.value)
-                                      ListTile(
-                                        dense: true,
-                                        leading: _batchMode
-                                            ? Icon(
-                                                _selectedIds.contains(s.id)
-                                                    ? Icons.check_circle
-                                                    : Icons
-                                                        .radio_button_unchecked,
-                                                size: 22,
-                                                color: _selectedIds
-                                                        .contains(s.id)
-                                                    ? theme
-                                                        .colorScheme.primary
-                                                    : theme.colorScheme
-                                                        .onSurfaceVariant,
-                                              )
-                                            : Text(
-                                                widget.skillsProvider
-                                                        .byId(s.skillId)
-                                                        ?.icon ??
-                                                    '💬',
-                                                style: const TextStyle(
-                                                    fontSize: 18),
-                                              ),
-                                        title: Text(
-                                          s.title,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: theme.textTheme.bodyMedium,
-                                        ),
-                                        onTap: () {
-                                          if (_batchMode) {
-                                            Haptics.selection();
-                                            setState(() {
-                                              if (_selectedIds
-                                                  .contains(s.id)) {
-                                                _selectedIds.remove(s.id);
-                                              } else {
-                                                _selectedIds.add(s.id);
-                                              }
-                                            });
-                                          } else {
-                                            widget.onOpenChat(s.id);
-                                          }
-                                        },
-                                        onLongPress: _batchMode
+                                      // GestureDetector 包 ListTile：
+                                      // ListTile 无 onLongPressStart，
+                                      // 外包一层拿长按点全局坐标（锚点菜单用）
+                                      GestureDetector(
+                                        behavior: HitTestBehavior.translucent,
+                                        onLongPressStart: _batchMode
                                             ? null
-                                            : () => widget.onShowActions(
-                                                context, s.id, s.title),
+                                            : (details) => widget.onShowActions(
+                                                context,
+                                                s.id,
+                                                s.title,
+                                                details.globalPosition),
+                                        child: ListTile(
+                                          dense: true,
+                                          leading: _batchMode
+                                              ? Icon(
+                                                  _selectedIds.contains(s.id)
+                                                      ? Icons.check_circle
+                                                      : Icons
+                                                          .radio_button_unchecked,
+                                                  size: 22,
+                                                  color: _selectedIds
+                                                          .contains(s.id)
+                                                      ? theme
+                                                          .colorScheme.primary
+                                                      : theme.colorScheme
+                                                          .onSurfaceVariant,
+                                                )
+                                              : Text(
+                                                  widget.skillsProvider
+                                                          .byId(s.skillId)
+                                                          ?.icon ??
+                                                      '💬',
+                                                  style: const TextStyle(
+                                                      fontSize: 18),
+                                                ),
+                                          title: Text(
+                                            s.title,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: theme.textTheme.bodyMedium,
+                                          ),
+                                          onTap: () {
+                                            if (_batchMode) {
+                                              Haptics.selection();
+                                              setState(() {
+                                                if (_selectedIds
+                                                    .contains(s.id)) {
+                                                  _selectedIds.remove(s.id);
+                                                } else {
+                                                  _selectedIds.add(s.id);
+                                                }
+                                              });
+                                            } else {
+                                              widget.onOpenChat(s.id);
+                                            }
+                                          },
+                                        ),
                                       ),
                                   ],
                               ],
