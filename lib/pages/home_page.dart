@@ -1003,7 +1003,8 @@ class _HomeInputBarState extends State<_HomeInputBar> {
             ),
           ]),
           const SizedBox(height: 6),
-          // 浮起输入框（圆角随主题：Minecraft 直角 + 无外框，避免双框）
+          // 浮起输入框：圆角主题（默认/DeepSeek）外层容器即唯一输入框（豆包式）；
+          // 直角主题（Minecraft）无外框，内层填充为输入区域
           Container(
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
@@ -1053,19 +1054,24 @@ class _HomeInputBarState extends State<_HomeInputBar> {
                         onChanged: (_) => setState(() {}),
                         style:
                             theme.textTheme.bodyLarge?.copyWith(height: 1.6),
+                        // 豆包式：圆角主题（默认/DeepSeek）内层完全透明，
+                        // 只保留外层容器作为唯一输入框，文字自然摆放；
+                        // 直角主题（Minecraft）保留内层填充作为输入区域
                         decoration: InputDecoration(
                           isDense: true,
-                          contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 14, vertical: 10),
-                          filled: true,
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: rounded ? 4 : 14, vertical: 10),
+                          filled: !rounded,
                           fillColor: theme
                               .colorScheme.surfaceContainerHighest
                               .withValues(alpha: 0.5),
-                          border: OutlineInputBorder(
-                            borderRadius:
-                                BorderRadius.circular(radius + 6),
-                            borderSide: BorderSide.none,
-                          ),
+                          border: rounded
+                              ? InputBorder.none
+                              : OutlineInputBorder(
+                                  borderRadius:
+                                      BorderRadius.circular(radius + 6),
+                                  borderSide: BorderSide.none,
+                                ),
                         ),
                       ),
                     ),
