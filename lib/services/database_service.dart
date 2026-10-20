@@ -5,16 +5,17 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/memory.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart';
 
-/// 本地数据库服务：sessions / messages / skills / providers 四表
+/// 本地数据库服务：sessions / messages / skills / providers / memories 五表
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'ai_chat.db';
-  static const _dbVersion = 6;
+  static const _dbVersion = 7;
 
   Database? _db;
 
@@ -70,6 +71,7 @@ class DatabaseService {
     );
     await _createSkillsTable(db);
     await _createProvidersTable(db);
+    await _createMemoriesTable(db);
   }
 
   /// 版本迁移：老用户数据无损升级
@@ -112,6 +114,10 @@ class DatabaseService {
       ''');
       await db.execute('UPDATE sessions SET skill_id = agent_id');
       await db.execute('DROP TABLE agents');
+    }
+    if (oldVersion < 7) {
+      // v6 → v7：记忆系统——新建 memories 表（全局共享记忆池）
+      await _createMemoriesTable(db);
     }
   }
 
@@ -157,6 +163,19 @@ class DatabaseService {
         capabilities TEXT NOT NULL DEFAULT '{}',
         dialect TEXT NOT NULL DEFAULT '{}',
         is_builtin INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
+  Future<void> _createMemoriesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        tag TEXT,
+        source_skill TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
       )
     ''');
   }
@@ -372,6 +391,57 @@ class DatabaseService {
     final rows = await db
         .query('providers', where: 'is_builtin = 1', limit: 1);
     return rows.isNotEmpty;
+  }
+
+  // ===== Memories =====
+
+  Future<void> insertMemory(Memory memory) async {
+    final db = await database;
+    await db.insert('memories', memory.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 全部记忆（按更新时间倒序）
+  Future<List<Memory>> getAllMemories() async {
+    final db = await database;
+    final rows = await db.query('memories', orderBy: 'updated_at DESC');
+    return rows.map(Memory.fromMap).toList();
+  }
+
+  /// 关键词检索（content LIKE 匹配，按更新时间倒序）
+  Future<List<Memory>> searchMemories(String keyword) async {
+    final db = await database;
+    final rows = await db.query(
+      'memories',
+      where: 'content LIKE ?',
+      whereArgs: ['%$keyword%'],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(Memory.fromMap).toList();
+  }
+
+  Future<void> updateMemory(Memory memory) async {
+    final db = await database;
+    await db.update('memories', memory.toMap(),
+        where: 'id = ?', whereArgs: [memory.id]);
+  }
+
+  Future<void> deleteMemory(String id) async {
+    final db = await database;
+    await db.delete('memories', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 清空全部记忆
+  Future<void> deleteAllMemories() async {
+    final db = await database;
+    await db.delete('memories');
+  }
+
+  /// 记忆条数（容量上限判断用）
+  Future<int> memoryCount() async {
+    final db = await database;
+    final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM memories');
+    return (rows.first['c'] as int?) ?? 0;
   }
 
   /// 内置供应商能力升级（幂等，随版本演进）

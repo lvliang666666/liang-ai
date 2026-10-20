@@ -20,6 +20,7 @@ import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
 import '../services/attachment_service.dart';
 import '../services/database_service.dart';
+import '../services/memory_service.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import '../widgets/attachment_thumbnail.dart';
@@ -179,6 +180,7 @@ class _HomePageState extends State<HomePage> {
       profile: profile,
       model: s.model?.isNotEmpty == true ? s.model! : profile.defaultModel,
       skill: skill,
+      memory: MemoryService(database: db),
     )..loadMessages();
     setState(() {
       _chat = chat;
