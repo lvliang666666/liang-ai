@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/chat_session.dart';
 import '../models/skill.dart' as skill_model;
 import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
@@ -9,7 +10,7 @@ import '../utils/haptics.dart';
 import 'chat_page.dart';
 import 'settings_page.dart';
 
-/// 首页：会话列表（仿豆包）
+/// 首页：DeepSeek 风格——问候语 + 居中大输入框 + 最近会话流 + 侧滑抽屉
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -18,9 +19,10 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  String _query = '';
+  final _query = '';
   final _searchFocusNode = FocusNode();
   final _searchController = TextEditingController();
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -41,6 +43,16 @@ class _HomePageState extends State<HomePage> {
   void _unfocusSearch() {
     _searchFocusNode.unfocus();
     FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  /// 按时段问候语
+  String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 5) return '夜深了';
+    if (hour < 11) return '早上好';
+    if (hour < 13) return '中午好';
+    if (hour < 18) return '下午好';
+    return '晚上好';
   }
 
   Future<void> _newChat() async {
@@ -246,22 +258,33 @@ class _HomePageState extends State<HomePage> {
             .toList();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Liang AI'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: '设置',
-            onPressed: () {
-              Haptics.light();
-              _unfocusSearch();
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const SettingsPage()),
-              );
-            },
-          ),
-        ],
+      key: _scaffoldKey,
+      // 侧滑抽屉：完整会话列表（DeepSeek 式）
+      drawer: _SessionDrawer(
+        sessions: allSessions,
+        skillsProvider: skillsProvider,
+        loaded: sessions.loaded,
+        onOpenChat: (id) {
+          Navigator.pop(context); // 先关抽屉
+          _openChat(id);
+        },
+        onNewChat: () {
+          Navigator.pop(context);
+          _newChat();
+        },
+        onOpenSettings: () {
+          Navigator.pop(context);
+          Haptics.light();
+          _unfocusSearch();
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const SettingsPage()),
+          );
+        },
+        onRename: (ctx, id, title) => _renameSession(ctx, id, title),
+        onDelete: (ctx, id) => _deleteSession(ctx, id),
+        onShowActions: (ctx, id, title) =>
+            _showSessionActions(ctx, id, title),
       ),
       // 圆形新对话按钮：64px + 28px 加号，位置略向左上偏移（仍在右下角）
       floatingActionButton: Container(
@@ -276,126 +299,359 @@ class _HomePageState extends State<HomePage> {
       ),
       body: !sessions.loaded
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                // 搜索框（点击才聚焦，不默认弹键盘）
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-                  child: TextField(
-                    controller: _searchController,
-                    focusNode: _searchFocusNode,
-                    onTap: () => Haptics.selection(),
-                    onChanged: (v) => setState(() => _query = v.trim()),
-                    decoration: InputDecoration(
-                      isDense: true,
-                      hintText: '搜索对话',
-                      prefixIcon: const Icon(Icons.search, size: 20),
-                      suffixIcon: _query.isEmpty
-                          ? null
-                          : IconButton(
-                              visualDensity: VisualDensity.compact,
-                              icon: const Icon(Icons.close, size: 18),
-                              onPressed: () {
-                                Haptics.light();
-                                _searchController.clear();
-                                setState(() => _query = '');
-                              },
-                            ),
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
+          : SafeArea(
+              child: Column(
+                children: [
+                  // ===== 顶栏：抽屉入口 + 设置 =====
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.menu),
+                          tooltip: '会话列表',
+                          onPressed: () {
+                            Haptics.light();
+                            _scaffoldKey.currentState?.openDrawer();
+                          },
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          icon: const Icon(Icons.settings_outlined),
+                          tooltip: '设置',
+                          onPressed: () {
+                            Haptics.light();
+                            _unfocusSearch();
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                  builder: (_) => const SettingsPage()),
+                            );
+                          },
+                        ),
+                      ],
                     ),
                   ),
-                ),
-                Expanded(
-                  child: allSessions.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
+                  Expanded(
+                    child: allSessions.isEmpty
+                        ? _EmptyHome(
+                            greeting: _greeting(),
+                            onNewChat: _newChat,
+                          )
+                        : ListView(
+                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
                             children: [
-                              Icon(Icons.chat_bubble_outline,
-                                  size: 64,
-                                  color: theme.colorScheme.primary
-                                      .withValues(alpha: 0.4)),
-                              const SizedBox(height: 16),
-                              Text('暂无会话', style: theme.textTheme.titleMedium),
-                              const SizedBox(height: 8),
-                              Text(
-                                '点击右下角「新对话」开始',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                    color:
-                                        theme.colorScheme.onSurfaceVariant),
+                              // ===== 问候语 =====
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(4, 16, 4, 20),
+                                child: Text(
+                                  '${_greeting()}，\n想聊点什么？',
+                                  style: theme.textTheme.headlineMedium
+                                      ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.3,
+                                  ),
+                                ),
                               ),
+                              // ===== 居中大输入框（点击即新建会话） =====
+                              _HeroInput(onTap: _newChat),
+                              const SizedBox(height: 24),
+                              // ===== 最近会话 =====
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+                                child: Text('最近对话',
+                                    style: theme.textTheme.labelLarge?.copyWith(
+                                        color: theme
+                                            .colorScheme.onSurfaceVariant)),
+                              ),
+                              if (filtered.isEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.all(24),
+                                  child: Center(
+                                    child: Text(
+                                        '没有找到「$_query」相关的对话',
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                                color: theme.colorScheme
+                                                    .onSurfaceVariant)),
+                                  ),
+                                )
+                              else
+                                ...filtered.take(20).map((s) {
+                                  final effortText = switch (s.effort) {
+                                    'max' => '深度',
+                                    'high' => '均衡',
+                                    'low' => '轻量',
+                                    _ => s.effort,
+                                  };
+                                  final skill =
+                                      skillsProvider.byId(s.skillId);
+                                  return Card(
+                                    elevation: 0,
+                                    color: theme.colorScheme
+                                        .surfaceContainerHighest
+                                        .withValues(alpha: 0.5),
+                                    child: ListTile(
+                                      contentPadding:
+                                          const EdgeInsets.symmetric(
+                                              horizontal: 16, vertical: 4),
+                                      leading: Text(
+                                        skill?.icon ?? '💬',
+                                        style:
+                                            const TextStyle(fontSize: 22),
+                                      ),
+                                      title: Text(
+                                        s.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      subtitle: Text(
+                                        '${skill != null ? '${skill.name} · ' : ''}'
+                                        '$effortText · ${_formatTime(s.updatedAt)}',
+                                        style: theme.textTheme.bodySmall,
+                                      ),
+                                      onTap: () => _openChat(s.id),
+                                      onLongPress: () =>
+                                          _showSessionActions(
+                                              context, s.id, s.title),
+                                    ),
+                                  );
+                                }),
+                              // 超过 20 条提示去抽屉看全部
+                              if (filtered.length > 20)
+                                Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Center(
+                                    child: TextButton.icon(
+                                      onPressed: () =>
+                                          _scaffoldKey.currentState
+                                              ?.openDrawer(),
+                                      icon: const Icon(Icons.menu, size: 18),
+                                      label: Text(
+                                          '查看全部 ${filtered.length} 个对话'),
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
+                  ),
+                ],
+              ),
+            ),
+    );
+  }
+}
+
+/// 空首页：问候语 + 大输入框（无会话时）
+class _EmptyHome extends StatelessWidget {
+  const _EmptyHome({required this.greeting, required this.onNewChat});
+
+  final String greeting;
+  final VoidCallback onNewChat;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            '$greeting，\n想聊点什么？',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.headlineMedium
+                ?.copyWith(fontWeight: FontWeight.w600, height: 1.3),
+          ),
+          const SizedBox(height: 32),
+          _HeroInput(onTap: onNewChat),
+          const SizedBox(height: 24),
+          Text(
+            '点击上方输入框或右下角「新对话」开始',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 首页大输入框：点击即新建会话（DeepSeek 式入口）
+class _HeroInput extends StatelessWidget {
+  const _HeroInput({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      onTap: () {
+        Haptics.selection();
+        onTap();
+      },
+      borderRadius: BorderRadius.circular(28),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest
+              .withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+            width: 0.5,
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.edit_note_outlined,
+                size: 22, color: theme.colorScheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                '给 Liang AI 发送消息',
+                style: theme.textTheme.bodyLarge?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+            Icon(Icons.arrow_upward_rounded,
+                size: 22, color: theme.colorScheme.primary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 侧滑抽屉：完整会话列表按时间分组（今天 / 7 天内 / 更早）
+class _SessionDrawer extends StatelessWidget {
+  const _SessionDrawer({
+    required this.sessions,
+    required this.skillsProvider,
+    required this.loaded,
+    required this.onOpenChat,
+    required this.onNewChat,
+    required this.onOpenSettings,
+    required this.onRename,
+    required this.onDelete,
+    required this.onShowActions,
+  });
+
+  final List<ChatSession> sessions;
+  final SkillProvider skillsProvider;
+  final bool loaded;
+  final ValueChanged<String> onOpenChat;
+  final VoidCallback onNewChat;
+  final VoidCallback onOpenSettings;
+  final void Function(BuildContext, String, String) onRename;
+  final void Function(BuildContext, String) onDelete;
+  final void Function(BuildContext, String, String) onShowActions;
+
+  /// 按时间分组：今天 / 7 天内 / 更早
+  Map<String, List<ChatSession>> get _grouped {
+    final now = DateTime.now();
+    final startOfToday =
+        DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
+    final sevenDaysAgo = startOfToday - 7 * 24 * 3600 * 1000;
+    final groups = <String, List<ChatSession>>{
+      '今天': [],
+      '7 天内': [],
+      '更早': [],
+    };
+    for (final s in sessions) {
+      if (s.updatedAt >= startOfToday) {
+        groups['今天']!.add(s);
+      } else if (s.updatedAt >= sevenDaysAgo) {
+        groups['7 天内']!.add(s);
+      } else {
+        groups['更早']!.add(s);
+      }
+    }
+    return groups;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Drawer(
+      child: SafeArea(
+        child: Column(
+          children: [
+            // 抽屉头部：Logo + 新对话 + 设置
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              child: Row(
+                children: [
+                  Text('Liang AI',
+                      style: theme.textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w600)),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.add, size: 22),
+                    tooltip: '新对话',
+                    onPressed: onNewChat,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.settings_outlined, size: 22),
+                    tooltip: '设置',
+                    onPressed: onOpenSettings,
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            // 会话列表（按时间分组）
+            Expanded(
+              child: !loaded
+                  ? const Center(child: CircularProgressIndicator())
+                  : sessions.isEmpty
+                      ? Center(
+                          child: Text('暂无会话',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                  color:
+                                      theme.colorScheme.onSurfaceVariant)),
                         )
-                      : filtered.isEmpty
-                          ? Center(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(Icons.search_off,
-                                      size: 56,
-                                      color: theme.colorScheme
-                                          .onSurfaceVariant
-                                          .withValues(alpha: 0.5)),
-                                  const SizedBox(height: 12),
-                                  Text('没有找到「$_query」相关的对话',
-                                      style: theme.textTheme.bodyMedium
+                      : ListView(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          children: [
+                            for (final entry in _grouped.entries)
+                              if (entry.value.isNotEmpty) ...[
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                      16, 12, 16, 4),
+                                  child: Text(entry.key,
+                                      style: theme.textTheme.labelSmall
                                           ?.copyWith(
                                               color: theme.colorScheme
                                                   .onSurfaceVariant)),
-                                ],
-                              ),
-                            )
-                          : ListView.separated(
-                              padding:
-                                  const EdgeInsets.fromLTRB(12, 4, 12, 88),
-                              itemCount: filtered.length,
-                              separatorBuilder: (_, _) =>
-                                  const SizedBox(height: 2),
-                              itemBuilder: (context, index) {
-                                final s = filtered[index];
-                                final effortText = switch (s.effort) {
-                                  'max' => '深度',
-                                  'high' => '均衡',
-                                  'low' => '轻量',
-                                  _ => s.effort,
-                                };
-                                final skill =
-                                    skillsProvider.byId(s.skillId);
-                                return Card(
-                                  elevation: 0,
-                                  color: theme
-                                      .colorScheme.surfaceContainerHighest
-                                      .withValues(alpha: 0.5),
-                                  child: ListTile(
-                                    contentPadding:
-                                        const EdgeInsets.symmetric(
-                                            horizontal: 16, vertical: 4),
+                                ),
+                                for (final s in entry.value)
+                                  ListTile(
+                                    dense: true,
                                     leading: Text(
-                                      skill?.icon ?? '💬',
-                                      style: const TextStyle(fontSize: 22),
+                                      skillsProvider.byId(s.skillId)?.icon ??
+                                          '💬',
+                                      style:
+                                          const TextStyle(fontSize: 18),
                                     ),
                                     title: Text(
                                       s.title,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodyMedium,
                                     ),
-                                    subtitle: Text(
-                                      '${skill != null ? '${skill.name} · ' : ''}'
-                                      '$effortText · ${_formatTime(s.updatedAt)}',
-                                      style: theme.textTheme.bodySmall,
-                                    ),
-                                    onTap: () => _openChat(s.id),
-                                    onLongPress: () => _showSessionActions(
-                                        context, s.id, s.title),
+                                    onTap: () => onOpenChat(s.id),
+                                    onLongPress: () =>
+                                        onShowActions(context, s.id, s.title),
                                   ),
-                                );
-                              },
-                            ),
-                ),
-              ],
+                              ],
+                          ],
+                        ),
             ),
+          ],
+        ),
+      ),
     );
   }
 }

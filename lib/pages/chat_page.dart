@@ -75,7 +75,8 @@ class _ChatPageState extends State<ChatPage> {
 
   void _maybeAutoScroll(int newCount) {
     if (!_scrollController.hasClients) return;
-    // reverse 列表：offset 0 即最新消息处。
+    // CustomScrollView（非 reverse）：offset 0 = 顶部 = 最新消息处
+    // （reverse 消息列表填满视口，外层滚动 0 即消息底部）。
     // 发送新消息（数量增加）时跳回底部；流式增长时若用户停在底部则跟随。
     if (newCount != _lastDisplayCount) {
       final isNewMessage = newCount > _lastDisplayCount;
@@ -147,61 +148,70 @@ class _ChatPageView extends StatelessWidget {
         if (didPop) sessions.refresh();
       },
       child: Scaffold(
-        appBar: AppBar(
-          title: GestureDetector(
-            onTap: () => _showSkillSwitcher(context, chat),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  chat.session.title,
-                  style: const TextStyle(fontSize: 17),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Row(
+        // DeepSeek 式沉浸：CustomScrollView + SliverAppBar，消息上滑时 AppBar 收起
+        body: CustomScrollView(
+          controller: scrollController,
+          slivers: [
+            SliverAppBar(
+              pinned: true,
+              floating: false,
+              snap: false,
+              // 上滑收起、下滑立即出现（沉浸阅读，回滑即导航）
+              expandedHeight: 0,
+              toolbarHeight: kToolbarHeight,
+              title: GestureDetector(
+                onTap: () => _showSkillSwitcher(context, chat),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      chat.skill != null
-                          ? '${chat.skill!.icon} ${chat.skill!.name}'
-                          : '🤖 默认助手',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: _appBarForeground(context),
-                      ),
+                      chat.session.title,
+                      style: const TextStyle(fontSize: 17),
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    Icon(Icons.keyboard_arrow_down,
-                        size: 14, color: _appBarForeground(context)),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          chat.skill != null
+                              ? '${chat.skill!.icon} ${chat.skill!.name}'
+                              : '🤖 默认助手',
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _appBarForeground(context),
+                          ),
+                        ),
+                        Icon(Icons.keyboard_arrow_down,
+                            size: 14, color: _appBarForeground(context)),
+                      ],
+                    ),
                   ],
+                ),
+              ),
+              // 模型切换（会话级，仿豆包）
+              actions: [
+                _ModelSwitchButton(chat: chat),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: '删除会话',
+                  onPressed: () {
+                    Haptics.light();
+                    _confirmDelete(context, chat, sessions);
+                  },
                 ),
               ],
             ),
-          ),
-          // 模型切换（会话级，仿豆包）
-          actions: [
-            _ModelSwitchButton(chat: chat),
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: '删除会话',
-              onPressed: () {
-                Haptics.light();
-                _confirmDelete(context, chat, sessions);
-              },
-            ),
-          ],
-        ),
-        body: Column(
-          children: [
             // 错误提示条
             if (chat.status == ChatStatus.error)
-              _ErrorBanner(message: chat.errorMessage),
+              SliverToBoxAdapter(
+                  child: _ErrorBanner(message: chat.errorMessage)),
             // 消息列表（reverse：底部锚定，天然显示最新消息）
-            Expanded(
+            SliverFillRemaining(
+              hasScrollBody: true,
               child: chat.displayMessages.isEmpty
                   ? _EmptyHint(effort: chat.session.effort)
                   : ListView.builder(
-                      controller: scrollController,
                       reverse: true,
                       padding: const EdgeInsets.symmetric(
                           horizontal: 12, vertical: 8),
@@ -229,17 +239,17 @@ class _ChatPageView extends StatelessWidget {
                       },
                     ),
             ),
-            // 输入栏（按钮按供应商能力显隐）
-            ChatInputBar(
-              isStreaming: chat.isStreaming,
-              effort: chat.session.effort,
-              onSend: chat.sendMessage,
-              onStop: chat.stopGeneration,
-              onEffortChanged: chat.setEffort,
-              showAttachmentButton: chat.supportsVision,
-              showEffortButton: chat.supportsReasoning,
-            ),
           ],
+        ),
+        // 输入栏固定在底部（不随 AppBar 收起，按钮按供应商能力显隐）
+        bottomNavigationBar: ChatInputBar(
+          isStreaming: chat.isStreaming,
+          effort: chat.session.effort,
+          onSend: chat.sendMessage,
+          onStop: chat.stopGeneration,
+          onEffortChanged: chat.setEffort,
+          showAttachmentButton: chat.supportsVision,
+          showEffortButton: chat.supportsReasoning,
         ),
       ),
     );
