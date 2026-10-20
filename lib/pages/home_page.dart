@@ -4,16 +4,24 @@ import 'package:provider/provider.dart';
 import '../models/chat_session.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart' as skill_model;
+import '../providers/chat_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
+import '../services/api_service.dart';
+import '../services/database_service.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
+import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
-import 'chat_page.dart';
+import '../widgets/message_bubble.dart';
 import 'settings_page.dart';
 
-/// 首页：DeepSeek 风格——问候语 + 居中大输入框 + 最近会话流 + 侧滑抽屉
+/// 首页：DeepSeek 风格单页架构——主页即聊天页
+///
+/// 两种状态：
+/// - 空闲态：问候语 + tags 行 + 输入框（发送时才创建会话）
+/// - 聊天态：header 显示会话标题 + 消息列表 + 同一套输入区（tags 随会话）
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -25,8 +33,13 @@ class _HomePageState extends State<HomePage> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _inputController = TextEditingController();
   final _inputFocusNode = FocusNode();
+  final _chatScrollController = ScrollController();
+  int _lastDisplayCount = 0;
 
-  // 打开即聊的预选状态（tags 行展示与切换）
+  // 聊天态：当前会话的 ChatProvider（null = 空闲态）
+  ChatProvider? _chat;
+
+  // 空闲态的预选状态（tags 行展示与切换）
   skill_model.Skill? _selectedSkill; // null = 默认助手
   (ProviderProfile, String)? _selectedModel; // null = 用默认供应商默认模型
 
@@ -42,6 +55,8 @@ class _HomePageState extends State<HomePage> {
   void dispose() {
     _inputController.dispose();
     _inputFocusNode.dispose();
+    _chatScrollController.dispose();
+    _chat?.dispose();
     super.dispose();
   }
 
@@ -60,9 +75,25 @@ class _HomePageState extends State<HomePage> {
     return '晚上好';
   }
 
-  /// 打开即聊：发送首条消息时才创建会话（DeepSeek 式）
-  ///
-  /// [text] 首条消息文本；[skillId]/[model] 为输入框上方 tags 预选值。
+  // ===== 滚动跟随（与原聊天页同逻辑） =====
+  void _maybeAutoScroll(int newCount) {
+    if (!_chatScrollController.hasClients) return;
+    if (newCount != _lastDisplayCount) {
+      final isNewMessage = newCount > _lastDisplayCount;
+      _lastDisplayCount = newCount;
+      if (isNewMessage) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_chatScrollController.hasClients) {
+            _chatScrollController.jumpTo(0);
+          }
+        });
+      }
+    } else if (_chatScrollController.offset <= 0.5) {
+      _chatScrollController.jumpTo(0);
+    }
+  }
+
+  /// 打开即聊：发送首条消息时才创建会话，主页原地进入聊天态
   Future<void> _startChat(String text,
       {String? skillId, (ProviderProfile, String)? modelPick}) async {
     Haptics.light();
@@ -82,79 +113,116 @@ class _HomePageState extends State<HomePage> {
       model: modelPick?.$2,
     );
     if (!mounted) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ChatPage(
-          sessionId: session.id,
-          initialMessage: text,
-        ),
-      ),
-    );
-    sessions.refresh();
+
+    // 主页原地进入聊天态并自动发送首条消息
+    await _enterChat(session, initialMessage: text);
   }
 
-  /// 抽屉「新对话」：仍走选 Skill 流程（历史入口保持原行为）
-  Future<void> _newChat() async {
+  /// 进入聊天态：构建 ChatProvider 并加载消息
+  Future<void> _enterChat(ChatSession session,
+      {String? initialMessage}) async {
+    // 已有聊天态先释放（切换会话）
+    _chat?.dispose();
+    _chat = null;
+
+    final db = DatabaseService.instance;
+    final s = await db.getSession(session.id);
+    final profiles = await db.getAllProviders();
+    if (!mounted) return;
+    if (s == null || profiles.isEmpty) return;
+
+    ProviderProfile profile;
+    if (s.providerId != null) {
+      profile = profiles.firstWhere(
+        (p) => p.id == s.providerId,
+        orElse: () => profiles.first,
+      );
+    } else {
+      profile = profiles.first;
+    }
+
+    final skill = context.read<SkillProvider>().byId(s.skillId);
+    final chat = ChatProvider(
+      database: db,
+      api: ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey),
+      session: s,
+      profile: profile,
+      model: s.model?.isNotEmpty == true ? s.model! : profile.defaultModel,
+      skill: skill,
+    )..loadMessages();
+    setState(() => _chat = chat);
+
+    // 自动发送首条消息（等首帧完成）
+    final initial = initialMessage;
+    if (initial != null && initial.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        chat.sendMessage(initial);
+      });
+    }
+  }
+
+  /// 新增对话：退出聊天态回到空闲态（右上角 + 按钮）
+  void _newChat() {
     Haptics.light();
     _unfocus();
-    // 选 Skill + 确认（null = 默认助手）
-    final skillId = await _showSkillPicker();
-    if (skillId == _skillPickerCancelled || !mounted) return;
-
-    final settings = context.read<SettingsService>();
-    // 记录最近使用（LRU），供下次选择页展示
-    if (skillId != null) {
-      await settings.touchRecentSkill(skillId);
-      if (!mounted) return;
+    if (_chat?.isStreaming == true) {
+      _chat?.stopGeneration();
     }
-    final sessions = context.read<SessionsProvider>();
-    final session = await sessions.createSession(
-      settings.defaultEffortValue,
-      skillId: skillId,
-    );
-    if (!mounted) return;
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => ChatPage(sessionId: session.id)),
-    );
-    sessions.refresh();
+    _chat?.dispose();
+    setState(() {
+      _chat = null;
+      // 重置预选为默认
+      _selectedSkill = null;
+      _selectedModel = null;
+    });
+    context.read<SessionsProvider>().refresh();
   }
 
-  /// Skill 选择弹窗（抽屉「新对话」用）：搜索 + 最近使用 + 全部折叠
-  /// 返回 skillId（null = 默认助手），取消返回哨兵值
-  static const _skillPickerCancelled = '__cancelled__';
-
-  Future<String?> _showSkillPicker() async {
-    final skills = context.read<SkillProvider>();
-    if (!skills.loaded) await skills.load();
-
-    if (!mounted) return _skillPickerCancelled;
-    final result = await showModalBottomSheet<skill_model.Skill?>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => _SkillPickerSheet(
-        skills: skills,
-        recentIds: context.read<SettingsService>().recentSkillIds,
-        onSelected: (s) => Navigator.pop(context, s),
-      ),
-    );
-    if (result == null) return _skillPickerCancelled;
-    return result.id == '__default__' ? null : result.id;
-  }
-
+  /// 抽屉点历史会话：主页切换到该会话（聊天态）
   Future<void> _openChat(String id) async {
     Haptics.light();
     _unfocus();
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => ChatPage(sessionId: id)),
-    );
-    if (mounted) context.read<SessionsProvider>().refresh();
+    final sessions = context.read<SessionsProvider>();
+    final session = sessions.sessions.where((s) => s.id == id).firstOrNull;
+    if (session == null) return;
+    await _enterChat(session);
   }
+
+  /// 删除当前聊天态的会话（header 删除按钮）：退出聊天态
+  Future<void> _deleteCurrentChat() async {
+    final chat = _chat;
+    if (chat == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('删除会话'),
+        content: const Text('删除后聊天记录无法恢复，确定删除吗？'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    if (chat.isStreaming) chat.stopGeneration();
+    await context.read<SessionsProvider>().deleteSession(chat.session.id);
+    if (!mounted) return;
+    chat.dispose();
+    setState(() => _chat = null);
+  }
+
 
   Future<void> _renameSession(BuildContext context, String id, String current) async {
     final controller = TextEditingController(text: current);
@@ -292,10 +360,6 @@ class _HomePageState extends State<HomePage> {
           Navigator.pop(context); // 先关抽屉
           _openChat(id);
         },
-        onNewChat: () {
-          Navigator.pop(context);
-          _newChat();
-        },
         onOpenSettings: () {
           Navigator.pop(context);
           Haptics.light();
@@ -316,7 +380,7 @@ class _HomePageState extends State<HomePage> {
           : SafeArea(
               child: Column(
                 children: [
-                  // ===== 顶栏：抽屉入口（设置收进抽屉） =====
+                  // ===== header：抽屉入口 + 会话标题（聊天态）+ 新增对话 =====
                   Padding(
                     padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
                     child: Row(
@@ -329,31 +393,60 @@ class _HomePageState extends State<HomePage> {
                             _scaffoldKey.currentState?.openDrawer();
                           },
                         ),
+                        // 聊天态：header 显示会话标题
+                        Expanded(
+                          child: _chat != null
+                              ? Text(
+                                  _chat!.session.title,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleMedium,
+                                )
+                              : const SizedBox(),
+                        ),
+                        // 右上角：新增对话（聊天态退出回空闲态）
+                        IconButton(
+                          icon: const Icon(Icons.add),
+                          tooltip: '新对话',
+                          onPressed: _newChat,
+                        ),
                       ],
                     ),
                   ),
-                  // ===== 主页主体：问候语（居中） =====
+                  // ===== 主体：空闲态问候语 / 聊天态消息列表 =====
                   Expanded(
-                    child: Center(
-                      child: Text(
-                        '${_greeting()}，\n想聊点什么？',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.headlineMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          height: 1.3,
-                        ),
-                      ),
-                    ),
+                    child: _chat == null
+                        ? Center(
+                            child: Text(
+                              '${_greeting()}，\n想聊点什么？',
+                              textAlign: TextAlign.center,
+                              style:
+                                  theme.textTheme.headlineMedium?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                height: 1.3,
+                              ),
+                            ),
+                          )
+                        : _ChatArea(
+                            key: ValueKey(_chat!.session.id),
+                            chat: _chat!,
+                            scrollController: _chatScrollController,
+                            onCountChanged: _maybeAutoScroll,
+                            onDelete: _deleteCurrentChat,
+                          ),
                   ),
-                  // ===== 底部：tags 行 + 真输入框（打开即聊） =====
+                  // ===== 底部：tags 行 + 输入框（空闲态/聊天态共用） =====
                   _HomeInputBar(
                     controller: _inputController,
                     focusNode: _inputFocusNode,
+                    chat: _chat,
                     selectedSkill: _selectedSkill,
                     selectedModel: _selectedModel,
-                    onSend: _startChat,
+                    onSendIdle: _startChat,
                     onPickSkill: _pickSkillForHome,
                     onPickModel: _pickModelForHome,
+                    onPickEffort: _pickEffortForHome,
                   ),
                 ],
               ),
@@ -361,12 +454,26 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// 主页 agent tag：选择 Skill（含默认助手选项）
+  /// 聊天态 effort tag：改当前会话档位
+  Future<void> _pickEffortForHome() async {
+    final chat = _chat;
+    if (chat == null) return;
+    final selected = await showEffortPicker(context, chat.session.effort);
+    if (selected != null && selected != chat.session.effort) {
+      chat.setEffort(selected);
+    }
+  }
+
+  /// 主页 agent tag：空闲态改预选 / 聊天态改当前会话 Skill
   Future<void> _pickSkillForHome() async {
     Haptics.light();
     final skills = context.read<SkillProvider>();
     if (!skills.loaded) await skills.load();
     if (!mounted) return;
+
+    // 聊天态：当前会话的 Skill 为选中项
+    final chat = _chat;
+    final currentId = chat != null ? chat.skill?.id : _selectedSkill?.id;
 
     final result = await showModalBottomSheet<skill_model.Skill?>(
       context: context,
@@ -378,21 +485,29 @@ class _HomePageState extends State<HomePage> {
         skills: skills,
         recentIds: context.read<SettingsService>().recentSkillIds,
         includeDefault: true,
-        selectedId: _selectedSkill?.id,
+        selectedId: currentId,
         onSelected: (s) => Navigator.pop(context, s),
       ),
     );
     if (result == null || !mounted) return; // 点遮罩关闭不改动
     // 哨兵 Skill（id='__default__'）= 默认助手 = null
-    setState(() => _selectedSkill = result.id == '__default__' ? null : result);
+    final picked = result.id == '__default__' ? null : result;
+    if (chat != null) {
+      await chat.setSkill(picked);
+      if (mounted) context.read<SessionsProvider>().refresh();
+    } else {
+      setState(() => _selectedSkill = picked);
+    }
   }
 
-  /// 主页 model tag：选择供应商/模型（预选，创建会话时带上）
+  /// 主页 model tag：空闲态改预选 / 聊天态切当前会话供应商
   Future<void> _pickModelForHome() async {
     Haptics.light();
     final providersProvider = context.read<ProviderProvider>();
     if (!providersProvider.loaded) await providersProvider.load();
     if (!mounted) return;
+
+    final chat = _chat;
 
     final selected = await showModalBottomSheet<(ProviderProfile, String)>(
       context: context,
@@ -430,9 +545,9 @@ class _HomePageState extends State<HomePage> {
                         dense: true,
                         leading: const Icon(Icons.model_training, size: 20),
                         title: Text(p.defaultModel),
-                        trailing: _selectedModel != null &&
-                                _selectedModel!.$1.id == p.id &&
-                                _selectedModel!.$2 == p.defaultModel
+                        trailing: currentModelLabel == p.defaultModel &&
+                                (chat?.profile.id ?? _selectedModel?.$1.id) ==
+                                    p.id
                             ? Icon(Icons.check_circle,
                                 color:
                                     Theme.of(context).colorScheme.primary)
@@ -450,77 +565,124 @@ class _HomePageState extends State<HomePage> {
       ),
     );
     if (selected == null || !mounted) return;
-    setState(() => _selectedModel = selected);
+    if (chat != null) {
+      final ok = await chat.switchProvider(selected.$1, selected.$2);
+      if (mounted && !ok) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('生成进行中，无法切换模型'),
+              duration: Duration(seconds: 2)),
+        );
+      }
+    } else {
+      setState(() => _selectedModel = selected);
+    }
   }
+
+  /// 当前模型显示名（空闲态预选 / 聊天态会话模型）
+  String get currentModelLabel =>
+      _chat?.model ?? _selectedModel?.$2 ?? '默认模型';
 }
 
-/// 主页底部输入区：tags 行（agent/model）+ 真输入框 + 发送键
+/// 主页底部输入区：tags 行（agent/model/effort）+ 输入框 + 发送键
 ///
-/// DeepSeek 式打开即聊：文字可正常输入，发送时才创建会话并跳转聊天页。
+/// 双态共用：
+/// - 空闲态（chat == null）：tags 显示预选值，发送 = 创建会话进入聊天态
+/// - 聊天态（chat != null）：tags 显示会话绑定值，发送 = ChatProvider.sendMessage
 class _HomeInputBar extends StatelessWidget {
   const _HomeInputBar({
     required this.controller,
     required this.focusNode,
+    required this.chat,
     required this.selectedSkill,
     required this.selectedModel,
-    required this.onSend,
+    required this.onSendIdle,
     required this.onPickSkill,
     required this.onPickModel,
+    required this.onPickEffort,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
+
+  /// 聊天态的 ChatProvider（null = 空闲态）
+  final ChatProvider? chat;
   final skill_model.Skill? selectedSkill;
   final (ProviderProfile, String)? selectedModel;
+
+  /// 空闲态发送（创建会话）
   final void Function(String text,
-      {String? skillId, (ProviderProfile, String)? modelPick}) onSend;
+      {String? skillId, (ProviderProfile, String)? modelPick}) onSendIdle;
   final VoidCallback onPickSkill;
   final VoidCallback onPickModel;
+  final VoidCallback onPickEffort;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final inChat = chat != null;
+    final isStreaming = chat?.isStreaming ?? false;
+
+    // tags 配置：聊天态取会话绑定值，空闲态取预选值
+    final skillLabel = inChat
+        ? (chat!.skill != null
+            ? '${chat!.skill!.icon} ${chat!.skill!.name}'
+            : '默认助手')
+        : (selectedSkill != null
+            ? '${selectedSkill!.icon} ${selectedSkill!.name}'
+            : '默认助手');
+    final modelLabel = inChat ? chat!.model : (selectedModel?.$2 ?? '默认模型');
+    final effortLabel = inChat
+        ? (effortLabels[chat!.session.effort]?.$1 ?? chat!.session.effort)
+        : null;
+
     return SafeArea(
       top: false,
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(
-            color: theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-            width: 0.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-              blurRadius: 12,
-              offset: const Offset(0, 2),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // tags 行：独立于输入框（agent / model / effort[聊天态]）
+          ChatTagsBar(tags: [
+            ChatTag(
+              icon: Icons.smart_toy_outlined,
+              label: skillLabel,
+              onTap: onPickSkill,
             ),
-          ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // tags 行：agent / model（与聊天页一致的切换入口）
-            ChatTagsBar(tags: [
+            ChatTag(
+              icon: Icons.tune,
+              label: modelLabel,
+              onTap: onPickModel,
+            ),
+            // 推理档位：仅聊天态显示（空闲态会话未创建，档位走默认）
+            if (effortLabel != null)
               ChatTag(
-                icon: Icons.smart_toy_outlined,
-                label: selectedSkill != null
-                    ? '${selectedSkill!.icon} ${selectedSkill!.name}'
-                    : '默认助手',
-                onTap: onPickSkill,
+                icon: Icons.bolt,
+                label: effortLabel,
+                onTap: onPickEffort,
               ),
-              ChatTag(
-                icon: Icons.tune,
-                label: selectedModel?.$2 ?? '默认模型',
-                onTap: onPickModel,
+          ]),
+          const SizedBox(height: 6),
+          // 浮起输入框
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color:
+                    theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
+                width: 0.5,
               ),
-            ]),
-            const SizedBox(height: 6),
-            // 输入行
-            Row(
+              boxShadow: [
+                BoxShadow(
+                  color: theme.colorScheme.shadow.withValues(alpha: 0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Expanded(
@@ -548,20 +710,34 @@ class _HomeInputBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 4),
-                ValueListenableBuilder(
-                  valueListenable: controller,
-                  builder: (context, value, _) {
-                    final hasText = value.text.trim().isNotEmpty;
-                    return IconButton.filled(
-                      onPressed: hasText ? () => _send(context) : null,
-                      icon: const Icon(Icons.arrow_upward_rounded),
-                    );
-                  },
-                ),
+                // 发送/停止键
+                if (isStreaming)
+                  IconButton.filled(
+                    onPressed: () {
+                      Haptics.medium();
+                      chat!.stopGeneration();
+                    },
+                    style: IconButton.styleFrom(
+                      backgroundColor: theme.colorScheme.errorContainer,
+                    ),
+                    icon: Icon(Icons.stop_rounded,
+                        color: theme.colorScheme.onErrorContainer),
+                  )
+                else
+                  ValueListenableBuilder(
+                    valueListenable: controller,
+                    builder: (context, value, _) {
+                      final hasText = value.text.trim().isNotEmpty;
+                      return IconButton.filled(
+                        onPressed: hasText ? () => _send(context) : null,
+                        icon: const Icon(Icons.arrow_upward_rounded),
+                      );
+                    },
+                  ),
               ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -569,12 +745,110 @@ class _HomeInputBar extends StatelessWidget {
   void _send(BuildContext context) {
     final text = controller.text.trim();
     if (text.isEmpty) return;
-    onSend(
-      text,
-      skillId: selectedSkill?.id,
-      modelPick: selectedModel,
-    );
+    if (chat != null) {
+      // 聊天态：直接发
+      chat!.sendMessage(text);
+    } else {
+      // 空闲态：创建会话进入聊天态
+      onSendIdle(
+        text,
+        skillId: selectedSkill?.id,
+        modelPick: selectedModel,
+      );
+    }
     controller.clear();
+  }
+}
+
+/// 主页内嵌聊天区：消息列表（reverse 底部锚定）+ 错误提示
+class _ChatArea extends StatelessWidget {
+  const _ChatArea({
+    super.key,
+    required this.chat,
+    required this.scrollController,
+    required this.onCountChanged,
+    required this.onDelete,
+  });
+
+  final ChatProvider chat;
+  final ScrollController scrollController;
+  final void Function(int newCount) onCountChanged;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    // 订阅重建（流式/状态变化）
+    context.watch<ChatProvider>();
+    onCountChanged(chat.displayMessages.length);
+
+    return Column(
+      children: [
+        // 错误提示条
+        if (chat.status == ChatStatus.error)
+          Container(
+            width: double.infinity,
+            margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.errorContainer,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.error_outline,
+                    size: 18, color: theme.colorScheme.onErrorContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    chat.errorMessage,
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onErrorContainer),
+                  ),
+                ),
+                InkWell(
+                  onTap: () {
+                    Haptics.light();
+                    chat.clearError();
+                  },
+                  child: Icon(Icons.close,
+                      size: 16, color: theme.colorScheme.onErrorContainer),
+                ),
+              ],
+            ),
+          ),
+        // 消息列表（reverse：底部锚定）
+        Expanded(
+          child: chat.displayMessages.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : ListView.builder(
+                  controller: scrollController,
+                  reverse: true,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  itemCount: chat.displayMessages.length,
+                  itemBuilder: (context, index) {
+                    final msg = chat.displayMessages[
+                        chat.displayMessages.length - 1 - index];
+                    if (msg.isToolResult) return const SizedBox.shrink();
+                    final isLast = index == 0;
+                    return MessageBubble(
+                      message: msg,
+                      isStreaming: isLast && chat.isStreaming,
+                      thinkingSeconds: chat.thinkingSeconds,
+                      toolResults: msg.id == chat.lastToolCallMessageId
+                          ? chat.toolResults
+                          : const [],
+                      toolExecuting: msg.id == chat.lastToolCallMessageId &&
+                          chat.status == ChatStatus.toolCalling,
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
   }
 }
 
@@ -585,7 +859,6 @@ class _SessionDrawer extends StatelessWidget {
     required this.skillsProvider,
     required this.loaded,
     required this.onOpenChat,
-    required this.onNewChat,
     required this.onOpenSettings,
     required this.onRename,
     required this.onDelete,
@@ -596,7 +869,6 @@ class _SessionDrawer extends StatelessWidget {
   final SkillProvider skillsProvider;
   final bool loaded;
   final ValueChanged<String> onOpenChat;
-  final VoidCallback onNewChat;
   final VoidCallback onOpenSettings;
   final void Function(BuildContext, String, String) onRename;
   final void Function(BuildContext, String) onDelete;
@@ -632,7 +904,7 @@ class _SessionDrawer extends StatelessWidget {
       child: SafeArea(
         child: Column(
           children: [
-            // 抽屉头部：Logo + 新对话 + 设置
+            // 抽屉头部：Logo + 设置（新增对话统一走主页右上角 +）
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
               child: Row(
@@ -641,11 +913,6 @@ class _SessionDrawer extends StatelessWidget {
                       style: theme.textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w600)),
                   const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.add, size: 22),
-                    tooltip: '新对话',
-                    onPressed: onNewChat,
-                  ),
                   IconButton(
                     icon: const Icon(Icons.settings_outlined, size: 22),
                     tooltip: '设置',
