@@ -35,7 +35,11 @@ class ChatTagsBar extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (tag.icon != null) ...[
+                  // emoji 图标（具体 agent 的 icon）优先于内置 IconData
+                  if (tag.emoji != null) ...[
+                    Text(tag.emoji!, style: const TextStyle(fontSize: 14)),
+                    const SizedBox(width: 4),
+                  ] else if (tag.icon != null) ...[
                     Icon(tag.icon,
                         size: 15, color: theme.colorScheme.onSurfaceVariant),
                     const SizedBox(width: 4),
@@ -61,9 +65,13 @@ class ChatTagsBar extends StatelessWidget {
 
 /// tags 行的单个标签定义
 class ChatTag {
-  const ChatTag({this.icon, required this.label, required this.onTap});
+  const ChatTag({this.icon, this.emoji, required this.label, required this.onTap});
 
+  /// 内置图标（无 emoji 时使用）
   final IconData? icon;
+
+  /// emoji 图标（具体 agent 的 icon，优先于 [icon]）
+  final String? emoji;
   final String label;
   final VoidCallback onTap;
 }

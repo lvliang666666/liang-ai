@@ -57,6 +57,7 @@ class _HomePageState extends State<HomePage> {
     _inputFocusNode.dispose();
     _chatScrollController.dispose();
     _chat?.dispose();
+    _chat = null;
     super.dispose();
   }
 
@@ -116,14 +117,17 @@ class _HomePageState extends State<HomePage> {
 
     // 主页原地进入聊天态并自动发送首条消息
     await _enterChat(session, initialMessage: text);
+    // 进入聊天态后确保键盘收起（防乱聚焦：状态切换后焦点残留会自动弹键盘）
+    if (mounted) _unfocus();
   }
 
   /// 进入聊天态：构建 ChatProvider 并加载消息
   Future<void> _enterChat(ChatSession session,
       {String? initialMessage}) async {
-    // 已有聊天态先释放（切换会话）
-    _chat?.dispose();
+    // 已有聊天态先释放（切换会话）：先置空再 dispose
+    final old = _chat;
     _chat = null;
+    old?.dispose();
 
     final db = DatabaseService.instance;
     final s = await db.getSession(session.id);
@@ -150,7 +154,10 @@ class _HomePageState extends State<HomePage> {
       model: s.model?.isNotEmpty == true ? s.model! : profile.defaultModel,
       skill: skill,
     )..loadMessages();
-    setState(() => _chat = chat);
+    setState(() {
+      _chat = chat;
+      _lastDisplayCount = 0;
+    });
 
     // 自动发送首条消息（等首帧完成）
     final initial = initialMessage;
@@ -165,16 +172,24 @@ class _HomePageState extends State<HomePage> {
   void _newChat() {
     Haptics.light();
     _unfocus();
-    if (_chat?.isStreaming == true) {
-      _chat?.stopGeneration();
+    final chat = _chat;
+    if (chat != null) {
+      if (chat.isStreaming) chat.stopGeneration();
+      // 先置空再 dispose：避免 dispose 后 provider 仍被 UI 引用
+      setState(() {
+        _chat = null;
+        _lastDisplayCount = 0;
+        // 重置预选为默认
+        _selectedSkill = null;
+        _selectedModel = null;
+      });
+      chat.dispose();
+    } else {
+      setState(() {
+        _selectedSkill = null;
+        _selectedModel = null;
+      });
     }
-    _chat?.dispose();
-    setState(() {
-      _chat = null;
-      // 重置预选为默认
-      _selectedSkill = null;
-      _selectedModel = null;
-    });
     context.read<SessionsProvider>().refresh();
   }
 
@@ -219,8 +234,8 @@ class _HomePageState extends State<HomePage> {
     if (chat.isStreaming) chat.stopGeneration();
     await context.read<SessionsProvider>().deleteSession(chat.session.id);
     if (!mounted) return;
-    chat.dispose();
     setState(() => _chat = null);
+    chat.dispose();
   }
 
 
@@ -369,8 +384,6 @@ class _HomePageState extends State<HomePage> {
             MaterialPageRoute(builder: (_) => const SettingsPage()),
           );
         },
-        onRename: (ctx, id, title) => _renameSession(ctx, id, title),
-        onDelete: (ctx, id) => _deleteSession(ctx, id),
         onShowActions: (ctx, id, title) =>
             _showSessionActions(ctx, id, title),
       ),
@@ -380,7 +393,7 @@ class _HomePageState extends State<HomePage> {
           : SafeArea(
               child: Column(
                 children: [
-                  // ===== header：抽屉入口 + 会话标题（聊天态）+ 新增对话 =====
+                  // ===== header：抽屉入口 + 新增对话（标题内嵌消息区顶部） =====
                   Padding(
                     padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
                     child: Row(
@@ -393,18 +406,7 @@ class _HomePageState extends State<HomePage> {
                             _scaffoldKey.currentState?.openDrawer();
                           },
                         ),
-                        // 聊天态：header 显示会话标题
-                        Expanded(
-                          child: _chat != null
-                              ? Text(
-                                  _chat!.session.title,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleMedium,
-                                )
-                              : const SizedBox(),
-                        ),
+                        const Spacer(),
                         // 右上角：新增对话（聊天态退出回空闲态）
                         IconButton(
                           icon: const Icon(Icons.add),
@@ -624,17 +626,20 @@ class _HomeInputBar extends StatelessWidget {
     final isStreaming = chat?.isStreaming ?? false;
 
     // tags 配置：聊天态取会话绑定值，空闲态取预选值
-    final skillLabel = inChat
-        ? (chat!.skill != null
-            ? '${chat!.skill!.icon} ${chat!.skill!.name}'
-            : '默认助手')
-        : (selectedSkill != null
-            ? '${selectedSkill!.icon} ${selectedSkill!.name}'
-            : '默认助手');
+    final currentSkill = inChat ? chat!.skill : selectedSkill;
+    final skillLabel = currentSkill != null
+        ? '${currentSkill.icon} ${currentSkill.name}'
+        : '默认助手';
+    // agent tag 图标：具体 agent 用其 emoji，默认助手用内置 icon
+    final skillEmoji = currentSkill?.icon;
     final modelLabel = inChat ? chat!.model : (selectedModel?.$2 ?? '默认模型');
     final effortLabel = inChat
         ? (effortLabels[chat!.session.effort]?.$1 ?? chat!.session.effort)
         : null;
+    // 输入框占位：具体 agent 时显示「给 xx 发送消息」
+    final hintText = currentSkill != null
+        ? '给 ${currentSkill.name} 发送消息'
+        : '给 Liang AI 发送消息';
 
     return SafeArea(
       top: false,
@@ -644,7 +649,8 @@ class _HomeInputBar extends StatelessWidget {
           // tags 行：独立于输入框（agent / model / effort[聊天态]）
           ChatTagsBar(tags: [
             ChatTag(
-              icon: Icons.smart_toy_outlined,
+              emoji: skillEmoji,
+              icon: skillEmoji == null ? Icons.smart_toy_outlined : null,
               label: skillLabel,
               onTap: onPickSkill,
             ),
@@ -695,7 +701,7 @@ class _HomeInputBar extends StatelessWidget {
                     onSubmitted: (_) => _send(context),
                     style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
                     decoration: InputDecoration(
-                      hintText: '给 Liang AI 发送消息',
+                      hintText: hintText,
                       isDense: true,
                       contentPadding: const EdgeInsets.symmetric(
                           horizontal: 14, vertical: 10),
@@ -778,10 +784,18 @@ class _ChatArea extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    // 订阅重建（流式/状态变化）
-    context.watch<ChatProvider>();
-    onCountChanged(chat.displayMessages.length);
+    // 订阅 ChatProvider 重建（流式/状态变化）。
+    // 单页架构下 ChatProvider 不在 Provider 树中，必须用 ListenableBuilder。
+    return ListenableBuilder(
+      listenable: chat,
+      builder: (context, _) {
+        onCountChanged(chat.displayMessages.length);
+        return _buildList(context, theme);
+      },
+    );
+  }
 
+  Widget _buildList(BuildContext context, ThemeData theme) {
     return Column(
       children: [
         // 错误提示条
@@ -819,7 +833,7 @@ class _ChatArea extends StatelessWidget {
               ],
             ),
           ),
-        // 消息列表（reverse：底部锚定）
+        // 消息列表（reverse：底部锚定；列表末尾 = 会话标题，随消息上滚）
         Expanded(
           child: chat.displayMessages.isEmpty
               ? const Center(child: CircularProgressIndicator())
@@ -828,8 +842,24 @@ class _ChatArea extends StatelessWidget {
                   reverse: true,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  itemCount: chat.displayMessages.length,
+                  // +1：index 末尾是会话标题（reverse 列表滚到最顶才可见）
+                  itemCount: chat.displayMessages.length + 1,
                   itemBuilder: (context, index) {
+                    // 标题项：reverse 列表最后一个位置
+                    if (index == chat.displayMessages.length) {
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 24, bottom: 16),
+                        child: Text(
+                          chat.session.title,
+                          textAlign: TextAlign.center,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      );
+                    }
                     final msg = chat.displayMessages[
                         chat.displayMessages.length - 1 - index];
                     if (msg.isToolResult) return const SizedBox.shrink();
@@ -852,16 +882,14 @@ class _ChatArea extends StatelessWidget {
   }
 }
 
-/// 侧滑抽屉：完整会话列表按时间分组（今天 / 7 天内 / 更早）
-class _SessionDrawer extends StatelessWidget {
+/// 侧滑抽屉：完整会话列表按时间分组（今天 / 7 天内 / 更早）+ 搜索
+class _SessionDrawer extends StatefulWidget {
   const _SessionDrawer({
     required this.sessions,
     required this.skillsProvider,
     required this.loaded,
     required this.onOpenChat,
     required this.onOpenSettings,
-    required this.onRename,
-    required this.onDelete,
     required this.onShowActions,
   });
 
@@ -870,9 +898,33 @@ class _SessionDrawer extends StatelessWidget {
   final bool loaded;
   final ValueChanged<String> onOpenChat;
   final VoidCallback onOpenSettings;
-  final void Function(BuildContext, String, String) onRename;
-  final void Function(BuildContext, String) onDelete;
   final void Function(BuildContext, String, String) onShowActions;
+
+  @override
+  State<_SessionDrawer> createState() => _SessionDrawerState();
+}
+
+class _SessionDrawerState extends State<_SessionDrawer> {
+  bool _searching = false;
+  String _query = '';
+  final _searchController = TextEditingController();
+  final _searchFocusNode = FocusNode();
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _searchFocusNode.dispose();
+    super.dispose();
+  }
+
+  /// 过滤后的会话（搜索时按标题匹配）
+  List<ChatSession> get _filtered {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return widget.sessions;
+    return widget.sessions
+        .where((s) => s.title.toLowerCase().contains(q))
+        .toList();
+  }
 
   /// 按时间分组：今天 / 7 天内 / 更早
   Map<String, List<ChatSession>> get _grouped {
@@ -885,7 +937,7 @@ class _SessionDrawer extends StatelessWidget {
       '7 天内': [],
       '更早': [],
     };
-    for (final s in sessions) {
+    for (final s in _filtered) {
       if (s.updatedAt >= startOfToday) {
         groups['今天']!.add(s);
       } else if (s.updatedAt >= sevenDaysAgo) {
@@ -900,11 +952,13 @@ class _SessionDrawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final sessions = widget.sessions;
+    final filteredEmpty = _filtered.isEmpty;
     return Drawer(
       child: SafeArea(
         child: Column(
           children: [
-            // 抽屉头部：Logo + 设置（新增对话统一走主页右上角 +）
+            // 抽屉头部：Logo + 搜索 + 设置（新增对话统一走主页右上角 +）
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
               child: Row(
@@ -913,18 +967,66 @@ class _SessionDrawer extends StatelessWidget {
                       style: theme.textTheme.titleMedium
                           ?.copyWith(fontWeight: FontWeight.w600)),
                   const Spacer(),
+                  // 搜索历史对话
+                  IconButton(
+                    icon: Icon(
+                      _searching ? Icons.search_off : Icons.search,
+                      size: 22,
+                    ),
+                    tooltip: _searching ? '关闭搜索' : '搜索会话',
+                    onPressed: () {
+                      Haptics.light();
+                      setState(() {
+                        _searching = !_searching;
+                        if (!_searching) {
+                          _query = '';
+                          _searchController.clear();
+                          _searchFocusNode.unfocus();
+                        }
+                      });
+                    },
+                  ),
                   IconButton(
                     icon: const Icon(Icons.settings_outlined, size: 22),
                     tooltip: '设置',
-                    onPressed: onOpenSettings,
+                    onPressed: widget.onOpenSettings,
                   ),
                 ],
               ),
             ),
+            // 搜索框（点放大镜展开）
+            if (_searching)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  autofocus: true,
+                  onChanged: (v) => setState(() => _query = v),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: '搜索会话标题',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              setState(() {
+                                _query = '';
+                                _searchController.clear();
+                              });
+                            },
+                          ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                  ),
+                ),
+              ),
             const Divider(height: 1),
-            // 会话列表（按时间分组）
+            // 会话列表（按时间分组，搜索时按匹配过滤）
             Expanded(
-              child: !loaded
+              child: !widget.loaded
                   ? const Center(child: CircularProgressIndicator())
                   : sessions.isEmpty
                       ? Center(
@@ -933,42 +1035,53 @@ class _SessionDrawer extends StatelessWidget {
                                   color:
                                       theme.colorScheme.onSurfaceVariant)),
                         )
-                      : ListView(
-                          padding: const EdgeInsets.symmetric(vertical: 4),
-                          children: [
-                            for (final entry in _grouped.entries)
-                              if (entry.value.isNotEmpty) ...[
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                      16, 12, 16, 4),
-                                  child: Text(entry.key,
-                                      style: theme.textTheme.labelSmall
-                                          ?.copyWith(
-                                              color: theme.colorScheme
-                                                  .onSurfaceVariant)),
-                                ),
-                                for (final s in entry.value)
-                                  ListTile(
-                                    dense: true,
-                                    leading: Text(
-                                      skillsProvider.byId(s.skillId)?.icon ??
-                                          '💬',
-                                      style:
-                                          const TextStyle(fontSize: 18),
+                      : filteredEmpty
+                          ? Center(
+                              child: Text('没有找到「$_query」',
+                                  style: theme.textTheme.bodyMedium
+                                      ?.copyWith(
+                                          color: theme
+                                              .colorScheme.onSurfaceVariant)),
+                            )
+                          : ListView(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 4),
+                              children: [
+                                for (final entry in _grouped.entries)
+                                  if (entry.value.isNotEmpty) ...[
+                                    Padding(
+                                      padding: const EdgeInsets.fromLTRB(
+                                          16, 12, 16, 4),
+                                      child: Text(entry.key,
+                                          style: theme.textTheme.labelSmall
+                                              ?.copyWith(
+                                                  color: theme.colorScheme
+                                                      .onSurfaceVariant)),
                                     ),
-                                    title: Text(
-                                      s.title,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.bodyMedium,
-                                    ),
-                                    onTap: () => onOpenChat(s.id),
-                                    onLongPress: () =>
-                                        onShowActions(context, s.id, s.title),
-                                  ),
+                                    for (final s in entry.value)
+                                      ListTile(
+                                        dense: true,
+                                        leading: Text(
+                                          widget.skillsProvider
+                                                  .byId(s.skillId)?.icon ??
+                                              '💬',
+                                          style:
+                                              const TextStyle(fontSize: 18),
+                                        ),
+                                        title: Text(
+                                          s.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.bodyMedium,
+                                        ),
+                                        onTap: () => widget.onOpenChat(s.id),
+                                        onLongPress: () => widget
+                                            .onShowActions(
+                                                context, s.id, s.title),
+                                      ),
+                                  ],
                               ],
-                          ],
-                        ),
+                            ),
             ),
           ],
         ),
