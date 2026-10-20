@@ -76,12 +76,6 @@ class _ChatInputBarState extends State<ChatInputBar> {
     }
   }
 
-  static const _effortLabels = {
-    'max': ('深度', '复杂编码 · 最强推理'),
-    'high': ('均衡', '日常问答 · 平衡速度'),
-    'low': ('轻量', '简单任务 · 响应最快'),
-  };
-
   bool get _canSend =>
       !widget.isStreaming &&
       (_controller.text.trim().isNotEmpty ||
@@ -227,7 +221,6 @@ class _ChatInputBarState extends State<ChatInputBar> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    final effortLabel = _effortLabels[widget.effort]?.$1 ?? widget.effort;
     final radius = context.read<ThemeProvider>().cornerRadius;
     final chat = context.watch<ChatProvider>();
     final pending = chat.pendingAttachments;
@@ -242,177 +235,165 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final showPlus = !widget.isStreaming && !hasText;
 
     return SafeArea(
-      // DeepSeek 式浮起输入栏：离底 8px、圆角胶囊、带阴影、无顶部分隔线
-      child: Container(
-        margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-        decoration: BoxDecoration(
-          color: colorScheme.surface,
-          borderRadius: BorderRadius.circular(28),
-          border: Border.all(
-            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
-            width: 0.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: colorScheme.shadow.withValues(alpha: 0.08),
-              blurRadius: 12,
-              offset: const Offset(0, 2),
-            ),
+      // DeepSeek 式：tags 行独立在输入框上方（不包在输入框容器里）
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // tags 行（agent/model/effort 切换，独立于输入框）
+          if (widget.tags.isNotEmpty) ...[
+            ChatTagsBar(tags: widget.tags),
+            const SizedBox(height: 6),
           ],
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // tags 行（agent/model 切换，DeepSeek 式）
-            if (widget.tags.isNotEmpty) ...[
-              ChatTagsBar(tags: widget.tags),
-              const SizedBox(height: 6),
-            ],
-            // 附件预览条
-            if (pending.isNotEmpty) _AttachmentPreview(pending: pending),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
-              children: [
-                // 推理档位按钮（左侧，垂直居中；供应商不支持思考流时隐藏）
-                if (widget.showEffortButton) ...[
-                  InkWell(
-                    onTap: _pickEffort,
-                    borderRadius: BorderRadius.circular(radius + 2),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: colorScheme.primaryContainer
-                            .withValues(alpha: 0.6),
-                        borderRadius: BorderRadius.circular(radius + 2),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.bolt,
-                              size: 16, color: colorScheme.primary),
-                          const SizedBox(width: 4),
-                          Text(
-                            effortLabel,
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: colorScheme.primary,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                // 输入框
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    focusNode: _focusNode,
-                    maxLines: null,
-                    minLines: 1,
-                    textInputAction: TextInputAction.newline,
-                    onChanged: (_) => setState(() {}),
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyLarge
-                        ?.copyWith(height: 1.6),
-                    decoration: InputDecoration(
-                      hintText: pending.isEmpty ? '输入消息…' : '补充说明（可空）…',
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      filled: true,
-                      fillColor: colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.5),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(radius + 6),
-                        borderSide: BorderSide.none,
-                      ),
-                    ),
-                  ),
+          // 浮起输入框：圆角胶囊、带阴影
+          Container(
+            margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+            decoration: BoxDecoration(
+              color: colorScheme.surface,
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+                width: 0.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: colorScheme.shadow.withValues(alpha: 0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 2),
                 ),
-                const SizedBox(width: 4),
-                // 右侧动作区：+ 与 发送/停止（供应商不支持视觉时隐藏 +）
-                if (showPlus && widget.showAttachmentButton)
-                  IconButton(
-                    onPressed: _pickAttachment,
-                    icon: Icon(Icons.add_circle_outline,
-                        size: 28, color: colorScheme.onSurfaceVariant),
-                    tooltip: '添加附件',
-                  ),
-                if (widget.isStreaming)
-                  IconButton.filled(
-                    onPressed: () {
-                      Haptics.medium();
-                      widget.onStop();
-                    },
-                    style: IconButton.styleFrom(
-                      backgroundColor: colorScheme.errorContainer,
-                    ),
-                    icon: Icon(Icons.stop_rounded,
-                        color: colorScheme.onErrorContainer),
-                  )
-                else if (showSend)
-                  IconButton.filled(
-                    onPressed: _canSend ? _send : null,
-                    icon: const Icon(Icons.arrow_upward_rounded),
-                  ),
               ],
             ),
-          ],
-        ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 附件预览条
+                if (pending.isNotEmpty) _AttachmentPreview(pending: pending),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // 输入框
+                    Expanded(
+                      child: TextField(
+                        controller: _controller,
+                        focusNode: _focusNode,
+                        maxLines: null,
+                        minLines: 1,
+                        textInputAction: TextInputAction.newline,
+                        onChanged: (_) => setState(() {}),
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodyLarge
+                            ?.copyWith(height: 1.6),
+                        decoration: InputDecoration(
+                          hintText:
+                              pending.isEmpty ? '输入消息…' : '补充说明（可空）…',
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          filled: true,
+                          fillColor: colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(radius + 6),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    // 右侧动作区：+ 与 发送/停止（供应商不支持视觉时隐藏 +）
+                    if (showPlus && widget.showAttachmentButton)
+                      IconButton(
+                        onPressed: _pickAttachment,
+                        icon: Icon(Icons.add_circle_outline,
+                            size: 28, color: colorScheme.onSurfaceVariant),
+                        tooltip: '添加附件',
+                      ),
+                    if (widget.isStreaming)
+                      IconButton.filled(
+                        onPressed: () {
+                          Haptics.medium();
+                          widget.onStop();
+                        },
+                        style: IconButton.styleFrom(
+                          backgroundColor: colorScheme.errorContainer,
+                        ),
+                        icon: Icon(Icons.stop_rounded,
+                            color: colorScheme.onErrorContainer),
+                      )
+                    else if (showSend)
+                      IconButton.filled(
+                        onPressed: _canSend ? _send : null,
+                        icon: const Icon(Icons.arrow_upward_rounded),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  Future<void> _pickEffort() async {
-    Haptics.light();
-    // 打开弹层前收起键盘，避免弹层关闭时焦点自动回到输入框
-    FocusManager.instance.primaryFocus?.unfocus();
-    final selected = await showModalBottomSheet<String>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                '推理深度',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-            for (final entry in _effortLabels.entries)
-              ListTile(
-                leading: Icon(
-                  widget.effort == entry.key
-                      ? Icons.check_circle
-                      : Icons.circle_outlined,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-                title: Text(entry.value.$1),
-                subtitle: Text(entry.value.$2),
-                onTap: () {
-                  Haptics.selection();
-                  Navigator.pop(context, entry.key);
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    );
+  /// 推理档位选择弹窗（公开：effort tag 点击时调用）
+  Future<void> pickEffort() async {
+    final selected = await showEffortPicker(context, widget.effort);
     if (selected != null && selected != widget.effort) {
       widget.onEffortChanged(selected);
     }
   }
+}
+
+/// 推理档位标签映射（effort tag 显示用）
+const effortLabels = {
+  'max': ('深度', '复杂编码 · 最强推理'),
+  'high': ('均衡', '日常问答 · 平衡速度'),
+  'low': ('轻量', '简单任务 · 响应最快'),
+};
+
+/// 推理档位选择弹窗（共享：主页/聊天页 effort tag 点击时调用）
+Future<String?> showEffortPicker(BuildContext context, String current) async {
+  Haptics.light();
+  // 打开弹层前收起键盘，避免弹层关闭时焦点自动回到输入框
+  FocusManager.instance.primaryFocus?.unfocus();
+  final selected = await showModalBottomSheet<String>(
+    context: context,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+    ),
+    builder: (context) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              '推理深度',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          for (final entry in effortLabels.entries)
+            ListTile(
+              leading: Icon(
+                current == entry.key
+                    ? Icons.check_circle
+                    : Icons.circle_outlined,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+              title: Text(entry.value.$1),
+              subtitle: Text(entry.value.$2),
+              onTap: () {
+                Haptics.selection();
+                Navigator.pop(context, entry.key);
+              },
+            ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    ),
+  );
+  return selected;
 }
 
 /// 待发送附件预览条（横向滚动缩略图 + 文件卡片）
