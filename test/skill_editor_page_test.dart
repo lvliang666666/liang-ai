@@ -7,85 +7,73 @@ import 'package:ai_chat_app/services/tools/builtin_tools.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+/// 假 SkillProvider：不碰真实 DB（sqflite_ffi 异步 IO 在 widget 测试
+/// fake async 环境推不动，pop 永远等不到），create/update 同步完成并
+/// 记录调用参数供断言。
+class _FakeSkillProvider extends SkillProvider {
+  _FakeSkillProvider()
+      // create/update 已覆写，service 永不被调用，传单例占位即可
+      : super(service: SkillService(database: DatabaseService.instance));
+
+  final List<Skill> created = [];
+  final List<Skill> updated = [];
+
+  @override
+  Future<Skill> create({
+    required String name,
+    required String prompt,
+    String icon = '🤖',
+    String description = '',
+    double? temperature,
+    String? effort,
+    List<String>? toolNames,
+  }) async {
+    final skill = Skill(
+      id: 'fake-${created.length}',
+      name: name,
+      icon: icon,
+      description: description,
+      prompt: prompt,
+      temperature: temperature,
+      effort: effort,
+      toolNames: toolNames,
+    );
+    created.add(skill);
+    return skill;
+  }
+
+  @override
+  Future<void> update(Skill skill) async {
+    updated.add(skill);
+  }
+}
 
 void main() {
-  setUpAll(() {
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
+  late _FakeSkillProvider provider;
+
+  setUp(() {
+    provider = _FakeSkillProvider();
   });
 
-  late DatabaseService db;
-  late SkillProvider skillProvider;
-
-  setUp(() async {
-    final inMemory = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: 6,
-        onCreate: (d, v) async {
-          await d.execute('''
-            CREATE TABLE sessions (
-              id TEXT PRIMARY KEY, title TEXT NOT NULL,
-              created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-              effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
-              skill_id TEXT, provider_id TEXT, model TEXT
-            )
-          ''');
-          await d.execute('''
-            CREATE TABLE messages (
-              id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
-              content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
-              attachments TEXT NOT NULL DEFAULT '[]',
-              tool_calls TEXT NOT NULL DEFAULT '[]', tool_call_id TEXT,
-              created_at INTEGER NOT NULL
-            )
-          ''');
-          await d.execute(
-            'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
-          );
-          await d.execute('''
-            CREATE TABLE skills (
-              id TEXT PRIMARY KEY, name TEXT NOT NULL,
-              icon TEXT NOT NULL DEFAULT '🤖', description TEXT NOT NULL DEFAULT '',
-              prompt TEXT NOT NULL DEFAULT '', temperature REAL, effort TEXT,
-              tools TEXT, is_builtin INTEGER NOT NULL DEFAULT 0
-            )
-          ''');
-          await d.execute('''
-            CREATE TABLE providers (
-              id TEXT PRIMARY KEY, name TEXT NOT NULL,
-              base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
-              default_model TEXT NOT NULL DEFAULT '',
-              capabilities TEXT NOT NULL DEFAULT '{}',
-              dialect TEXT NOT NULL DEFAULT '{}',
-              is_builtin INTEGER NOT NULL DEFAULT 0
-            )
-          ''');
-        },
-      ),
-    );
-    db = DatabaseService.instance;
-    await db.initForTest(inMemory);
-
-    skillProvider = SkillProvider(service: SkillService(database: db));
-    await skillProvider.load();
-  });
-
-  tearDown(() async {
-    skillProvider.dispose();
-    await db.close();
+  tearDown(() {
+    provider.dispose();
   });
 
   Widget wrap(Widget child) => MultiProvider(
         providers: [
-          ChangeNotifierProvider<SkillProvider>.value(value: skillProvider),
+          ChangeNotifierProvider<SkillProvider>.value(value: provider),
         ],
         child: MaterialApp(home: child),
       );
 
-  /// 内置 Skill（资产种子里的第一个）
-  Skill builtinSkill() => skillProvider.builtins.first;
+  /// 内置 Skill（只读查看用例）
+  Skill builtinSkill() => Skill(
+        id: 'builtin-1',
+        name: '默认助手',
+        prompt: '内置提示词',
+        isBuiltin: true,
+      );
 
   group('SkillEditorPage', () {
     testWidgets('新建默认全勾：直接保存 → toolNames == null', (tester) async {
@@ -116,18 +104,17 @@ void main() {
         expect(tile.value, isTrue, reason: '${t.name} 默认应勾选');
       }
 
-      // 保存（create 是异步 DB 写入，pop 在 await 之后）
+      // 保存：假 Provider 同步完成，pop 在微任务后
       await tester.tap(find.text('保存'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
 
       // pop 回来了
       expect(find.byType(SkillEditorPage), findsNothing);
 
-      // provider 中新增的 Skill：toolNames == null（全勾语义）
-      final created =
-          skillProvider.customs.firstWhere((s) => s.name == '测试 Skill');
+      // create 调用参数：toolNames == null（全勾语义）
+      expect(provider.created, hasLength(1));
+      final created = provider.created.single;
+      expect(created.name, '测试 Skill');
       expect(created.toolNames, isNull);
       expect(created.prompt, '你是测试');
     });
@@ -154,12 +141,12 @@ void main() {
       await tester.pump();
 
       await tester.tap(find.text('保存'));
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 100));
       await tester.pumpAndSettle();
 
-      final created =
-          skillProvider.customs.firstWhere((s) => s.name == '子集 Skill');
+      expect(find.byType(SkillEditorPage), findsNothing);
+
+      expect(provider.created, hasLength(1));
+      final created = provider.created.single;
       expect(created.toolNames, isNotNull);
       expect(created.toolNames!.length, builtinTools.length - 1);
       expect(created.toolNames, isNot(contains(removedTool.name)));
@@ -182,9 +169,35 @@ void main() {
       expect(find.byType(SkillEditorPage), findsOneWidget);
       // 提示了名称错误
       expect(find.text('名称不能为空'), findsOneWidget);
+      // 未触发 create
+      expect(provider.created, isEmpty);
 
       // 收尾：让 SnackBar timer 走完，避免 pending timer 报错
       await tester.pump(const Duration(seconds: 4));
+    });
+
+    testWidgets('编辑自定义 Skill：保存走 update，保留原 id', (tester) async {
+      final original = Skill(
+        id: 'custom-1',
+        name: '旧名字',
+        prompt: '旧提示词',
+      );
+      await tester.pumpWidget(wrap(SkillEditorPage(skill: original)));
+      await tester.pumpAndSettle();
+
+      // 改名称
+      await tester.enterText(find.widgetWithText(TextField, '名称'), '新名字');
+      await tester.pump();
+
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SkillEditorPage), findsNothing);
+      expect(provider.updated, hasLength(1));
+      final saved = provider.updated.single;
+      expect(saved.id, 'custom-1'); // 编辑保留原 id
+      expect(saved.name, '新名字');
+      expect(provider.created, isEmpty); // 不走 create
     });
 
     testWidgets('内置 Skill：只读查看，无保存按钮', (tester) async {
