@@ -237,13 +237,24 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final showPlus = !widget.isStreaming && !hasText;
 
     return SafeArea(
+      // DeepSeek 式浮起输入栏：离底 8px、圆角胶囊、带阴影、无顶部分隔线
       child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 4, 12, 8),
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
         decoration: BoxDecoration(
           color: colorScheme.surface,
-          border: Border(
-            top: BorderSide(color: colorScheme.outlineVariant, width: 0.5),
+          borderRadius: BorderRadius.circular(28),
+          border: Border.all(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.5),
+            width: 0.5,
           ),
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.shadow.withValues(alpha: 0.08),
+              blurRadius: 12,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
