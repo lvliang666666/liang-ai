@@ -13,7 +13,6 @@ class SettingsService {
   static const _kDefaultEffort = 'default_effort';
   static const _kTemperature = 'temperature';
   static const _kThemeId = 'theme_id';
-  static const _kRecentAgentIds = 'recent_agent_ids';
 
   // ===== 默认值 =====
   // API Key 不预填（凭据不入代码库）；首次使用请在设置页填入公司分配的 Key
@@ -51,20 +50,23 @@ class SettingsService {
   String? get themeIdRaw => _prefs.getString(_kThemeId);
   Future<void> setThemeId(String v) => _prefs.setString(_kThemeId, v);
 
-  // ===== 最近使用的 Agent（LRU，最多 recentAgentLimit 个） =====
-  static const recentAgentLimit = 3;
+  // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
+  // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
+  // 老用户的最近使用列表无缝延续
+  static const _kRecentSkillIds = 'recent_agent_ids';
+  static const recentSkillLimit = 3;
 
-  /// 最近使用的 agentId 列表（index 0 = 最近使用）
-  List<String> get recentAgentIds =>
-      _prefs.getStringList(_kRecentAgentIds) ?? [];
+  /// 最近使用的 skillId 列表（index 0 = 最近使用）
+  List<String> get recentSkillIds =>
+      _prefs.getStringList(_kRecentSkillIds) ?? [];
 
-  /// 记录一次 Agent 使用：提到最前，去重，截断到上限
-  Future<void> touchRecentAgent(String agentId) async {
-    final list = recentAgentIds..remove(agentId);
-    list.insert(0, agentId);
-    if (list.length > recentAgentLimit) {
-      list.removeRange(recentAgentLimit, list.length);
+  /// 记录一次 Skill 使用：提到最前，去重，截断到上限
+  Future<void> touchRecentSkill(String skillId) async {
+    final list = recentSkillIds..remove(skillId);
+    list.insert(0, skillId);
+    if (list.length > recentSkillLimit) {
+      list.removeRange(recentSkillLimit, list.length);
     }
-    await _prefs.setStringList(_kRecentAgentIds, list);
+    await _prefs.setStringList(_kRecentSkillIds, list);
   }
 }

@@ -4,16 +4,17 @@ import 'dart:math';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
-import '../models/agent.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
+import '../models/skill.dart';
 import '../models/tool_call.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/sse_parser.dart';
 import '../services/tool_registry.dart';
+import '../services/tools/builtin_tools.dart';
 
 /// 聊天流式状态
 enum ChatStatus { idle, thinking, answering, toolCalling, error }
@@ -26,15 +27,16 @@ class ChatProvider extends ChangeNotifier {
     required ChatSession session,
     required ProviderProfile profile,
     required String model,
-    Agent? agent,
-    ToolRegistry? toolRegistry,
+    Skill? skill,
+    List<ToolHandler> toolCatalog = builtinTools,
   })  : _db = database,
         _api = api,
         _session = session,
         _profile = profile,
         _model = model,
-        _agent = agent,
-        _tools = toolRegistry;
+        _skill = skill,
+        _toolCatalog = toolCatalog,
+        _tools = _buildRegistry(skill, toolCatalog);
 
   final DatabaseService _db;
   ApiService _api;
@@ -42,11 +44,32 @@ class ChatProvider extends ChangeNotifier {
   ProviderProfile _profile;
   String _model;
 
-  /// 当前会话绑定的 Agent（null = 默认助手，无 system prompt）
-  Agent? _agent;
+  /// 当前会话绑定的 Skill（null = 默认助手，无 system prompt + 全部工具）
+  Skill? _skill;
 
-  /// 工具注册表（null = 不启用工具；是否随请求发送还看 profile 能力）
-  final ToolRegistry? _tools;
+  /// 工具目录（Skill 工具子集的选取范围）
+  List<ToolHandler> _toolCatalog;
+
+  /// 工具注册表（按 Skill.toolNames 从目录构建；null = 不启用工具；
+  /// 是否随请求发送还看 profile 能力）
+  ToolRegistry? _tools;
+
+  /// 按 Skill 的工具子集声明从目录构建注册表
+  ///
+  /// toolNames null = 全部目录工具（默认助手/迁移老数据）；
+  /// [] = 无工具；非空 = 指定子集（目录中不存在的名字忽略）。
+  static ToolRegistry _buildRegistry(
+      Skill? skill, List<ToolHandler> catalog) {
+    final registry = ToolRegistry();
+    final allowed = skill?.toolNames;
+    if (allowed == null) {
+      registry.registerAll(catalog);
+    } else {
+      registry
+          .registerAll(catalog.where((t) => allowed.contains(t.name)).toList());
+    }
+    return registry;
+  }
 
   /// 会话绑定的供应商 profile（请求组装与能力判断依据）
   ProviderProfile get profile => _profile;
@@ -57,7 +80,10 @@ class ChatProvider extends ChangeNotifier {
 
   /// 工具调用是否随请求发送（能力 + 注册表非空）
   bool get _toolsEnabled =>
-      _profile.capabilities.toolCalls && _tools != null && _tools.isNotEmpty;
+      _profile.capabilities.toolCalls && (_tools?.isNotEmpty ?? false);
+
+  /// 当前注册的工具数（测试/调试用）
+  int get toolCount => _tools?.length ?? 0;
 
   /// agentic loop 最大轮数（防死循环 + token 膨胀）
   static const _maxLoopIterations = 8;
@@ -94,7 +120,7 @@ class ChatProvider extends ChangeNotifier {
 
   // ===== Getters =====
   ChatSession get session => _session;
-  Agent? get agent => _agent;
+  Skill? get skill => _skill;
   List<ChatMessage> get messages => _messages;
   ChatStatus get status => _status;
   String get errorMessage => _errorMessage;
@@ -415,11 +441,14 @@ class ChatProvider extends ChangeNotifier {
     _notify();
   }
 
-  /// 切换会话绑定的 Agent（null = 默认助手）
-  Future<void> setAgent(Agent? agent) async {
-    if (_agent?.id == agent?.id) return;
-    _agent = agent;
-    await _db.updateSessionAgent(_session.id, agent?.id);
+  /// 切换会话绑定的 Skill（null = 默认助手）
+  ///
+  /// 同步按新 Skill 的工具子集重建注册表，下一轮请求即生效。
+  Future<void> setSkill(Skill? skill) async {
+    if (_skill?.id == skill?.id) return;
+    _skill = skill;
+    _tools = _buildRegistry(skill, _toolCatalog);
+    await _db.updateSessionSkill(_session.id, skill?.id);
     _notify();
   }
 
@@ -441,11 +470,11 @@ class ChatProvider extends ChangeNotifier {
     return true;
   }
 
-  /// 组装 API 请求消息：Agent system prompt 在头部 + 全部历史
+  /// 组装 API 请求消息：Skill system prompt 在头部 + 全部历史
   ///
   /// [forceSummary] 为 true 时（loop 轮数耗尽）追加系统提示强制模型总结。
   List<Map<String, Object?>> _buildApiMessages({bool forceSummary = false}) {
-    final prompt = _agent?.prompt;
+    final prompt = _skill?.prompt;
     return [
       if (prompt != null && prompt.isNotEmpty)
         {'role': 'system', 'content': prompt},
@@ -458,21 +487,21 @@ class ChatProvider extends ChangeNotifier {
     ];
   }
 
-  /// 生效的推理档位：Agent 预设优先于会话设置
+  /// 生效的推理档位：Skill 预设优先于会话设置
   ///
-  /// 会话 effort 是用户在聊天中可手动调整的值；Agent 预设只在
+  /// 会话 effort 是用户在聊天中可手动调整的值；Skill 预设只在
   /// 会话仍为初始默认值时生效，用户手动改过则以用户为准。
   String get _effectiveEffort {
-    final agentEffort = _agent?.effort;
-    if (agentEffort != null && _session.effort == 'max') {
-      // 会话未手动调整过（保持默认 max），采用 Agent 预设
-      return agentEffort;
+    final skillEffort = _skill?.effort;
+    if (skillEffort != null && _session.effort == 'max') {
+      // 会话未手动调整过（保持默认 max），采用 Skill 预设
+      return skillEffort;
     }
     return _session.effort;
   }
 
-  /// 生效的温度：Agent 预设优先（会话级温度暂未开放手动调整）
-  double get _effectiveTemperature => _agent?.temperature ?? 0.7;
+  /// 生效的温度：Skill 预设优先（会话级温度暂未开放手动调整）
+  double get _effectiveTemperature => _skill?.temperature ?? 0.7;
 
   /// 思考用时（秒）
   int get thinkingSeconds {

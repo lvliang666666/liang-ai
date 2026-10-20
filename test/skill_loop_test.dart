@@ -1,11 +1,13 @@
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
+import 'package:ai_chat_app/models/skill.dart';
 import 'package:ai_chat_app/models/tool_call.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:ai_chat_app/services/sse_parser.dart';
 import 'package:ai_chat_app/services/tool_registry.dart';
+import 'package:ai_chat_app/services/tools/builtin_tools.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -53,14 +55,14 @@ void main() {
     final inMemory = await databaseFactory.openDatabase(
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 5,
+        version: 6,
         onCreate: (d, v) async {
           await d.execute('''
             CREATE TABLE sessions (
               id TEXT PRIMARY KEY, title TEXT NOT NULL,
               created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
               effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
-              provider_id TEXT, model TEXT
+              skill_id TEXT, provider_id TEXT, model TEXT
             )
           ''');
           await d.execute('''
@@ -72,12 +74,15 @@ void main() {
               created_at INTEGER NOT NULL
             )
           ''');
+          await d.execute(
+            'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
+          );
           await d.execute('''
-            CREATE TABLE agents (
+            CREATE TABLE skills (
               id TEXT PRIMARY KEY, name TEXT NOT NULL,
               icon TEXT NOT NULL DEFAULT '🤖', description TEXT NOT NULL DEFAULT '',
               prompt TEXT NOT NULL DEFAULT '', temperature REAL, effort TEXT,
-              is_builtin INTEGER NOT NULL DEFAULT 0
+              tools TEXT, is_builtin INTEGER NOT NULL DEFAULT 0
             )
           ''');
           await d.execute('''
@@ -106,7 +111,7 @@ void main() {
       session: session,
       profile: toolProfile(),
       model: 'm1',
-      toolRegistry: ToolRegistry()..register(const StubTool('工具结果OK')),
+      toolCatalog: [const StubTool('工具结果OK'), ...builtinTools],
     );
   });
 
@@ -145,7 +150,8 @@ void main() {
       // 第二轮请求应携带 tools 定义 + tool 结果消息
       expect(provider.status, ChatStatus.thinking);
       expect(api.lastTools, isNotNull);
-      expect(api.lastTools!.length, 1);
+      // 无 Skill = 全部目录工具（stub + 3 个内置）
+      expect(api.lastTools!.length, 1 + builtinTools.length);
       final toolMsg = api.lastMessages!
           .firstWhere((m) => m['role'] == 'tool');
       expect(toolMsg['tool_call_id'], 'call_1');
@@ -210,8 +216,7 @@ void main() {
             id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
         profile: toolProfile(),
         model: 'm1',
-        toolRegistry: ToolRegistry()
-          ..register(const StubTool('x', shouldThrow: true)),
+        toolCatalog: [const StubTool('x', shouldThrow: true)],
       );
 
       await failingProvider.loadMessages();
@@ -312,7 +317,7 @@ void main() {
         profile: ProviderProfile.builtinCompany()
             .copyWith(capabilities: const ProviderCapabilities()),
         model: 'glm5.1',
-        toolRegistry: ToolRegistry()..register(const StubTool('x')),
+        toolCatalog: [const StubTool('x')],
       );
       await noToolProvider.loadMessages();
       await noToolProvider.sendMessage('你好');
@@ -324,7 +329,96 @@ void main() {
     });
   });
 
-  group('DB v5 tool 消息', () {
+  group('Skill 工具子集注入', () {
+    test('无 Skill：全部目录工具随请求发送', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDone());
+      await waitUntil(() => provider.status == ChatStatus.idle);
+
+      expect(api.lastTools, isNotNull);
+      // stub + 3 个内置工具
+      expect(api.lastTools!.length, 1 + builtinTools.length);
+    });
+
+    test('Skill toolNames 子集：只发送声明的工具', () async {
+      final subsetProvider = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+            id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
+        profile: toolProfile(),
+        model: 'm1',
+        skill: Skill(
+            id: 'calc-only',
+            name: '只有计算器',
+            prompt: 'p',
+            toolNames: const ['stub']),
+        toolCatalog: [const StubTool('x'), ...builtinTools],
+      );
+      await subsetProvider.loadMessages();
+      await subsetProvider.sendMessage('算一下');
+      api.emit(const SseDone());
+      await waitUntil(() => subsetProvider.status == ChatStatus.idle);
+
+      expect(api.lastTools, isNotNull);
+      expect(api.lastTools!.length, 1);
+      expect(
+          (api.lastTools!.first['function'] as Map)['name'], 'stub');
+      subsetProvider.dispose();
+    });
+
+    test('Skill toolNames 空：不发送 tools 参数', () async {
+      final noneProvider = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+            id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
+        profile: toolProfile(),
+        model: 'm1',
+        skill: Skill(
+            id: 'no-tools',
+            name: '无工具',
+            prompt: 'p',
+            toolNames: const []),
+        toolCatalog: [const StubTool('x')],
+      );
+      await noneProvider.loadMessages();
+      await noneProvider.sendMessage('你好');
+      api.emit(const SseDone());
+      await waitUntil(() => noneProvider.status == ChatStatus.idle);
+
+      expect(api.lastTools, isNull);
+      noneProvider.dispose();
+    });
+
+    test('setSkill 切换后下一轮请求的工具集随之变化', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('先看看');
+      api.emit(const SseDone());
+      await waitUntil(() => provider.status == ChatStatus.idle);
+      expect(api.lastTools!.length, 1 + builtinTools.length);
+
+      // 切到只有 stub 的 Skill
+      await provider.setSkill(Skill(
+          id: 'sub', name: '子集', prompt: 'p', toolNames: const ['stub']));
+      await provider.sendMessage('再看看');
+      api.emit(const SseDone());
+      await waitUntil(() => provider.status == ChatStatus.idle);
+      expect(api.lastTools!.length, 1);
+      expect(
+          (api.lastTools!.first['function'] as Map)['name'], 'stub');
+
+      // 切回默认（null = 全部）
+      await provider.setSkill(null);
+      await provider.sendMessage('最后看看');
+      api.emit(const SseDone());
+      await waitUntil(() => provider.status == ChatStatus.idle);
+      expect(api.lastTools!.length, 1 + builtinTools.length);
+    });
+  });
+
+  group('DB v6 tool 消息', () {
     test('tool_calls + tool_call_id 落库往返', () async {
       const calls = [
         ToolCall(id: 'c1', name: 'get_current_time', argumentsJson: '{}'),
