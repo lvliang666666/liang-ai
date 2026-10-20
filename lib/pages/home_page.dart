@@ -924,6 +924,12 @@ class _HomeInputBarState extends State<_HomeInputBar> {
           duration: Duration(seconds: 2),
         ),
       );
+      return;
+    }
+    // 空闲态附件存本地列表（聊天态由 provider notifyListeners 驱动重建），
+    // 不 setState 的话预览条要等下次输入文字才渲染出来
+    if (widget.chat == null && ok) {
+      setState(() {});
     }
   }
 
@@ -952,8 +958,20 @@ class _HomeInputBarState extends State<_HomeInputBar> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final chat = widget.chat;
+    // 聊天态订阅 ChatProvider：附件入队/移除、流式状态变化即时反映到输入栏
+    // （单页架构下 ChatProvider 不在 Provider 树，只能 ListenableBuilder 订阅实例）
+    if (chat != null) {
+      return ListenableBuilder(
+        listenable: chat,
+        builder: (context, _) => _buildInput(context, chat),
+      );
+    }
+    return _buildInput(context, null);
+  }
+
+  Widget _buildInput(BuildContext context, ChatProvider? chat) {
+    final theme = Theme.of(context);
     final inChat = chat != null;
     final isStreaming = chat?.isStreaming ?? false;
     // 主题圆角：Minecraft（0）等硬边框风格下输入框不再套圆角胶囊外框
