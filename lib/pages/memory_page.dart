@@ -4,17 +4,18 @@ import 'package:provider/provider.dart';
 import '../providers/memory_provider.dart';
 import '../utils/haptics.dart';
 
-/// 记忆管理页：查看/搜索/删除/手动添加 AI 长期记忆
+/// 记忆管理面板：查看/搜索/删除/手动添加 AI 长期记忆
 ///
 /// 记忆为全局共享池（所有 Skill 共用），跨会话生效。
-class MemoryPage extends StatefulWidget {
-  const MemoryPage({super.key});
+/// 嵌入设置页 PageView 作为独立 tag，无自带 Scaffold。
+class MemoryPanel extends StatefulWidget {
+  const MemoryPanel({super.key});
 
   @override
-  State<MemoryPage> createState() => _MemoryPageState();
+  State<MemoryPanel> createState() => _MemoryPanelState();
 }
 
-class _MemoryPageState extends State<MemoryPage> {
+class _MemoryPanelState extends State<MemoryPanel> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
   String _query = '';
@@ -46,10 +47,7 @@ class _MemoryPageState extends State<MemoryPage> {
     }
 
     if (!provider.loaded) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('记忆管理')),
-        body: const Center(child: CircularProgressIndicator()),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     // 搜索过滤（不区分大小写）
@@ -62,123 +60,124 @@ class _MemoryPageState extends State<MemoryPage> {
                 (m.tag?.toLowerCase().contains(query) ?? false))
             .toList();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('记忆管理'),
-        actions: [
-          if (provider.memories.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep_outlined),
-              tooltip: '清空全部',
-              onPressed: () {
-                Haptics.medium();
-                _unfocus();
-                _confirmDeleteAll(context);
-              },
-            ),
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: '手动添加',
-            onPressed: () {
-              Haptics.light();
-              _unfocus();
-              _showAddDialog(context);
-            },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // 搜索框
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-            child: TextField(
-              controller: _searchController,
-              focusNode: _searchFocusNode,
-              onChanged: (v) => setState(() => _query = v),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '搜索记忆',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                suffixIcon: _query.isEmpty
-                    ? null
-                    : IconButton(
-                        visualDensity: VisualDensity.compact,
-                        icon: const Icon(Icons.close, size: 18),
-                        onPressed: () {
-                          Haptics.light();
-                          _searchController.clear();
-                          setState(() => _query = '');
-                        },
-                      ),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              ),
-            ),
-          ),
-          Expanded(
-            child: filtered.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(32),
-                      child: Text(
-                        provider.memories.isEmpty
-                            ? 'AI 还没有记住任何东西\n聊天中让它「记住xxx」即可'
-                            : '没有找到「$_query」',
-                        textAlign: TextAlign.center,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.6),
-                      ),
-                    ),
-                  )
-                : ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                    children: [
-                      ...filtered.map((m) => Card(
-                            elevation: 0,
-                            color: theme
-                                .colorScheme.surfaceContainerHighest
-                                .withValues(alpha: 0.5),
-                            child: ListTile(
-                              title: Text(m.content),
-                              subtitle: (m.tag != null || m.sourceSkill != null)
-                                  ? Text(
-                                      [
-                                        if (m.tag != null) m.tag!,
-                                        if (m.sourceSkill != null)
-                                          '来自 ${m.sourceSkill}',
-                                      ].join(' · '),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    )
-                                  : null,
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete_outline,
-                                    size: 20),
-                                tooltip: '删除',
-                                onPressed: () {
-                                  Haptics.medium();
-                                  _unfocus();
-                                  provider.delete(m.id);
-                                },
-                              ),
-                            ),
-                          )),
-                      const SizedBox(height: 8),
-                      Text(
-                        '· 记忆全局共享：所有 Skill 的对话都会注入最近 20 条\n'
-                        '· 聊天中说「记住xxx」AI 会自动保存，「忘掉xxx」会删除\n'
-                        '· 记忆仅存本机数据库，不会上传',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                            height: 1.6),
-                      ),
-                    ],
+    return Column(
+      children: [
+        // 搜索框 + 手动添加/清空按钮（与 Skill 管理 tab 同布局）
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocusNode,
+                  onChanged: (v) => setState(() => _query = v),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    hintText: '搜索记忆',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            visualDensity: VisualDensity.compact,
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () {
+                              Haptics.light();
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                          ),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                   ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              if (provider.memories.isNotEmpty)
+                IconButton.outlined(
+                  tooltip: '清空全部',
+                  onPressed: () {
+                    Haptics.medium();
+                    _unfocus();
+                    _confirmDeleteAll(context);
+                  },
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 20),
+                ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: () {
+                  Haptics.light();
+                  _unfocus();
+                  _showAddDialog(context);
+                },
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('添加'),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        Expanded(
+          child: filtered.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Text(
+                      provider.memories.isEmpty
+                          ? 'AI 还没有记住任何东西\n聊天中让它「记住xxx」即可'
+                          : '没有找到「$_query」',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.6),
+                    ),
+                  ),
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                  children: [
+                    ...filtered.map((m) => Card(
+                          elevation: 0,
+                          color: theme
+                              .colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          child: ListTile(
+                            title: Text(m.content),
+                            subtitle: (m.tag != null || m.sourceSkill != null)
+                                ? Text(
+                                    [
+                                      if (m.tag != null) m.tag!,
+                                      if (m.sourceSkill != null)
+                                        '来自 ${m.sourceSkill}',
+                                    ].join(' · '),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  )
+                                : null,
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline,
+                                  size: 20),
+                              tooltip: '删除',
+                              onPressed: () {
+                                Haptics.medium();
+                                _unfocus();
+                                provider.delete(m.id);
+                              },
+                            ),
+                          ),
+                        )),
+                    const SizedBox(height: 8),
+                    Text(
+                      '· 记忆全局共享：所有 Skill 的对话都会注入最近 20 条\n'
+                      '· 聊天中说「记住xxx」AI 会自动保存，「忘掉xxx」会删除\n'
+                      '· 记忆仅存本机数据库，不会上传',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.6),
+                    ),
+                  ],
+                ),
+        ),
+      ],
     );
   }
 

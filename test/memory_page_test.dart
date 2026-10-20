@@ -90,17 +90,16 @@ void main() {
         providers: [
           ChangeNotifierProvider<MemoryProvider>.value(value: provider),
         ],
-        child: MaterialApp(home: child),
+        child: MaterialApp(home: Scaffold(body: child)),
       );
 
-  group('MemoryPage', () {
+  group('MemoryPanel', () {
     testWidgets('空态：显示引导文案', (tester) async {
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
       expect(
           find.textContaining('AI 还没有记住任何东西'), findsOneWidget);
-      expect(find.text('记忆管理'), findsOneWidget);
     });
 
     testWidgets('列表渲染：内容 + 标签副标题', (tester) async {
@@ -108,7 +107,7 @@ void main() {
         memory('m1', '用户喜欢简洁回答', tag: '偏好'),
         memory('m2', '用户在上海工作'),
       ]);
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
       expect(find.text('用户喜欢简洁回答'), findsOneWidget);
@@ -121,7 +120,7 @@ void main() {
         memory('m1', '用户喜欢简洁回答'),
         memory('m2', '项目用 Flutter'),
       ]);
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
       await tester.enterText(find.widgetWithText(TextField, '搜索记忆'), '简洁');
@@ -138,7 +137,7 @@ void main() {
 
     testWidgets('单条删除：调用 provider.delete', (tester) async {
       provider.seed([memory('m1', '待删记忆')]);
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
       await tester.tap(find.byIcon(Icons.delete_outline));
@@ -148,10 +147,10 @@ void main() {
     });
 
     testWidgets('手动添加：输入内容保存 → provider.add 调用', (tester) async {
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.text('添加'));
       await tester.pumpAndSettle();
 
       await tester.enterText(
@@ -164,10 +163,10 @@ void main() {
     });
 
     testWidgets('手动添加：空内容不调用 add', (tester) async {
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.add));
+      await tester.tap(find.text('添加'));
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('保存'));
@@ -178,7 +177,7 @@ void main() {
 
     testWidgets('清空全部：确认后调用 deleteAll', (tester) async {
       provider.seed([memory('m1', 'a'), memory('m2', 'b')]);
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
       await tester.tap(find.byIcon(Icons.delete_sweep_outlined));
@@ -195,7 +194,7 @@ void main() {
 
     testWidgets('清空全部：取消不删除', (tester) async {
       provider.seed([memory('m1', 'a')]);
-      await tester.pumpWidget(wrap(const MemoryPage()));
+      await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
       await tester.tap(find.byIcon(Icons.delete_sweep_outlined));
