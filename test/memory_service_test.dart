@@ -1,6 +1,7 @@
 import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:ai_chat_app/services/memory_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
@@ -224,6 +225,59 @@ void main() {
       //（记忆2 时间戳 2 仍是最旧，但总数未超上限，无需删除）
       expect(anyOfMemoryExists(all, '记忆2'), isTrue);
       expect(anyOfMemoryExists(all, '记忆1'), isTrue);
+    });
+  });
+
+  group('变更信号 changeSignal', () {
+    int counter = 0;
+    late VoidCallback listener;
+
+    setUp(() {
+      counter = MemoryService.changeSignal.value;
+      listener = () => counter++;
+      MemoryService.changeSignal.addListener(listener);
+    });
+
+    tearDown(() {
+      MemoryService.changeSignal.removeListener(listener);
+    });
+
+    test('save 新增触发信号', () async {
+      await service.save('新记忆');
+      expect(counter, greaterThan(MemoryService.changeSignal.value - 2));
+      expect(counter, MemoryService.changeSignal.value);
+    });
+
+    test('save 去重更新同样触发信号', () async {
+      await service.save('同内容');
+      final afterFirst = MemoryService.changeSignal.value;
+      await service.save('同内容'); // 去重 → update 路径
+      expect(MemoryService.changeSignal.value, afterFirst + 1);
+    });
+
+    test('delete 触发信号', () async {
+      final m = await service.save('待删');
+      final afterSave = MemoryService.changeSignal.value;
+      await service.delete(m.id);
+      expect(MemoryService.changeSignal.value, afterSave + 1);
+    });
+
+    test('deleteByKeyword 命中触发信号，未命中不触发', () async {
+      await service.save('关键词记忆ABC');
+      final afterSave = MemoryService.changeSignal.value;
+
+      await service.deleteByKeyword('不存在的关键词');
+      expect(MemoryService.changeSignal.value, afterSave); // 未命中不触发
+
+      await service.deleteByKeyword('ABC');
+      expect(MemoryService.changeSignal.value, afterSave + 1);
+    });
+
+    test('deleteAll 触发信号', () async {
+      await service.save('a');
+      final afterSave = MemoryService.changeSignal.value;
+      await service.deleteAll();
+      expect(MemoryService.changeSignal.value, afterSave + 1);
     });
   });
 }
