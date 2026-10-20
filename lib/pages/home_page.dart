@@ -36,6 +36,9 @@ class _HomePageState extends State<HomePage> {
   final _chatScrollController = ScrollController();
   int _lastDisplayCount = 0;
 
+  /// 抽屉批量管理模式开关（长按菜单「批量管理」触发）
+  final ValueNotifier<bool> _drawerBatchMode = ValueNotifier(false);
+
   // 聊天态：当前会话的 ChatProvider（null = 空闲态）
   ChatProvider? _chat;
 
@@ -56,6 +59,7 @@ class _HomePageState extends State<HomePage> {
     _inputController.dispose();
     _inputFocusNode.dispose();
     _chatScrollController.dispose();
+    _drawerBatchMode.dispose();
     _chat?.dispose();
     _chat = null;
     super.dispose();
@@ -332,55 +336,71 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 长按会话卡片：弹出操作菜单（重命名/删除）
+  /// 长按会话卡片：锚点菜单栏（重命名/删除/批量管理）
   Future<void> _showSessionActions(
       BuildContext context, String id, String title) async {
     Haptics.medium();
-    final action = await showModalBottomSheet<String>(
+    // 菜单栏式：锚定长按位置弹出（微信/桌面右键菜单风格）
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final action = await showMenu<String>(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      position: RelativeRect.fromLTRB(
+        60, 200, overlay.size.width - 60, overlay.size.height - 400,
       ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: const Text('重命名'),
-              onTap: () {
-                Haptics.light();
-                Navigator.pop(context, 'rename');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline),
-              title: const Text('删除'),
-              onTap: () {
-                Haptics.light();
-                Navigator.pop(context, 'delete');
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: [
+        const PopupMenuItem(
+          value: 'rename',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.edit_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('重命名'),
+            ],
+          ),
         ),
-      ),
+        const PopupMenuItem(
+          value: 'delete',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline, size: 20),
+              SizedBox(width: 12),
+              Text('删除'),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'batch',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.checklist, size: 20),
+              SizedBox(width: 12),
+              Text('批量管理'),
+            ],
+          ),
+        ),
+      ],
     );
     if (!context.mounted || action == null) return;
     if (action == 'rename') {
       _renameSession(context, id, title);
     } else if (action == 'delete') {
       _deleteSession(context, id);
+    } else if (action == 'batch') {
+      _openBatchMode();
     }
+  }
+
+  /// 抽屉进入批量管理模式（多选删除）
+  void _openBatchMode() {
+    _scaffoldKey.currentState?.openDrawer();
+    // 抽屉内部状态切换到多选：通过 drawerKey 通知
+    _drawerBatchMode.value = true;
   }
 
   @override
@@ -398,6 +418,18 @@ class _HomePageState extends State<HomePage> {
         sessions: allSessions,
         skillsProvider: skillsProvider,
         loaded: sessions.loaded,
+        batchMode: _drawerBatchMode,
+        onDeleteSelected: (ids) async {
+          for (final id in ids) {
+            // 当前聊天态会话被删时退出聊天态
+            if (_chat?.session.id == id) {
+              final chat = _chat!;
+              setState(() => _chat = null);
+              chat.dispose();
+            }
+            await context.read<SessionsProvider>().deleteSession(id);
+          }
+        },
         onOpenChat: (id) {
           Navigator.pop(context); // 先关抽屉
           _openChat(id);
@@ -665,9 +697,8 @@ class _HomeInputBar extends StatelessWidget {
 
     // tags 配置：聊天态取会话绑定值，空闲态取预选值
     final currentSkill = inChat ? chat!.skill : selectedSkill;
-    final skillLabel = currentSkill != null
-        ? '${currentSkill.icon} ${currentSkill.name}'
-        : '默认助手';
+    // label 只放名字（icon 由 tag 的 emoji/icon 字段单独渲染，避免重复）
+    final skillLabel = currentSkill != null ? currentSkill.name : '默认助手';
     // agent tag 图标：具体 agent 用其 emoji，默认助手用内置 icon
     final skillEmoji = currentSkill?.icon;
     final modelLabel = inChat ? chat!.model : (selectedModel?.$2 ?? '默认模型');
@@ -735,6 +766,8 @@ class _HomeInputBar extends StatelessWidget {
                     focusNode: focusNode,
                     maxLines: null,
                     minLines: 1,
+                    // 仅点击输入框才聚焦（不自动请求焦点，防状态切换乱弹键盘）
+                    canRequestFocus: true,
                     textInputAction: TextInputAction.send,
                     onSubmitted: (_) => _send(context),
                     style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
@@ -801,6 +834,8 @@ class _HomeInputBar extends StatelessWidget {
       );
     }
     controller.clear();
+    // 发送后收起键盘（微信式：发送即收起，不残留焦点）
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 }
 
@@ -886,15 +921,23 @@ class _ChatArea extends StatelessWidget {
                         chat.displayMessages.length - 1 - index];
                     if (msg.isToolResult) return const SizedBox.shrink();
                     final isLast = index == 0;
-                    return MessageBubble(
-                      message: msg,
-                      isStreaming: isLast && chat.isStreaming,
-                      thinkingSeconds: chat.thinkingSeconds,
-                      toolResults: msg.id == chat.lastToolCallMessageId
-                          ? chat.toolResults
-                          : const [],
-                      toolExecuting: msg.id == chat.lastToolCallMessageId &&
-                          chat.status == ChatStatus.toolCalling,
+                    // 微信式时间戳：首条必显，之后与上一条间隔 >5 分钟才显示
+                    final showTime = _shouldShowTime(index);
+                    return Column(
+                      children: [
+                        if (showTime)
+                          _MessageTimeLabel(timestamp: msg.createdAt),
+                        MessageBubble(
+                          message: msg,
+                          isStreaming: isLast && chat.isStreaming,
+                          thinkingSeconds: chat.thinkingSeconds,
+                          toolResults: msg.id == chat.lastToolCallMessageId
+                              ? chat.toolResults
+                              : const [],
+                          toolExecuting: msg.id == chat.lastToolCallMessageId &&
+                              chat.status == ChatStatus.toolCalling,
+                        ),
+                      ],
                     );
                   },
                 ),
@@ -902,14 +945,72 @@ class _ChatArea extends StatelessWidget {
       ],
     );
   }
+
+  /// 是否在该消息上方显示时间标签（微信规则：首条必显 + 间隔超 5 分钟）
+  bool _shouldShowTime(int index) {
+    final msgs = chat.displayMessages;
+    if (index >= msgs.length) return false;
+    final msg = msgs[msgs.length - 1 - index];
+    if (msg.isToolResult) return false;
+    // 首条消息必显
+    if (index == msgs.length - 1) return true;
+    // 找上一条非 tool 结果消息比较间隔
+    for (var i = index + 1; i < msgs.length; i++) {
+      final prev = msgs[msgs.length - 1 - i];
+      if (prev.isToolResult) continue;
+      return msg.createdAt - prev.createdAt > 5 * 60 * 1000;
+    }
+    return true;
+  }
 }
 
-/// 侧滑抽屉：完整会话列表按时间分组（今天 / 7 天内 / 更早）+ 搜索
+/// 微信式消息时间标签：居中灰色小字
+class _MessageTimeLabel extends StatelessWidget {
+  const _MessageTimeLabel({required this.timestamp});
+
+  final int timestamp;
+
+  /// 微信样式时间文本：今天显示时分，昨天显示「昨天 时分」，更早显示日期
+  String get _label {
+    final dt = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final msgDay = DateTime(dt.year, dt.month, dt.day);
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    final hm = '$hh:$mm';
+    final diffDays = today.difference(msgDay).inDays;
+    if (diffDays == 0) return hm;
+    if (diffDays == 1) return '昨天 $hm';
+    if (dt.year == now.year) {
+      return '${dt.month}月${dt.day}日 $hm';
+    }
+    return '${dt.year}年${dt.month}月${dt.day}日 $hm';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Text(
+        _label,
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+}
+
+/// 侧滑抽屉：完整会话列表按时间分组（今天 / 7 天内 / 更早）+ 搜索 + 批量管理
 class _SessionDrawer extends StatefulWidget {
   const _SessionDrawer({
     required this.sessions,
     required this.skillsProvider,
     required this.loaded,
+    required this.batchMode,
+    required this.onDeleteSelected,
     required this.onOpenChat,
     required this.onOpenSettings,
     required this.onShowActions,
@@ -918,6 +1019,12 @@ class _SessionDrawer extends StatefulWidget {
   final List<ChatSession> sessions;
   final SkillProvider skillsProvider;
   final bool loaded;
+
+  /// 批量管理模式开关（主页长按菜单触发进入）
+  final ValueNotifier<bool> batchMode;
+
+  /// 批量删除选中的会话
+  final Future<void> Function(List<String> ids) onDeleteSelected;
   final ValueChanged<String> onOpenChat;
   final VoidCallback onOpenSettings;
   final void Function(BuildContext, String, String) onShowActions;
@@ -932,11 +1039,84 @@ class _SessionDrawerState extends State<_SessionDrawer> {
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
 
+  // 批量管理模式状态
+  bool _batchMode = false;
+  final Set<String> _selectedIds = {};
+
+  @override
+  void initState() {
+    super.initState();
+    // 主页长按菜单「批量管理」→ 进入多选模式
+    widget.batchMode.addListener(_onBatchModeChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant _SessionDrawer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.batchMode != widget.batchMode) {
+      oldWidget.batchMode.removeListener(_onBatchModeChanged);
+      widget.batchMode.addListener(_onBatchModeChanged);
+    }
+  }
+
+  void _onBatchModeChanged() {
+    if (!mounted) return;
+    setState(() {
+      _batchMode = widget.batchMode.value;
+      if (_batchMode) {
+        _searching = false; // 批量模式与搜索互斥
+        _selectedIds.clear();
+      }
+    });
+  }
+
   @override
   void dispose() {
+    widget.batchMode.removeListener(_onBatchModeChanged);
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
+  }
+
+  /// 退出批量模式
+  void _exitBatchMode() {
+    setState(() {
+      _batchMode = false;
+      _selectedIds.clear();
+    });
+    widget.batchMode.value = false;
+  }
+
+  /// 批量删除确认 + 执行
+  Future<void> _confirmBatchDelete() async {
+    if (_selectedIds.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('批量删除'),
+        content: Text('确定删除选中的 ${_selectedIds.length} 个会话吗？删除后无法恢复。'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, false);
+            },
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, true);
+            },
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await widget.onDeleteSelected(_selectedIds.toList());
+    if (!mounted) return;
+    _exitBatchMode();
   }
 
   /// 过滤后的会话（搜索时按标题匹配）
@@ -976,46 +1156,106 @@ class _SessionDrawerState extends State<_SessionDrawer> {
     final theme = Theme.of(context);
     final sessions = widget.sessions;
     final filteredEmpty = _filtered.isEmpty;
+    final allFilteredIds = _filtered.map((s) => s.id).toSet();
+    final allSelected =
+        allFilteredIds.isNotEmpty && allFilteredIds.every(_selectedIds.contains);
     return Drawer(
       child: SafeArea(
         child: Column(
           children: [
-            // 抽屉头部：Logo + 搜索 + 设置（新增对话统一走主页右上角 +）
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-              child: Row(
-                children: [
-                  Text('Liang AI',
-                      style: theme.textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  // 搜索历史对话
-                  IconButton(
-                    icon: Icon(
-                      _searching ? Icons.search_off : Icons.search,
-                      size: 22,
+            // 抽屉头部：批量模式操作栏 / 常规 Logo + 搜索 + 设置
+            if (_batchMode)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      tooltip: '退出批量管理',
+                      onPressed: () {
+                        Haptics.light();
+                        _exitBatchMode();
+                      },
                     ),
-                    tooltip: _searching ? '关闭搜索' : '搜索会话',
-                    onPressed: () {
-                      Haptics.light();
-                      setState(() {
-                        _searching = !_searching;
-                        if (!_searching) {
-                          _query = '';
-                          _searchController.clear();
-                          _searchFocusNode.unfocus();
-                        }
-                      });
-                    },
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.settings_outlined, size: 22),
-                    tooltip: '设置',
-                    onPressed: widget.onOpenSettings,
-                  ),
-                ],
+                    Expanded(
+                      child: Text(
+                        '已选 ${_selectedIds.length} 项',
+                        textAlign: TextAlign.center,
+                        style: theme.textTheme.titleMedium,
+                      ),
+                    ),
+                    // 全选/取消全选
+                    IconButton(
+                      icon: Icon(
+                        allSelected
+                            ? Icons.deselect
+                            : Icons.select_all,
+                        size: 22,
+                      ),
+                      tooltip: allSelected ? '取消全选' : '全选',
+                      onPressed: () {
+                        Haptics.light();
+                        setState(() {
+                          if (allSelected) {
+                            _selectedIds.removeAll(allFilteredIds);
+                          } else {
+                            _selectedIds.addAll(allFilteredIds);
+                          }
+                        });
+                      },
+                    ),
+                    // 批量删除
+                    IconButton(
+                      icon: Icon(
+                        Icons.delete_outline,
+                        size: 22,
+                        color: _selectedIds.isEmpty
+                            ? theme.colorScheme.onSurfaceVariant
+                            : theme.colorScheme.error,
+                      ),
+                      tooltip: '删除选中',
+                      onPressed:
+                          _selectedIds.isEmpty ? null : _confirmBatchDelete,
+                    ),
+                  ],
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                child: Row(
+                  children: [
+                    Text('Liang AI',
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w600)),
+                    const Spacer(),
+                    // 搜索历史对话
+                    IconButton(
+                      icon: Icon(
+                        _searching ? Icons.search_off : Icons.search,
+                        size: 22,
+                      ),
+                      tooltip: _searching ? '关闭搜索' : '搜索会话',
+                      onPressed: () {
+                        Haptics.light();
+                        setState(() {
+                          _searching = !_searching;
+                          if (!_searching) {
+                            _query = '';
+                            _searchController.clear();
+                            _searchFocusNode.unfocus();
+                          }
+                        });
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.settings_outlined, size: 22),
+                      tooltip: '设置',
+                      onPressed: widget.onOpenSettings,
+                    ),
+                  ],
+                ),
               ),
-            ),
             // 搜索框（点放大镜展开）
             if (_searching)
               Padding(
@@ -1046,7 +1286,7 @@ class _SessionDrawerState extends State<_SessionDrawer> {
                 ),
               ),
             const Divider(height: 1),
-            // 会话列表（按时间分组，搜索时按匹配过滤）
+            // 会话列表（按时间分组，搜索时按匹配过滤；批量模式多选）
             Expanded(
               child: !widget.loaded
                   ? const Center(child: CircularProgressIndicator())
@@ -1059,7 +1299,8 @@ class _SessionDrawerState extends State<_SessionDrawer> {
                         )
                       : filteredEmpty
                           ? Center(
-                              child: Text('没有找到「$_query」',
+                              child: Text(
+                                  _batchMode ? '没有可管理的会话' : '没有找到「$_query」',
                                   style: theme.textTheme.bodyMedium
                                       ?.copyWith(
                                           color: theme
@@ -1083,22 +1324,52 @@ class _SessionDrawerState extends State<_SessionDrawer> {
                                     for (final s in entry.value)
                                       ListTile(
                                         dense: true,
-                                        leading: Text(
-                                          widget.skillsProvider
-                                                  .byId(s.skillId)?.icon ??
-                                              '💬',
-                                          style:
-                                              const TextStyle(fontSize: 18),
-                                        ),
+                                        leading: _batchMode
+                                            ? Icon(
+                                                _selectedIds.contains(s.id)
+                                                    ? Icons.check_circle
+                                                    : Icons
+                                                        .radio_button_unchecked,
+                                                size: 22,
+                                                color: _selectedIds
+                                                        .contains(s.id)
+                                                    ? theme
+                                                        .colorScheme.primary
+                                                    : theme.colorScheme
+                                                        .onSurfaceVariant,
+                                              )
+                                            : Text(
+                                                widget.skillsProvider
+                                                        .byId(s.skillId)
+                                                        ?.icon ??
+                                                    '💬',
+                                                style: const TextStyle(
+                                                    fontSize: 18),
+                                              ),
                                         title: Text(
                                           s.title,
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: theme.textTheme.bodyMedium,
                                         ),
-                                        onTap: () => widget.onOpenChat(s.id),
-                                        onLongPress: () => widget
-                                            .onShowActions(
+                                        onTap: () {
+                                          if (_batchMode) {
+                                            Haptics.selection();
+                                            setState(() {
+                                              if (_selectedIds
+                                                  .contains(s.id)) {
+                                                _selectedIds.remove(s.id);
+                                              } else {
+                                                _selectedIds.add(s.id);
+                                              }
+                                            });
+                                          } else {
+                                            widget.onOpenChat(s.id);
+                                          }
+                                        },
+                                        onLongPress: _batchMode
+                                            ? null
+                                            : () => widget.onShowActions(
                                                 context, s.id, s.title),
                                       ),
                                   ],
