@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app_theme_id.dart';
+import 'deepseek_theme.dart';
 import 'minecraft_theme.dart';
 
 /// 单个主题的元数据：显示名 + 明暗两套 ThemeData 工厂 + 组件样式参数
@@ -54,6 +55,12 @@ class AppThemeRegistry {
       light: MinecraftTheme.light,
       dark: MinecraftTheme.dark,
       cornerRadius: 0,
+    ),
+    AppThemeId.deepseek: AppThemeEntry(
+      label: 'DeepSeek 蓝',
+      light: DeepSeekTheme.light,
+      dark: DeepSeekTheme.dark,
+      cornerRadius: 20,
     ),
   };
 

@@ -4,12 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/chat_message.dart';
 import '../models/tool_call.dart';
-import '../providers/theme_provider.dart';
 import '../services/file_export_service.dart';
 import '../utils/haptics.dart';
 import 'attachment_thumbnail.dart';
@@ -42,7 +40,6 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
-    final radius = context.read<ThemeProvider>().cornerRadius;
 
     if (message.isUser) {
       final hasImages = message.attachments.any((a) => a.isImage);
@@ -58,9 +55,7 @@ class MessageBubble extends StatelessWidget {
           ),
           decoration: BoxDecoration(
             color: colorScheme.primary,
-            borderRadius: BorderRadius.circular(radius).copyWith(
-              bottomRight: Radius.circular(radius > 0 ? 4 : 0),
-            ),
+            borderRadius: BorderRadius.circular(20),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -90,21 +85,19 @@ class MessageBubble extends StatelessWidget {
       );
     }
 
-    // 助手消息
+    // 助手消息：DeepSeek 式视觉减重——浅灰底、大圆角、无小尾巴
     final thinkingStreaming = isStreaming && message.content.isEmpty;
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(right: 40, top: 4, bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.widthOf(context) * 0.86,
         ),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
-          borderRadius: BorderRadius.circular(radius).copyWith(
-            bottomLeft: Radius.circular(radius > 0 ? 4 : 0),
-          ),
+          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(20),
         ),
         child: GestureDetector(
           onLongPress: () {

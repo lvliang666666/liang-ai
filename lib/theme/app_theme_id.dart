@@ -7,4 +7,7 @@ enum AppThemeId {
 
   /// Minecraft 像素风格
   minecraft,
+
+  /// DeepSeek 风格（深海蓝 + 极简留白）
+  deepseek,
 }
