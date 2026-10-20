@@ -14,8 +14,9 @@ import '../providers/theme_provider.dart';
 import '../services/attachment_service.dart';
 import '../utils/haptics.dart';
 import 'attachment_thumbnail.dart';
+import 'chat_tags_bar.dart';
 
-/// 聊天输入栏：附件按钮 + 推理档位选择 + 输入框 + 发送/停止按钮
+/// 聊天输入栏：tags 行（可选）+ 附件按钮 + 推理档位选择 + 输入框 + 发送/停止按钮
 class ChatInputBar extends StatefulWidget {
   const ChatInputBar({
     super.key,
@@ -26,6 +27,7 @@ class ChatInputBar extends StatefulWidget {
     required this.onEffortChanged,
     this.showAttachmentButton = true,
     this.showEffortButton = true,
+    this.tags = const [],
   });
 
   final bool isStreaming;
@@ -37,6 +39,9 @@ class ChatInputBar extends StatefulWidget {
   /// 供应商能力开关：不支持时隐藏对应按钮
   final bool showAttachmentButton;
   final bool showEffortButton;
+
+  /// 输入框上方 tags 行（agent/model 切换入口，空 = 不显示）
+  final List<ChatTag> tags;
 
   @override
   State<ChatInputBar> createState() => _ChatInputBarState();
@@ -259,6 +264,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // tags 行（agent/model 切换，DeepSeek 式）
+            if (widget.tags.isNotEmpty) ...[
+              ChatTagsBar(tags: widget.tags),
+              const SizedBox(height: 6),
+            ],
             // 附件预览条
             if (pending.isNotEmpty) _AttachmentPreview(pending: pending),
             Row(
