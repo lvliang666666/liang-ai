@@ -2,6 +2,7 @@ import '../tool_registry.dart';
 import 'date_tools.dart';
 import 'device_tools.dart';
 import 'math_tools.dart';
+import 'memory_tools.dart';
 import 'mystic/bazi_tools.dart';
 import 'mystic/divination_tools.dart';
 import 'mystic/numerology_tools.dart';
@@ -13,6 +14,7 @@ import 'unit_tools.dart';
 export 'date_tools.dart';
 export 'device_tools.dart';
 export 'math_tools.dart';
+export 'memory_tools.dart';
 export 'mystic/bazi_tools.dart';
 export 'mystic/divination_tools.dart';
 export 'mystic/numerology_tools.dart';
@@ -45,6 +47,10 @@ const builtinTools = <ToolHandler>[
   UuidGenerateTool(),
   Base64CodecTool(),
   HashTextTool(),
+  // 记忆（跨会话长期记忆，全局共享池）
+  MemorySaveTool(),
+  MemorySearchTool(),
+  MemoryForgetTool(),
   // 玄学（排盘出事实，解读交给模型）
   LunarCalendarTool(),
   BaziTool(),
