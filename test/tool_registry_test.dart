@@ -141,13 +141,24 @@ void main() {
   group('内置工具', () {
     test('注册表含全部内置工具', () {
       final registry = ToolRegistry()..registerAll(builtinTools);
-      expect(registry.length, 14);
+      expect(registry.length, 26);
       expect(
           registry.names,
           containsAll([
             'get_current_time',
             'get_device_info',
             'calculate',
+            'bazi',
+            'wuxing',
+            'zodiac',
+            'huangli',
+            'guanyin',
+            'tarot',
+            'zhougong',
+            'shuzi',
+            'xingming',
+            'dice_iching',
+            'peach_blossom',
             'date_calc',
             'unit_convert',
             'base_convert',
