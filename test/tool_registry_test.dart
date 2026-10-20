@@ -141,7 +141,7 @@ void main() {
   group('内置工具', () {
     test('注册表含全部内置工具', () {
       final registry = ToolRegistry()..registerAll(builtinTools);
-      expect(registry.length, 26);
+      expect(registry.length, 29);
       expect(
           registry.names,
           containsAll([
@@ -170,6 +170,9 @@ void main() {
             'uuid_generate',
             'base64_codec',
             'hash_text',
+            'memory_save',
+            'memory_search',
+            'memory_forget',
           ]));
     });
 
