@@ -46,16 +46,25 @@ class _HomePageState extends State<HomePage> {
   skill_model.Skill? _selectedSkill; // null = 默认助手
   (ProviderProfile, String)? _selectedModel; // null = 用默认供应商默认模型
 
+  // 空闲态预选推理档位（effort tag 空闲态也显示）
+  String _selectedEffort = 'max';
+
   @override
   void initState() {
     super.initState();
     context.read<SessionsProvider>().loadSessions();
     // 启动即加载 Skill 列表：否则 tags 行的 Skill 图标在首次懒加载前显示兜底 emoji
     context.read<SkillProvider>().load();
+    // 聚焦根治：键盘收起（ViewInsets 归零）时自动退出聚焦。
+    // 场景：用户点输入框聚焦 → 点 tag 弹层（键盘收起）→ 弹层关闭后
+    // FocusScope 会把焦点还给输入框并重新弹键盘——监听键盘收起主动
+    // unfocus，保证「键盘收起 = 退出聚焦」，弹层关闭不再回弹。
+    WidgetsBinding.instance.addObserver(_KeyboardDismissObserver(this));
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(_KeyboardDismissObserver(this));
     _inputController.dispose();
     _inputFocusNode.dispose();
     _chatScrollController.dispose();
@@ -112,7 +121,7 @@ class _HomePageState extends State<HomePage> {
     }
     final sessions = context.read<SessionsProvider>();
     final session = await sessions.createSession(
-      settings.defaultEffortValue,
+      _selectedEffort, // 空闲态预选档位随会话创建
       skillId: skillId,
       providerId: modelPick?.$1.id,
       model: modelPick?.$2,
@@ -121,8 +130,6 @@ class _HomePageState extends State<HomePage> {
 
     // 主页原地进入聊天态并自动发送首条消息
     await _enterChat(session, initialMessage: text);
-    // 进入聊天态后确保键盘收起（防乱聚焦：状态切换后焦点残留会自动弹键盘）
-    if (mounted) _unfocus();
   }
 
   /// 进入聊天态：构建 ChatProvider 并加载消息
@@ -172,11 +179,11 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 新增对话：确认后退出聊天态回到空闲态（右上角 + 按钮）
+  /// 新增对话：预设弹窗（预选 skill/model）→ 确认后进入空闲态（右上角 + 按钮）
   Future<void> _newChat() async {
     Haptics.light();
     _unfocus();
-    // 聊天态先确认（与删除会话弹窗同款样式）
+    // 聊天态先确认退出（与删除会话弹窗同款样式）
     if (_chat != null) {
       final confirmed = await showDialog<bool>(
         context: context,
@@ -203,6 +210,43 @@ class _HomePageState extends State<HomePage> {
       );
       if (confirmed != true || !mounted) return;
     }
+
+    // 预设交互页：预选本次新对话的 skill / model（力度不加，走 tags 预选）
+    final skillsProvider = context.read<SkillProvider>();
+    if (!skillsProvider.loaded) await skillsProvider.load();
+    if (!mounted) return;
+    final providersProvider = context.read<ProviderProvider>();
+    if (!providersProvider.loaded) await providersProvider.load();
+    if (!mounted) return;
+
+    final preset = await showModalBottomSheet<(skill_model.Skill?, (ProviderProfile, String)?)>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => _NewChatPresetSheet(
+        skills: skillsProvider,
+        providers: providersProvider,
+        recentIds: context.read<SettingsService>().recentSkillIds,
+        initialSkill: _selectedSkill,
+        initialModel: _selectedModel,
+      ),
+    );
+    if (!mounted) return;
+    if (preset != null) {
+      // 确认：应用预选（null skill = 默认助手；null model = 默认供应商模型）
+      final (skill, model) = preset;
+      setState(() {
+        _selectedSkill = skill?.id == '__default__' ? null : skill;
+        _selectedModel = model;
+      });
+      if (_selectedSkill != null) {
+        await context.read<SettingsService>().touchRecentSkill(_selectedSkill!.id);
+      }
+    }
+    // 点遮罩关闭：保留当前预选不变
+
     final chat = _chat;
     if (chat != null) {
       if (chat.isStreaming) chat.stopGeneration();
@@ -210,16 +254,8 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _chat = null;
         _lastDisplayCount = 0;
-        // 重置预选为默认
-        _selectedSkill = null;
-        _selectedModel = null;
       });
       chat.dispose();
-    } else {
-      setState(() {
-        _selectedSkill = null;
-        _selectedModel = null;
-      });
     }
     context.read<SessionsProvider>().refresh();
   }
@@ -515,6 +551,7 @@ class _HomePageState extends State<HomePage> {
                     chat: _chat,
                     selectedSkill: _selectedSkill,
                     selectedModel: _selectedModel,
+                    selectedEffort: _selectedEffort,
                     onSendIdle: _startChat,
                     onPickSkill: _pickSkillForHome,
                     onPickModel: _pickModelForHome,
@@ -526,13 +563,16 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  /// 聊天态 effort tag：改当前会话档位
+  /// effort tag：空闲态改预选档位 / 聊天态改当前会话档位
   Future<void> _pickEffortForHome() async {
     final chat = _chat;
-    if (chat == null) return;
-    final selected = await showEffortPicker(context, chat.session.effort);
-    if (selected != null && selected != chat.session.effort) {
-      chat.setEffort(selected);
+    final current = chat?.session.effort ?? _selectedEffort;
+    final selected = await showEffortPicker(context, current);
+    if (selected == null || selected == current) return;
+    if (chat != null) {
+      await chat.setEffort(selected);
+    } else {
+      setState(() => _selectedEffort = selected);
     }
   }
 
@@ -668,6 +708,7 @@ class _HomeInputBar extends StatelessWidget {
     required this.chat,
     required this.selectedSkill,
     required this.selectedModel,
+    required this.selectedEffort,
     required this.onSendIdle,
     required this.onPickSkill,
     required this.onPickModel,
@@ -681,6 +722,9 @@ class _HomeInputBar extends StatelessWidget {
   final ChatProvider? chat;
   final skill_model.Skill? selectedSkill;
   final (ProviderProfile, String)? selectedModel;
+
+  /// 空闲态预选推理档位（effort tag 空闲态也显示）
+  final String selectedEffort;
 
   /// 空闲态发送（创建会话）
   final void Function(String text,
@@ -702,9 +746,9 @@ class _HomeInputBar extends StatelessWidget {
     // agent tag 图标：具体 agent 用其 emoji，默认助手用内置 icon
     final skillEmoji = currentSkill?.icon;
     final modelLabel = inChat ? chat!.model : (selectedModel?.$2 ?? '默认模型');
-    final effortLabel = inChat
-        ? (effortLabels[chat!.session.effort]?.$1 ?? chat!.session.effort)
-        : null;
+    // 推理档位：聊天态取会话值，空闲态取预选值（两态都显示）
+    final effortValue = inChat ? chat!.session.effort : selectedEffort;
+    final effortLabel = effortLabels[effortValue]?.$1 ?? effortValue;
     // 输入框占位：具体 agent 时显示「给 xx 发送消息」
     final hintText = currentSkill != null
         ? '给 ${currentSkill.name} 发送消息'
@@ -715,7 +759,7 @@ class _HomeInputBar extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // tags 行：独立于输入框（agent / model / effort[聊天态]）
+          // tags 行：独立于输入框（agent / model / effort）
           ChatTagsBar(tags: [
             ChatTag(
               emoji: skillEmoji,
@@ -728,13 +772,11 @@ class _HomeInputBar extends StatelessWidget {
               label: modelLabel,
               onTap: onPickModel,
             ),
-            // 推理档位：仅聊天态显示（空闲态会话未创建，档位走默认）
-            if (effortLabel != null)
-              ChatTag(
-                icon: Icons.bolt,
-                label: effortLabel,
-                onTap: onPickEffort,
-              ),
+            ChatTag(
+              icon: Icons.bolt,
+              label: effortLabel,
+              onTap: onPickEffort,
+            ),
           ]),
           const SizedBox(height: 6),
           // 浮起输入框
@@ -1603,5 +1645,191 @@ class _SkillPickerSheetState extends State<_SkillPickerSheet> {
         ],
       ),
     );
+  }
+}
+
+/// 新对话预设弹窗：预选本次对话的 Skill 与模型（力度走 tags 预选，不在此设置）
+///
+/// 确认返回 (Skill?, (ProviderProfile, String)?)——Skill 为哨兵
+/// （id='__default__'）表示默认助手；点遮罩关闭返回 null（不改动预选）。
+class _NewChatPresetSheet extends StatefulWidget {
+  const _NewChatPresetSheet({
+    required this.skills,
+    required this.providers,
+    required this.recentIds,
+    required this.initialSkill,
+    required this.initialModel,
+  });
+
+  final SkillProvider skills;
+  final ProviderProvider providers;
+  final List<String> recentIds;
+  final skill_model.Skill? initialSkill;
+  final (ProviderProfile, String)? initialModel;
+
+  @override
+  State<_NewChatPresetSheet> createState() => _NewChatPresetSheetState();
+}
+
+class _NewChatPresetSheetState extends State<_NewChatPresetSheet> {
+  // 非空：初始为哨兵（默认助手），选择器只返回非空 Skill
+  late skill_model.Skill _skill = widget.initialSkill ?? _defaultAssistantSkill;
+  late (ProviderProfile, String)? _model = widget.initialModel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final skillLabel = _skill.id == '__default__' ? '默认助手' : _skill.name;
+    final modelLabel = _model?.$2 ?? '默认模型';
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text('新对话', style: theme.textTheme.titleMedium),
+          ),
+          // Skill 预选
+          ListTile(
+            leading: Text(_skill.icon, style: const TextStyle(fontSize: 24)),
+            title: const Text('助手'),
+            subtitle: Text(skillLabel),
+            trailing: const Icon(Icons.keyboard_arrow_down),
+            onTap: () async {
+              Haptics.light();
+              final picked = await showModalBottomSheet<skill_model.Skill?>(
+                context: context,
+                isScrollControlled: true,
+                shape: const RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                builder: (context) => _SkillPickerSheet(
+                  skills: widget.skills,
+                  recentIds: widget.recentIds,
+                  includeDefault: true,
+                  selectedId: _skill.id == '__default__' ? null : _skill.id,
+                  onSelected: (s) => Navigator.pop(context, s),
+                ),
+              );
+              if (picked != null) {
+                setState(() => _skill = picked);
+              }
+            },
+          ),
+          // Model 预选
+          ListTile(
+            leading: const Icon(Icons.tune, size: 24),
+            title: const Text('模型'),
+            subtitle: Text(modelLabel),
+            trailing: const Icon(Icons.keyboard_arrow_down),
+            onTap: () async {
+              Haptics.light();
+              final picked =
+                  await showModalBottomSheet<(ProviderProfile, String)>(
+                context: context,
+                isScrollControlled: true,
+                shape: const RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(16)),
+                ),
+                builder: (context) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text('选择模型',
+                            style: theme.textTheme.titleMedium),
+                      ),
+                      Flexible(
+                        child: ListView(
+                          shrinkWrap: true,
+                          children: [
+                            for (final p in widget.providers.profiles) ...[
+                              Padding(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 8, 16, 2),
+                                child: Text(
+                                  p.name,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                ),
+                              ),
+                              if (p.defaultModel.isNotEmpty)
+                                ListTile(
+                                  dense: true,
+                                  leading: const Icon(Icons.model_training,
+                                      size: 20),
+                                  title: Text(p.defaultModel),
+                                  trailing: _model?.$2 == p.defaultModel &&
+                                          _model?.$1.id == p.id
+                                      ? Icon(Icons.check_circle,
+                                          color: theme.colorScheme.primary)
+                                      : null,
+                                  onTap: () => Navigator.pop(
+                                      context, (p, p.defaultModel)),
+                                ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                  ),
+                ),
+              );
+              if (picked != null) {
+                setState(() => _model = picked);
+              }
+            },
+          ),
+          // 确认按钮
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  Haptics.medium();
+                  Navigator.pop(context, (_skill, _model));
+                },
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 12),
+                  child: Text('开始新对话'),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 键盘收起观察者：ViewInsets.bottom 归零（键盘收起）时退出输入框聚焦
+///
+/// 聚焦规则（用户明确）：
+/// - 点击输入框 → 聚焦弹键盘，输入中保持聚焦（持续输入）
+/// - 键盘收起（点弹层/点空白/系统返回）→ 自动退出聚焦，
+///   弹层关闭后 FocusScope 不再把焦点还给输入框（不再回弹键盘）
+class _KeyboardDismissObserver extends WidgetsBindingObserver {
+  _KeyboardDismissObserver(this._state);
+
+  final _HomePageState _state;
+  double _lastBottomInset = 0;
+
+  @override
+  void didChangeMetrics() {
+    final inset = _state._inputFocusNode.context == null
+        ? 0.0
+        : (View.of(_state._inputFocusNode.context!).viewInsets.bottom);
+    // 键盘从弹出变为收起：退出聚焦
+    if (_lastBottomInset > 0 && inset == 0) {
+      _state._inputFocusNode.unfocus();
+    }
+    _lastBottomInset = inset;
   }
 }
