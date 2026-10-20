@@ -5,6 +5,7 @@ import 'package:ai_chat_app/models/skill.dart';
 import 'package:ai_chat_app/models/tool_call.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
+import 'package:ai_chat_app/services/memory_service.dart';
 import 'package:ai_chat_app/services/sse_parser.dart';
 import 'package:ai_chat_app/services/tool_registry.dart';
 import 'package:ai_chat_app/services/tools/builtin_tools.dart';
@@ -55,7 +56,7 @@ void main() {
     final inMemory = await databaseFactory.openDatabase(
       inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 6,
+        version: 7,
         onCreate: (d, v) async {
           await d.execute('''
             CREATE TABLE sessions (
@@ -93,6 +94,13 @@ void main() {
               capabilities TEXT NOT NULL DEFAULT '{}',
               dialect TEXT NOT NULL DEFAULT '{}',
               is_builtin INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await d.execute('''
+            CREATE TABLE memories (
+              id TEXT PRIMARY KEY, content TEXT NOT NULL, tag TEXT,
+              source_skill TEXT, created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
             )
           ''');
         },
@@ -415,6 +423,110 @@ void main() {
       api.emit(const SseDone());
       await waitUntil(() => provider.status == ChatStatus.idle);
       expect(api.lastTools!.length, 1 + builtinTools.length);
+    });
+  });
+
+  group('记忆注入', () {
+    test('启用记忆服务：system prompt 后追加【用户记忆】段', () async {
+      final memory = MemoryService(database: db);
+      await memory.saveAt('用户喜欢简洁回答', now: 1000);
+      await memory.saveAt('用户在上海工作', now: 2000);
+
+      final memProvider = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+            id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
+        profile: toolProfile(),
+        model: 'm1',
+        skill: Skill(id: 'sk', name: 'S', prompt: '你是助手'),
+        memory: memory,
+      );
+      await memProvider.loadMessages();
+      await memProvider.sendMessage('你好');
+      api.emit(const SseDone());
+      await waitUntil(() => memProvider.status == ChatStatus.idle);
+
+      final messages = api.lastMessages!;
+      // system 消息两条：Skill prompt + 记忆
+      final systemMsgs =
+          messages.where((m) => m['role'] == 'system').toList();
+      expect(systemMsgs.length, 2);
+      expect(systemMsgs[0]['content'], '你是助手');
+      expect(systemMsgs[1]['content'], '''
+【用户记忆】（长期有效，跨会话）
+- 用户在上海工作
+- 用户喜欢简洁回答''');
+      memProvider.dispose();
+    });
+
+    test('无记忆：不注入记忆段', () async {
+      final memProvider = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+            id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
+        profile: toolProfile(),
+        model: 'm1',
+        memory: MemoryService(database: db),
+      );
+      await memProvider.loadMessages();
+      await memProvider.sendMessage('你好');
+      api.emit(const SseDone());
+      await waitUntil(() => memProvider.status == ChatStatus.idle);
+
+      final systemMsgs =
+          api.lastMessages!.where((m) => m['role'] == 'system').toList();
+      expect(systemMsgs, isEmpty);
+      memProvider.dispose();
+    });
+
+    test('未启用记忆服务（null）：不注入记忆段', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDone());
+      await waitUntil(() => provider.status == ChatStatus.idle);
+
+      final systemMsgs =
+          api.lastMessages!.where((m) => m['role'] == 'system').toList();
+      expect(systemMsgs, isEmpty);
+    });
+
+    test('工具轮存记忆后下一轮注入更新（每轮刷新）', () async {
+      final memory = MemoryService(database: db);
+      final memProvider = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+            id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
+        profile: toolProfile(),
+        model: 'm1',
+        toolCatalog: [const StubTool('工具结果OK'), ...builtinTools],
+        memory: memory,
+      );
+      await memProvider.loadMessages();
+      await memProvider.sendMessage('记住一件事');
+
+      // 第一轮：模型调用 memory_save 工具
+      api.emit(const SseToolCallDelta(
+          index: 0,
+          id: 'call_m',
+          name: 'memory_save',
+          argumentsFragment: '{"content":"用户偏好深色主题"}'));
+      api.emit(const SseToolCallsFinished());
+
+      // 工具执行后进入第二轮
+      await waitUntil(() => api.chatStreamCalls == 2);
+
+      // 第二轮请求的记忆段应包含刚存的内容
+      final systemMsgs =
+          api.lastMessages!.where((m) => m['role'] == 'system').toList();
+      expect(systemMsgs.length, 1);
+      expect(systemMsgs[0]['content'], contains('用户偏好深色主题'));
+
+      api.emit(const SseDone());
+      await waitUntil(() => memProvider.status == ChatStatus.idle);
+      memProvider.dispose();
     });
   });
 

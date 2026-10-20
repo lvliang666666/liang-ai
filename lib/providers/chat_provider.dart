@@ -12,6 +12,7 @@ import '../models/skill.dart';
 import '../models/tool_call.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
+import '../services/memory_service.dart';
 import '../services/sse_parser.dart';
 import '../services/tool_registry.dart';
 import '../services/tools/builtin_tools.dart';
@@ -29,6 +30,7 @@ class ChatProvider extends ChangeNotifier {
     required String model,
     Skill? skill,
     List<ToolHandler> toolCatalog = builtinTools,
+    MemoryService? memory,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -36,6 +38,7 @@ class ChatProvider extends ChangeNotifier {
         _model = model,
         _skill = skill,
         _toolCatalog = toolCatalog,
+        _memory = memory,
         _tools = _buildRegistry(skill, toolCatalog);
 
   final DatabaseService _db;
@@ -43,6 +46,9 @@ class ChatProvider extends ChangeNotifier {
   final ChatSession _session;
   ProviderProfile _profile;
   String _model;
+
+  /// 用户长期记忆服务（null = 不启用记忆注入，兼容现有测试）
+  MemoryService? _memory;
 
   /// 当前会话绑定的 Skill（null = 默认助手，无 system prompt + 全部工具）
   Skill? _skill;
@@ -208,7 +214,12 @@ class ChatProvider extends ChangeNotifier {
     }
     await _db.touchSession(_session.id);
 
-    // 2. 启动 agentic loop（fire-and-forget：sendMessage 立即返回，
+    // 2. 预取第一轮记忆注入文本（在 loop 启动前完成——loop 从启动到
+    // 建立流订阅之间不能有 await，否则测试/调用方在 sendMessage 返回后
+    // 立即 emit 的事件会因订阅未建立而丢失）
+    await _refreshMemoryText();
+
+    // 3. 启动 agentic loop（fire-and-forget：sendMessage 立即返回，
     // loop 在后台推进，与旧版「启动流即返回」语义一致）
     _toolResults = [];
     unawaited(_runLoop());
@@ -375,7 +386,11 @@ class ChatProvider extends ChangeNotifier {
       return false;
     }
 
-    // 6. 继续下一轮
+    // 6. 刷新记忆注入文本（工具轮可能刚存了新记忆；此处已有大量 await，
+    // 不影响「订阅建立前无 await」的时序契约）
+    await _refreshMemoryText();
+
+    // 7. 继续下一轮
     _status = ChatStatus.thinking;
     _notify();
     return true;
@@ -470,14 +485,32 @@ class ChatProvider extends ChangeNotifier {
     return true;
   }
 
-  /// 组装 API 请求消息：Skill system prompt 在头部 + 全部历史
+  /// 记忆注入文本缓存（每轮 loop 开始时刷新；null = 未启用/无记忆）
+  String? _memoryText;
+
+  /// 刷新记忆注入文本（未启用记忆服务时同步返回，不引入 await 间隙——
+  /// 测试在 sendMessage 返回后立即 emit 事件，loop 必须无间隙建立订阅）
+  Future<void> _refreshMemoryText() {
+    final memory = _memory;
+    if (memory == null) {
+      _memoryText = null;
+      return Future.value();
+    }
+    return memory.recentText().then((text) => _memoryText = text);
+  }
+
+  /// 组装 API 请求消息：Skill system prompt 在头部 + 记忆注入 + 全部历史
   ///
   /// [forceSummary] 为 true 时（loop 轮数耗尽）追加系统提示强制模型总结。
+  /// 记忆注入：Skill prompt 之后追加一条 system 消息（最近 20 条，
+  /// 无记忆或未启用记忆服务时不注入）。
   List<Map<String, Object?>> _buildApiMessages({bool forceSummary = false}) {
     final prompt = _skill?.prompt;
     return [
       if (prompt != null && prompt.isNotEmpty)
         {'role': 'system', 'content': prompt},
+      if (_memoryText != null && _memoryText!.isNotEmpty)
+        {'role': 'system', 'content': _memoryText!},
       ..._messages.map((m) => m.toApiMessage()),
       if (forceSummary)
         const {
