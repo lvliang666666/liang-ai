@@ -77,6 +77,12 @@ void main() {
 
   group('SkillEditorPage', () {
     testWidgets('新建默认全勾：直接保存 → toolNames == null', (tester) async {
+      // 13 个工具超出默认测试窗口高度，ListView 懒构建导致部分条目
+      // 不在树中——放大窗口让全部条目可见
+      tester.view.physicalSize = const Size(800, 2400);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
       await tester.pumpWidget(wrap(const SkillEditorPage()));
 
       // 填名称（基本信息分区）
