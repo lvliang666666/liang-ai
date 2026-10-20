@@ -21,8 +21,8 @@ void main() {
       ));
 
   group('工具目录', () {
-    test('注册表含全部 14 个内置工具', () {
-      expect(registry.length, 14);
+    test('注册表含全部 26 个内置工具', () {
+      expect(registry.length, 26);
       expect(
         registry.names,
         containsAll([
@@ -30,6 +30,17 @@ void main() {
           'get_device_info',
           'date_calc',
           'calculate',
+          'bazi',
+          'wuxing',
+          'zodiac',
+          'huangli',
+          'guanyin',
+          'tarot',
+          'zhougong',
+          'shuzi',
+          'xingming',
+          'dice_iching',
+          'peach_blossom',
           'unit_convert',
           'base_convert',
           'math_function',
