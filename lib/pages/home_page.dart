@@ -19,9 +19,6 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final _query = '';
-  final _searchFocusNode = FocusNode();
-  final _searchController = TextEditingController();
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
@@ -32,16 +29,8 @@ class _HomePageState extends State<HomePage> {
     context.read<SkillProvider>().load();
   }
 
-  @override
-  void dispose() {
-    _searchFocusNode.dispose();
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  /// 导航前收起键盘并清除搜索框焦点，避免返回主页时自动弹键盘
-  void _unfocusSearch() {
-    _searchFocusNode.unfocus();
+  /// 导航前收起键盘，避免返回主页时自动弹键盘
+  void _unfocus() {
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
@@ -57,7 +46,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _newChat() async {
     Haptics.light();
-    _unfocusSearch();
+    _unfocus();
     // 选 Skill + 确认（null = 默认助手）
     final skillId = await _showSkillPicker();
     if (skillId == _skillPickerCancelled || !mounted) return;
@@ -106,7 +95,7 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _openChat(String id) async {
     Haptics.light();
-    _unfocusSearch();
+    _unfocus();
     await Navigator.push(
       context,
       MaterialPageRoute(builder: (_) => ChatPage(sessionId: id)),
@@ -231,31 +220,13 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  String _formatTime(int millis) {
-    final dt = DateTime.fromMillisecondsSinceEpoch(millis);
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inMinutes < 1) return '刚刚';
-    if (diff.inHours < 1) return '${diff.inMinutes} 分钟前';
-    if (diff.inDays < 1) return '${diff.inHours} 小时前';
-    if (diff.inDays < 7) return '${diff.inDays} 天前';
-    return '${dt.year}/${dt.month}/${dt.day}';
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sessions = context.watch<SessionsProvider>();
     final skillsProvider = context.watch<SkillProvider>();
 
-    // 按标题过滤（不区分大小写）
     final allSessions = sessions.sessions;
-    final filtered = _query.isEmpty
-        ? allSessions
-        : allSessions
-            .where((s) =>
-                s.title.toLowerCase().contains(_query.toLowerCase()))
-            .toList();
 
     return Scaffold(
       key: _scaffoldKey,
@@ -275,7 +246,7 @@ class _HomePageState extends State<HomePage> {
         onOpenSettings: () {
           Navigator.pop(context);
           Haptics.light();
-          _unfocusSearch();
+          _unfocus();
           Navigator.push(
             context,
             MaterialPageRoute(builder: (_) => const SettingsPage()),
@@ -302,7 +273,7 @@ class _HomePageState extends State<HomePage> {
           : SafeArea(
               child: Column(
                 children: [
-                  // ===== 顶栏：抽屉入口 + 设置 =====
+                  // ===== 顶栏：抽屉入口 + 新建（设置收进抽屉） =====
                   Padding(
                     padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
                     child: Row(
@@ -317,162 +288,37 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const Spacer(),
                         IconButton(
-                          icon: const Icon(Icons.settings_outlined),
-                          tooltip: '设置',
-                          onPressed: () {
-                            Haptics.light();
-                            _unfocusSearch();
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) => const SettingsPage()),
-                            );
-                          },
+                          icon: const Icon(Icons.add),
+                          tooltip: '新对话',
+                          onPressed: _newChat,
                         ),
                       ],
                     ),
                   ),
+                  // ===== 主页主体：仅问候语 + 大输入框（居中） =====
                   Expanded(
-                    child: allSessions.isEmpty
-                        ? _EmptyHome(
-                            greeting: _greeting(),
-                            onNewChat: _newChat,
-                          )
-                        : ListView(
-                            padding: const EdgeInsets.fromLTRB(16, 8, 16, 88),
-                            children: [
-                              // ===== 问候语 =====
-                              Padding(
-                                padding:
-                                    const EdgeInsets.fromLTRB(4, 16, 4, 20),
-                                child: Text(
-                                  '${_greeting()}，\n想聊点什么？',
-                                  style: theme.textTheme.headlineMedium
-                                      ?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.3,
-                                  ),
-                                ),
-                              ),
-                              // ===== 居中大输入框（点击即新建会话） =====
-                              _HeroInput(onTap: _newChat),
-                              const SizedBox(height: 24),
-                              // ===== 最近会话 =====
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-                                child: Text('最近对话',
-                                    style: theme.textTheme.labelLarge?.copyWith(
-                                        color: theme
-                                            .colorScheme.onSurfaceVariant)),
-                              ),
-                              if (filtered.isEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.all(24),
-                                  child: Center(
-                                    child: Text(
-                                        '没有找到「$_query」相关的对话',
-                                        style: theme.textTheme.bodyMedium
-                                            ?.copyWith(
-                                                color: theme.colorScheme
-                                                    .onSurfaceVariant)),
-                                  ),
-                                )
-                              else
-                                ...filtered.take(20).map((s) {
-                                  final effortText = switch (s.effort) {
-                                    'max' => '深度',
-                                    'high' => '均衡',
-                                    'low' => '轻量',
-                                    _ => s.effort,
-                                  };
-                                  final skill =
-                                      skillsProvider.byId(s.skillId);
-                                  return Card(
-                                    elevation: 0,
-                                    color: theme.colorScheme
-                                        .surfaceContainerHighest
-                                        .withValues(alpha: 0.5),
-                                    child: ListTile(
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                              horizontal: 16, vertical: 4),
-                                      leading: Text(
-                                        skill?.icon ?? '💬',
-                                        style:
-                                            const TextStyle(fontSize: 22),
-                                      ),
-                                      title: Text(
-                                        s.title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                      subtitle: Text(
-                                        '${skill != null ? '${skill.name} · ' : ''}'
-                                        '$effortText · ${_formatTime(s.updatedAt)}',
-                                        style: theme.textTheme.bodySmall,
-                                      ),
-                                      onTap: () => _openChat(s.id),
-                                      onLongPress: () =>
-                                          _showSessionActions(
-                                              context, s.id, s.title),
-                                    ),
-                                  );
-                                }),
-                              // 超过 20 条提示去抽屉看全部
-                              if (filtered.length > 20)
-                                Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Center(
-                                    child: TextButton.icon(
-                                      onPressed: () =>
-                                          _scaffoldKey.currentState
-                                              ?.openDrawer(),
-                                      icon: const Icon(Icons.menu, size: 18),
-                                      label: Text(
-                                          '查看全部 ${filtered.length} 个对话'),
-                                    ),
-                                  ),
-                                ),
-                            ],
+                    child: Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            '${_greeting()}，\n想聊点什么？',
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                              height: 1.3,
+                            ),
                           ),
+                          const SizedBox(height: 32),
+                          // 大输入框（点击即新建会话）
+                          _HeroInput(onTap: _newChat),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               ),
             ),
-    );
-  }
-}
-
-/// 空首页：问候语 + 大输入框（无会话时）
-class _EmptyHome extends StatelessWidget {
-  const _EmptyHome({required this.greeting, required this.onNewChat});
-
-  final String greeting;
-  final VoidCallback onNewChat;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Text(
-            '$greeting，\n想聊点什么？',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.headlineMedium
-                ?.copyWith(fontWeight: FontWeight.w600, height: 1.3),
-          ),
-          const SizedBox(height: 32),
-          _HeroInput(onTap: onNewChat),
-          const SizedBox(height: 24),
-          Text(
-            '点击上方输入框或右下角「新对话」开始',
-            style: theme.textTheme.bodySmall
-                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-          ),
-        ],
-      ),
     );
   }
 }
