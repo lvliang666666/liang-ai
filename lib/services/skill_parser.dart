@@ -1,6 +1,6 @@
-import '../models/agent.dart';
+import '../models/skill.dart';
 
-/// Agent 提示词文档解析器
+/// Skill 提示词文档解析器
 ///
 /// 规范：Markdown + YAML front matter
 /// ```md
@@ -10,26 +10,30 @@ import '../models/agent.dart';
 /// description: 严谨的系统设计专家
 /// temperature: 0.3
 /// effort: high
+/// tools: calculate
 /// ---
 /// 你是资深软件架构师……（正文 = system prompt）
 /// ```
 ///
 /// front matter 只支持扁平 key: value（无需完整 YAML 库）；
 /// 无 front matter 时整个内容视为 prompt。
-class AgentParser {
-  AgentParser._();
+///
+/// tools 字段：逗号分隔的内置工具名列表；
+/// 值为空或 `none` → []（无工具）；键缺省 → null（全部工具）。
+class SkillParser {
+  SkillParser._();
 
-  /// 解析文档文本为 Agent 字段
-  static AgentParseResult parse(String raw) {
+  /// 解析文档文本为 Skill 字段
+  static SkillParseResult parse(String raw) {
     final text = raw.trim();
     if (!text.startsWith('---')) {
-      return AgentParseResult(prompt: raw.trim());
+      return SkillParseResult(prompt: raw.trim());
     }
 
     final end = text.indexOf('\n---', 3);
     if (end < 0) {
       // 有开头无结尾：整体视为 prompt（容错）
-      return AgentParseResult(prompt: text);
+      return SkillParseResult(prompt: text);
     }
 
     final frontMatter = text.substring(3, end).trim();
@@ -46,20 +50,21 @@ class AgentParser {
       if (key.isNotEmpty) meta[key] = unquoted;
     }
 
-    return AgentParseResult(
+    return SkillParseResult(
       name: meta['name'],
       icon: meta['icon'],
       description: meta['description'],
       temperature: _parseDouble(meta['temperature']),
       effort: _parseEffort(meta['effort']),
+      toolNames: _parseTools(meta['tools']),
       prompt: prompt,
     );
   }
 
-  /// 从文档解析并生成完整 Agent（用于内置资产入库）
-  static Agent parseToAgent(String id, String raw, {bool isBuiltin = true}) {
+  /// 从文档解析并生成完整 Skill（用于内置资产入库）
+  static Skill parseToSkill(String id, String raw, {bool isBuiltin = true}) {
     final r = parse(raw);
-    return Agent(
+    return Skill(
       id: id,
       name: r.name ?? id,
       icon: r.icon ?? '🤖',
@@ -67,6 +72,7 @@ class AgentParser {
       prompt: r.prompt,
       temperature: r.temperature,
       effort: r.effort,
+      toolNames: r.toolNames,
       isBuiltin: isBuiltin,
     );
   }
@@ -92,16 +98,31 @@ class AgentParser {
       _ => null,
     };
   }
+
+  /// tools 字段解析：缺省 → null（全部）；空/none → []（无）；逗号分隔 → 子集
+  static List<String>? _parseTools(String? v) {
+    if (v == null) return null;
+    final trimmed = v.trim();
+    if (trimmed.isEmpty) return const [];
+    if (trimmed.toLowerCase() == 'none') return const [];
+    final names = trimmed
+        .split(',')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    return names;
+  }
 }
 
 /// 解析结果
-class AgentParseResult {
-  AgentParseResult({
+class SkillParseResult {
+  SkillParseResult({
     this.name,
     this.icon,
     this.description,
     this.temperature,
     this.effort,
+    this.toolNames,
     required this.prompt,
   });
 
@@ -110,5 +131,8 @@ class AgentParseResult {
   final String? description;
   final double? temperature;
   final String? effort;
+
+  /// null = 未声明（全部工具）；[] = 无工具；非空 = 子集
+  final List<String>? toolNames;
   final String prompt;
 }

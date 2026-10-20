@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/agent.dart';
 import '../models/provider_profile.dart';
-import '../providers/agent_provider.dart';
+import '../models/skill.dart';
 import '../providers/provider_provider.dart';
+import '../providers/skill_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
+import 'skill_editor_page.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
+import '../widgets/tag_bar.dart';
 
 /// 设置页：顶部可滑动 Tags 栏 + 分页内容
 ///
@@ -22,16 +24,16 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'Agent 管理', 'API 配置', '对话参数', '说明'];
+  static const _tabs = ['外观', 'Skill 管理', 'API 配置', '对话参数', '说明'];
 
   late final SettingsService _settings;
   late final PageController _pageController;
   double _temperature = 0.7;
   String _effort = 'max';
   int _currentTab = 0;
-  String _agentQuery = '';
-  final _agentSearchController = TextEditingController();
-  final _agentSearchFocusNode = FocusNode();
+  String _skillQuery = '';
+  final _skillSearchController = TextEditingController();
+  final _skillSearchFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -45,15 +47,15 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     _pageController.dispose();
-    _agentSearchController.dispose();
-    _agentSearchFocusNode.dispose();
+    _skillSearchController.dispose();
+    _skillSearchFocusNode.dispose();
     super.dispose();
   }
 
   /// 收起搜索框焦点：弹窗/操作完成后调用，防止焦点残留导致键盘反复弹出
-  void _unfocusAgentSearch() {
-    if (_agentSearchFocusNode.hasFocus) {
-      _agentSearchFocusNode.unfocus();
+  void _unfocusSkillSearch() {
+    if (_skillSearchFocusNode.hasFocus) {
+      _skillSearchFocusNode.unfocus();
     }
   }
 
@@ -99,7 +101,7 @@ class _SettingsPageState extends State<SettingsPage> {
       body: Column(
         children: [
           // ===== 顶部 Tags 栏（可横向滑动） =====
-          _TagBar(
+          TagBar(
             tabs: _tabs,
             current: _currentTab,
             onTap: _goToTab,
@@ -116,7 +118,7 @@ class _SettingsPageState extends State<SettingsPage> {
               },
               children: [
                 _buildAppearanceTab(theme),
-                _buildAgentTab(theme),
+                _buildSkillTab(theme),
                 _buildApiTab(theme),
                 _buildParamsTab(theme),
                 _buildAboutTab(theme),
@@ -152,19 +154,19 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ===== Tag 2：Agent 管理 =====
-  Widget _buildAgentTab(ThemeData theme) {
-    final agents = context.watch<AgentProvider>();
-    if (!agents.loaded) {
-      agents.load();
+  // ===== Tag 2：Skill 管理 =====
+  Widget _buildSkillTab(ThemeData theme) {
+    final skills = context.watch<SkillProvider>();
+    if (!skills.loaded) {
+      skills.load();
       return const Center(child: CircularProgressIndicator());
     }
 
     // 搜索过滤（名称/描述，不区分大小写）
-    final query = _agentQuery.trim().toLowerCase();
+    final query = _skillQuery.trim().toLowerCase();
     final filtered = query.isEmpty
-        ? agents.agents
-        : agents.agents
+        ? skills.skills
+        : skills.skills
             .where((a) =>
                 a.name.toLowerCase().contains(query) ||
                 a.description.toLowerCase().contains(query))
@@ -179,22 +181,22 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               Expanded(
                 child: TextField(
-                  controller: _agentSearchController,
-                  focusNode: _agentSearchFocusNode,
-                  onChanged: (v) => setState(() => _agentQuery = v),
+                  controller: _skillSearchController,
+                  focusNode: _skillSearchFocusNode,
+                  onChanged: (v) => setState(() => _skillQuery = v),
                   decoration: InputDecoration(
                     isDense: true,
-                    hintText: '搜索 Agent',
+                    hintText: '搜索 Skill',
                     prefixIcon: const Icon(Icons.search, size: 20),
-                    suffixIcon: _agentQuery.isEmpty
+                    suffixIcon: _skillQuery.isEmpty
                         ? null
                         : IconButton(
                             visualDensity: VisualDensity.compact,
                             icon: const Icon(Icons.close, size: 18),
                             onPressed: () {
                               Haptics.light();
-                              _agentSearchController.clear();
-                              setState(() => _agentQuery = '');
+                              _skillSearchController.clear();
+                              setState(() => _skillQuery = '');
                             },
                           ),
                     contentPadding: const EdgeInsets.symmetric(
@@ -206,8 +208,8 @@ class _SettingsPageState extends State<SettingsPage> {
               FilledButton.icon(
                 onPressed: () {
                   Haptics.light();
-                  _unfocusAgentSearch();
-                  _showAgentEditor(context);
+                  _unfocusSkillSearch();
+                  _openSkillEditor(context);
                 },
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('新建'),
@@ -219,7 +221,7 @@ class _SettingsPageState extends State<SettingsPage> {
           child: filtered.isEmpty
               ? Center(
                   child: Text(
-                    query.isEmpty ? '还没有 Agent' : '没有找到「$_agentQuery」',
+                    query.isEmpty ? '还没有 Skill' : '没有找到「$_skillQuery」',
                     style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant),
                   ),
@@ -280,8 +282,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                   tooltip: a.isBuiltin ? '查看' : '编辑',
                                   onPressed: () {
                                     Haptics.light();
-                                    _unfocusAgentSearch();
-                                    _showAgentEditor(context, agent: a);
+                                    _unfocusSkillSearch();
+                                    _openSkillEditor(context, skill: a);
                                   },
                                 ),
                                 if (a.isBuiltin)
@@ -290,8 +292,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                     tooltip: '复制为自定义',
                                     onPressed: () {
                                       Haptics.medium();
-                                      _unfocusAgentSearch();
-                                      _confirmDuplicateAgent(context, a);
+                                      _unfocusSkillSearch();
+                                      _confirmDuplicateSkill(context, a);
                                     },
                                   )
                                 else
@@ -301,8 +303,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                     tooltip: '删除',
                                     onPressed: () {
                                       Haptics.medium();
-                                      _unfocusAgentSearch();
-                                      _confirmDeleteAgent(context, a);
+                                      _unfocusSkillSearch();
+                                      _confirmDeleteSkill(context, a);
                                     },
                                   ),
                               ],
@@ -311,9 +313,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         )),
                     const SizedBox(height: 8),
                     Text(
-                      '· 内置 Agent 不可删除，可复制一份后修改\n'
-                      '· Agent 的提示词会作为 system 消息注入对话\n'
-                      '· 在新建对话或聊天页顶部可切换 Agent',
+                      '· 内置 Skill 不可删除，可复制一份后修改\n'
+                      '· Skill = 提示词 + 可用工具 + 参数预设的组合包\n'
+                      '· 提示词会作为 system 消息注入对话，工具子集决定模型能调用什么\n'
+                      '· 在新建对话或聊天页顶部可切换 Skill',
                       style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                           height: 1.6),
@@ -325,14 +328,14 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// 复制内置 Agent：先确认再执行
-  Future<void> _confirmDuplicateAgent(
-      BuildContext context, Agent agent) async {
+  /// 复制内置 Skill：先确认再执行
+  Future<void> _confirmDuplicateSkill(
+      BuildContext context, Skill skill) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('复制 Agent'),
-        content: Text('将复制「${agent.name}」为自定义 Agent（名为「${agent.name} 副本」），可以随意修改。'),
+        title: const Text('复制 Skill'),
+        content: Text('将复制「${skill.name}」为自定义 Skill（名为「${skill.name} 副本」），可以随意修改。'),
         actions: [
           TextButton(
             onPressed: () {
@@ -352,161 +355,37 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed == true && context.mounted) {
-      _unfocusAgentSearch();
-      await context.read<AgentProvider>().duplicate(agent);
+      _unfocusSkillSearch();
+      await context.read<SkillProvider>().duplicate(skill);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('已复制为「${agent.name} 副本」'),
+              content: Text('已复制为「${skill.name} 副本」'),
               duration: const Duration(seconds: 1)),
         );
       }
     }
   }
 
-  /// Agent 新建/编辑弹窗（内置 Agent 只读查看）
-  Future<void> _showAgentEditor(BuildContext context, {Agent? agent}) async {
-    final isBuiltin = agent?.isBuiltin ?? false;
-    final nameCtrl = TextEditingController(text: agent?.name ?? '');
-    final descCtrl = TextEditingController(text: agent?.description ?? '');
-    final iconCtrl = TextEditingController(text: agent?.icon ?? '🤖');
-    final promptCtrl = TextEditingController(text: agent?.prompt ?? '');
-    String? effort = agent?.effort;
-
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(agent == null
-            ? '新建 Agent'
-            : (isBuiltin ? '查看 Agent' : '编辑 Agent')),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              Row(children: [
-                SizedBox(
-                  width: 64,
-                  child: TextField(
-                    controller: iconCtrl,
-                    textAlign: TextAlign.center,
-                    maxLength: 2,
-                    decoration: const InputDecoration(
-                        counterText: '', labelText: '图标'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextField(
-                    controller: nameCtrl,
-                    enabled: !isBuiltin,
-                    maxLength: 20,
-                    decoration: const InputDecoration(
-                        labelText: '名称', counterText: ''),
-                  ),
-                ),
-              ]),
-              const SizedBox(height: 8),
-              TextField(
-                controller: descCtrl,
-                enabled: !isBuiltin,
-                maxLength: 50,
-                decoration: const InputDecoration(
-                    labelText: '一句话描述', counterText: ''),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: effort,
-                decoration: const InputDecoration(labelText: '推理档位（可选）'),
-                items: const [
-                  DropdownMenuItem(value: 'max', child: Text('深度（max）')),
-                  DropdownMenuItem(value: 'high', child: Text('均衡（high）')),
-                  DropdownMenuItem(value: 'low', child: Text('轻量（low）')),
-                  DropdownMenuItem(child: Text('不指定')),
-                ],
-                onChanged: isBuiltin
-                    ? null
-                    : (v) => effort = v,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: promptCtrl,
-                enabled: !isBuiltin,
-                maxLines: 8,
-                minLines: 4,
-                decoration: const InputDecoration(
-                  labelText: '系统提示词（System Prompt）',
-                  alignLabelWithHint: true,
-                  hintText: '定义这个 Agent 的身份、语气、行为准则…',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Haptics.light();
-              Navigator.pop(context, false);
-            },
-            child: const Text('取消'),
-          ),
-          if (!isBuiltin)
-            FilledButton(
-              onPressed: () {
-                Haptics.light();
-                Navigator.pop(context, true);
-              },
-              child: const Text('保存'),
-            ),
-        ],
-      ),
+  /// Skill 新建/编辑整页（内置 Skill 只读查看）
+  Future<void> _openSkillEditor(BuildContext context, {Skill? skill}) async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => SkillEditorPage(skill: skill)),
     );
 
-    if (saved != true || !context.mounted) return;
+    if (saved != true || !mounted) return;
 
-    // 弹窗关闭后兜底收起焦点：防止弹窗内输入框的焦点被框架还给搜索框
-    _unfocusAgentSearch();
-
-    final name = nameCtrl.text.trim();
-    final prompt = promptCtrl.text.trim();
-    if (name.isEmpty || prompt.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('名称和提示词不能为空')),
-      );
-      return;
-    }
-
-    final provider = context.read<AgentProvider>();
-    if (agent == null) {
-      await provider.create(
-        name: name,
-        prompt: prompt,
-        icon: iconCtrl.text.trim().isEmpty
-            ? '🤖'
-            : iconCtrl.text.trim(),
-        description: descCtrl.text.trim(),
-        effort: effort,
-      );
-    } else {
-      await provider.update(Agent(
-        id: agent.id,
-        name: name,
-        icon: iconCtrl.text.trim(),
-        description: descCtrl.text.trim(),
-        prompt: prompt,
-        temperature: agent.temperature,
-        effort: effort,
-      ));
-    }
+    // 页面关闭后兜底收起焦点：防止编辑页输入框的焦点被框架还给搜索框
+    _unfocusSkillSearch();
   }
 
-  Future<void> _confirmDeleteAgent(BuildContext context, Agent agent) async {
+  Future<void> _confirmDeleteSkill(BuildContext context, Skill skill) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除 Agent'),
-        content: Text('删除「${agent.name}」后，使用它的会话将回到默认助手。确定删除吗？'),
+        title: const Text('删除 Skill'),
+        content: Text('删除「${skill.name}」后，使用它的会话将回到默认助手。确定删除吗？'),
         actions: [
           TextButton(
             onPressed: () {
@@ -526,8 +405,8 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed == true && context.mounted) {
-      _unfocusAgentSearch();
-      context.read<AgentProvider>().delete(agent.id);
+      _unfocusSkillSearch();
+      context.read<SkillProvider>().delete(skill.id);
     }
   }
 
@@ -896,64 +775,6 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
       ],
-    );
-  }
-}
-
-/// 顶部 Tags 栏：横向滑动 + 选中高亮
-class _TagBar extends StatelessWidget {
-  const _TagBar({
-    required this.tabs,
-    required this.current,
-    required this.onTap,
-  });
-
-  final List<String> tabs;
-  final int current;
-  final ValueChanged<int> onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-
-    return SizedBox(
-      height: 52,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        itemCount: tabs.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final selected = index == current;
-          return InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: () => onTap(index),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: selected
-                    ? colorScheme.primary
-                    : colorScheme.surfaceContainerHighest
-                        .withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                tabs[index],
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
-                  color: selected
-                      ? colorScheme.onPrimary
-                      : colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          );
-        },
-      ),
     );
   }
 }

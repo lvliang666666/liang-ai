@@ -3,18 +3,18 @@ import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 
-import '../models/agent.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/provider_profile.dart';
+import '../models/skill.dart';
 
-/// 本地数据库服务：sessions / messages / agents / providers 四表
+/// 本地数据库服务：sessions / messages / skills / providers 四表
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'ai_chat.db';
-  static const _dbVersion = 5;
+  static const _dbVersion = 6;
 
   Database? _db;
 
@@ -47,6 +47,7 @@ class DatabaseService {
         updated_at INTEGER NOT NULL,
         effort TEXT NOT NULL DEFAULT 'max',
         agent_id TEXT,
+        skill_id TEXT,
         provider_id TEXT,
         model TEXT
       )
@@ -67,7 +68,7 @@ class DatabaseService {
     await db.execute(
       'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
     );
-    await _createAgentsTable(db);
+    await _createSkillsTable(db);
     await _createProvidersTable(db);
   }
 
@@ -96,6 +97,22 @@ class DatabaseService {
           "ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'");
       await db.execute('ALTER TABLE messages ADD COLUMN tool_call_id TEXT');
     }
+    if (oldVersion < 6) {
+      // v5 → v6：Skill 取代 Agent——agents 数据平移到 skills 表
+      //（tools=NULL=全部工具，保持 v1.6.0 行为），会话绑定 agent_id → skill_id，
+      // agent_id 列保留不删但不再使用
+      await db.execute('ALTER TABLE sessions ADD COLUMN skill_id TEXT');
+      await _createSkillsTable(db);
+      await db.execute('''
+        INSERT INTO skills (id, name, icon, description, prompt,
+                            temperature, effort, tools, is_builtin)
+        SELECT id, name, icon, description, prompt,
+               temperature, effort, NULL, is_builtin
+        FROM agents
+      ''');
+      await db.execute('UPDATE sessions SET skill_id = agent_id');
+      await db.execute('DROP TABLE agents');
+    }
   }
 
   Future<void> _createAgentsTable(Database db) async {
@@ -108,6 +125,22 @@ class DatabaseService {
         prompt TEXT NOT NULL DEFAULT '',
         temperature REAL,
         effort TEXT,
+        is_builtin INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
+  Future<void> _createSkillsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS skills (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        icon TEXT NOT NULL DEFAULT '🤖',
+        description TEXT NOT NULL DEFAULT '',
+        prompt TEXT NOT NULL DEFAULT '',
+        temperature REAL,
+        effort TEXT,
+        tools TEXT,
         is_builtin INTEGER NOT NULL DEFAULT 0
       )
     ''');
@@ -166,12 +199,12 @@ class DatabaseService {
         .update('sessions', {'effort': effort}, where: 'id = ?', whereArgs: [id]);
   }
 
-  /// 更新会话绑定的 Agent（null = 解绑，回到默认助手）
-  Future<void> updateSessionAgent(String id, String? agentId) async {
+  /// 更新会话绑定的 Skill（null = 解绑，回到默认助手）
+  Future<void> updateSessionSkill(String id, String? skillId) async {
     final db = await database;
     await db.update(
       'sessions',
-      {'agent_id': agentId},
+      {'skill_id': skillId},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -243,51 +276,51 @@ class DatabaseService {
     await db.delete('messages', where: 'id = ?', whereArgs: [id]);
   }
 
-  // ===== Agents =====
+  // ===== Skills =====
 
-  Future<void> insertAgent(Agent agent) async {
+  Future<void> insertSkill(Skill skill) async {
     final db = await database;
-    await db.insert('agents', agent.toMap(),
+    await db.insert('skills', skill.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// 全部 Agent（内置在前，自定义在后，各按名称排序）
-  Future<List<Agent>> getAllAgents() async {
+  /// 全部 Skill（内置在前，自定义在后，各按名称排序）
+  Future<List<Skill>> getAllSkills() async {
     final db = await database;
     final rows = await db.query(
-      'agents',
+      'skills',
       orderBy: 'is_builtin DESC, name ASC',
     );
-    return rows.map(Agent.fromMap).toList();
+    return rows.map(Skill.fromMap).toList();
   }
 
-  Future<Agent?> getAgent(String id) async {
+  Future<Skill?> getSkill(String id) async {
     final db = await database;
     final rows =
-        await db.query('agents', where: 'id = ?', whereArgs: [id], limit: 1);
-    return rows.isEmpty ? null : Agent.fromMap(rows.first);
+        await db.query('skills', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : Skill.fromMap(rows.first);
   }
 
-  Future<void> updateAgent(Agent agent) async {
+  Future<void> updateSkill(Skill skill) async {
     final db = await database;
-    await db.update('agents', agent.toMap(),
-        where: 'id = ?', whereArgs: [agent.id]);
+    await db.update('skills', skill.toMap(),
+        where: 'id = ?', whereArgs: [skill.id]);
   }
 
-  /// 删除自定义 Agent；同时解绑引用它的会话（避免悬挂引用）
-  Future<void> deleteAgent(String id) async {
+  /// 删除自定义 Skill；同时解绑引用它的会话（避免悬挂引用）
+  Future<void> deleteSkill(String id) async {
     final db = await database;
     await db.transaction((txn) async {
-      await txn
-          .update('sessions', {'agent_id': null}, where: 'agent_id = ?', whereArgs: [id]);
-      await txn.delete('agents', where: 'id = ?', whereArgs: [id]);
+      await txn.update('sessions', {'skill_id': null},
+          where: 'skill_id = ?', whereArgs: [id]);
+      await txn.delete('skills', where: 'id = ?', whereArgs: [id]);
     });
   }
 
-  /// 内置 Agent 是否已入库（首次启动种子判断）
-  Future<bool> hasBuiltinAgents() async {
+  /// 内置 Skill 是否已入库（首次启动种子判断）
+  Future<bool> hasBuiltinSkills() async {
     final db = await database;
-    final rows = await db.query('agents',
+    final rows = await db.query('skills',
         where: 'is_builtin = 1', limit: 1);
     return rows.isNotEmpty;
   }

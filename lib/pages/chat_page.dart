@@ -1,17 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/agent.dart';
 import '../models/chat_session.dart';
 import '../models/provider_profile.dart';
-import '../providers/agent_provider.dart';
+import '../models/skill.dart';
 import '../providers/chat_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
+import '../providers/skill_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
-import '../services/tool_registry.dart';
-import '../services/tools/builtin_tools.dart';
 import '../utils/haptics.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/message_bubble.dart';
@@ -25,6 +23,15 @@ class ChatPage extends StatefulWidget {
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
+
+/// AppBar 内强调文字颜色：跟随主题 AppBar 前景色。
+///
+/// 默认主题 AppBar 浅色底 → 深色字（appBarTheme 未显式设置时回退 onSurface）；
+/// Minecraft 主题 AppBar 深色底 → 白色字（appBarTheme.foregroundColor=textLight）。
+/// 之前直接用 colorScheme.onPrimary（默认主题下是白色）导致浅色底上看不清。
+Color _appBarForeground(BuildContext context) =>
+    Theme.of(context).appBarTheme.foregroundColor ??
+    Theme.of(context).colorScheme.onSurface;
 
 class _ChatPageState extends State<ChatPage> {
   final _scrollController = ScrollController();
@@ -98,7 +105,7 @@ class _ChatPageState extends State<ChatPage> {
     return ChangeNotifierProvider(
       key: ValueKey(widget.sessionId),
       create: (_) {
-        final agent = context.read<AgentProvider>().byId(session.agentId);
+        final skill = context.read<SkillProvider>().byId(session.skillId);
         final provider = ChatProvider(
           database: DatabaseService.instance,
           api: ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey),
@@ -107,8 +114,7 @@ class _ChatPageState extends State<ChatPage> {
           model: session.model?.isNotEmpty == true
               ? session.model!
               : profile.defaultModel,
-          agent: agent,
-          toolRegistry: ToolRegistry()..registerAll(builtinTools),
+          skill: skill,
         )..loadMessages();
         return provider;
       },
@@ -143,7 +149,7 @@ class _ChatPageView extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           title: GestureDetector(
-            onTap: () => _showAgentSwitcher(context, chat),
+            onTap: () => _showSkillSwitcher(context, chat),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -157,17 +163,16 @@ class _ChatPageView extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      chat.agent != null
-                          ? '${chat.agent!.icon} ${chat.agent!.name}'
+                      chat.skill != null
+                          ? '${chat.skill!.icon} ${chat.skill!.name}'
                           : '🤖 默认助手',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Theme.of(context).colorScheme.onPrimary,
+                        color: _appBarForeground(context),
                       ),
                     ),
                     Icon(Icons.keyboard_arrow_down,
-                        size: 14,
-                        color: Theme.of(context).colorScheme.onPrimary),
+                        size: 14, color: _appBarForeground(context)),
                   ],
                 ),
               ],
@@ -240,15 +245,15 @@ class _ChatPageView extends StatelessWidget {
     );
   }
 
-  /// 切换当前会话的 Agent
-  Future<void> _showAgentSwitcher(
+  /// 切换当前会话的 Skill
+  Future<void> _showSkillSwitcher(
       BuildContext context, ChatProvider chat) async {
     Haptics.light();
-    final agentsProvider = context.read<AgentProvider>();
-    if (!agentsProvider.loaded) await agentsProvider.load();
+    final skillsProvider = context.read<SkillProvider>();
+    if (!skillsProvider.loaded) await skillsProvider.load();
     if (!context.mounted) return;
 
-    final selected = await showModalBottomSheet<Agent?>(
+    final selected = await showModalBottomSheet<Skill?>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
@@ -260,20 +265,20 @@ class _ChatPageView extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('切换 Agent',
+              child: Text('切换 Skill',
                   style: Theme.of(context).textTheme.titleMedium),
             ),
             Flexible(
               child: ListView(
                 shrinkWrap: true,
                 children: [
-                  // 默认助手（解绑 Agent）
+                  // 默认助手（解绑 Skill）
                   ListTile(
                     leading: const Text('🤖',
                         style: TextStyle(fontSize: 24)),
                     title: const Text('默认助手'),
-                    subtitle: const Text('无人格提示词，通用问答'),
-                    trailing: chat.agent == null
+                    subtitle: const Text('无人格提示词，全部工具可用'),
+                    trailing: chat.skill == null
                         ? Icon(Icons.check_circle,
                             color: Theme.of(context).colorScheme.primary)
                         : null,
@@ -282,25 +287,25 @@ class _ChatPageView extends StatelessWidget {
                       Navigator.pop(context, null);
                     },
                   ),
-                  for (final a in agentsProvider.agents)
+                  for (final s in skillsProvider.skills)
                     ListTile(
-                      leading: Text(a.icon,
+                      leading: Text(s.icon,
                           style: const TextStyle(fontSize: 24)),
-                      title: Text(a.name),
-                      subtitle: a.description.isEmpty
+                      title: Text(s.name),
+                      subtitle: s.description.isEmpty
                           ? null
                           : Text(
-                              a.description,
+                              s.description,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                      trailing: chat.agent?.id == a.id
+                      trailing: chat.skill?.id == s.id
                           ? Icon(Icons.check_circle,
                               color: Theme.of(context).colorScheme.primary)
                           : null,
                       onTap: () {
                         Haptics.selection();
-                        Navigator.pop(context, a);
+                        Navigator.pop(context, s);
                       },
                     ),
                 ],
@@ -313,9 +318,9 @@ class _ChatPageView extends StatelessWidget {
     );
     // 未选择（点击遮罩关闭）不改动
     if (!context.mounted) return;
-    if (selected == null && chat.agent == null) return;
-    if (selected?.id == chat.agent?.id) return;
-    await chat.setAgent(selected);
+    if (selected == null && chat.skill == null) return;
+    if (selected?.id == chat.skill?.id) return;
+    await chat.setSkill(selected);
   }
 
   Future<void> _confirmDelete(
@@ -450,15 +455,14 @@ class _ModelSwitchButton extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.tune,
-              size: 16, color: Theme.of(context).colorScheme.onPrimary),
+          Icon(Icons.tune, size: 16, color: _appBarForeground(context)),
           const SizedBox(width: 4),
           Flexible(
             child: Text(
               chat.model,
               style: TextStyle(
                 fontSize: 12,
-                color: Theme.of(context).colorScheme.onPrimary,
+                color: _appBarForeground(context),
               ),
               overflow: TextOverflow.ellipsis,
             ),

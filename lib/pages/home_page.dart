@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/agent.dart' as agent_model;
-import '../providers/agent_provider.dart';
+import '../models/skill.dart' as skill_model;
 import '../providers/sessions_provider.dart';
+import '../providers/skill_provider.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import 'chat_page.dart';
@@ -26,8 +26,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     context.read<SessionsProvider>().loadSessions();
-    // 启动即加载 Agent 列表：否则会话卡片的 agent 图标在首次懒加载前显示兜底 emoji
-    context.read<AgentProvider>().load();
+    // 启动即加载 Skill 列表：否则会话卡片的 Skill 图标在首次懒加载前显示兜底 emoji
+    context.read<SkillProvider>().load();
   }
 
   @override
@@ -46,20 +46,20 @@ class _HomePageState extends State<HomePage> {
   Future<void> _newChat() async {
     Haptics.light();
     _unfocusSearch();
-    // 选 Agent + 确认（null = 默认助手）
-    final agentId = await _showAgentPicker();
-    if (agentId == _agentPickerCancelled || !mounted) return;
+    // 选 Skill + 确认（null = 默认助手）
+    final skillId = await _showSkillPicker();
+    if (skillId == _skillPickerCancelled || !mounted) return;
 
     final settings = context.read<SettingsService>();
     // 记录最近使用（LRU），供下次选择页展示
-    if (agentId != null) {
-      await settings.touchRecentAgent(agentId);
+    if (skillId != null) {
+      await settings.touchRecentSkill(skillId);
       if (!mounted) return;
     }
     final sessions = context.read<SessionsProvider>();
     final session = await sessions.createSession(
       settings.defaultEffortValue,
-      agentId: agentId,
+      skillId: skillId,
     );
     if (!mounted) return;
     await Navigator.push(
@@ -69,27 +69,27 @@ class _HomePageState extends State<HomePage> {
     sessions.refresh();
   }
 
-  /// Agent 选择弹窗：搜索 + 最近使用（3 个）+ 全部折叠；返回 agentId，取消返回哨兵值
-  static const _agentPickerCancelled = '__cancelled__';
+  /// Skill 选择弹窗：搜索 + 最近使用（3 个）+ 全部折叠；返回 skillId，取消返回哨兵值
+  static const _skillPickerCancelled = '__cancelled__';
 
-  Future<String?> _showAgentPicker() async {
-    final agents = context.read<AgentProvider>();
-    if (!agents.loaded) await agents.load();
+  Future<String?> _showSkillPicker() async {
+    final skills = context.read<SkillProvider>();
+    if (!skills.loaded) await skills.load();
 
-    if (!mounted) return _agentPickerCancelled;
+    if (!mounted) return _skillPickerCancelled;
     final result = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => _AgentPickerSheet(
-        agents: agents,
-        recentIds: context.read<SettingsService>().recentAgentIds,
+      builder: (context) => _SkillPickerSheet(
+        skills: skills,
+        recentIds: context.read<SettingsService>().recentSkillIds,
         onSelected: (id) => Navigator.pop(context, id),
       ),
     );
-    return result ?? _agentPickerCancelled;
+    return result ?? _skillPickerCancelled;
   }
 
   Future<void> _openChat(String id) async {
@@ -234,7 +234,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sessions = context.watch<SessionsProvider>();
-    final agentsProvider = context.watch<AgentProvider>();
+    final skillsProvider = context.watch<SkillProvider>();
 
     // 按标题过滤（不区分大小写）
     final allSessions = sessions.sessions;
@@ -361,8 +361,8 @@ class _HomePageState extends State<HomePage> {
                                   'low' => '轻量',
                                   _ => s.effort,
                                 };
-                                final agent =
-                                    agentsProvider.byId(s.agentId);
+                                final skill =
+                                    skillsProvider.byId(s.skillId);
                                 return Card(
                                   elevation: 0,
                                   color: theme
@@ -373,7 +373,7 @@ class _HomePageState extends State<HomePage> {
                                         const EdgeInsets.symmetric(
                                             horizontal: 16, vertical: 4),
                                     leading: Text(
-                                      agent?.icon ?? '💬',
+                                      skill?.icon ?? '💬',
                                       style: const TextStyle(fontSize: 22),
                                     ),
                                     title: Text(
@@ -382,7 +382,7 @@ class _HomePageState extends State<HomePage> {
                                       overflow: TextOverflow.ellipsis,
                                     ),
                                     subtitle: Text(
-                                      '${agent != null ? '${agent.name} · ' : ''}'
+                                      '${skill != null ? '${skill.name} · ' : ''}'
                                       '$effortText · ${_formatTime(s.updatedAt)}',
                                       style: theme.textTheme.bodySmall,
                                     ),
@@ -400,32 +400,32 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/// Agent 选择弹窗内容：搜索 + 最近使用 + 全部折叠
-class _AgentPickerSheet extends StatefulWidget {
-  const _AgentPickerSheet({
-    required this.agents,
+/// Skill 选择弹窗内容：搜索 + 最近使用 + 全部折叠
+class _SkillPickerSheet extends StatefulWidget {
+  const _SkillPickerSheet({
+    required this.skills,
     required this.recentIds,
     required this.onSelected,
   });
 
-  final AgentProvider agents;
+  final SkillProvider skills;
 
-  /// 最近使用的 agentId（index 0 = 最近）
+  /// 最近使用的 skillId（index 0 = 最近）
   final List<String> recentIds;
   final ValueChanged<String> onSelected;
 
   @override
-  State<_AgentPickerSheet> createState() => _AgentPickerSheetState();
+  State<_SkillPickerSheet> createState() => _SkillPickerSheetState();
 }
 
-class _AgentPickerSheetState extends State<_AgentPickerSheet> {
+class _SkillPickerSheetState extends State<_SkillPickerSheet> {
   String _query = '';
   bool _showAll = false;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final all = widget.agents.agents;
+    final all = widget.skills.skills;
 
     // 搜索过滤
     final q = _query.trim().toLowerCase();
@@ -437,15 +437,15 @@ class _AgentPickerSheetState extends State<_AgentPickerSheet> {
                 a.description.toLowerCase().contains(q))
             .toList();
 
-    // 最近使用：按 LRU 顺序取存在的 Agent；无历史时随机取 3 个
-    final recent = <agent_model.Agent>[];
+    // 最近使用：按 LRU 顺序取存在的 Skill；无历史时随机取 3 个
+    final recent = <skill_model.Skill>[];
     if (widget.recentIds.isEmpty) {
       recent.addAll(all);
       recent.shuffle();
       if (recent.length > 3) recent.length = 3;
     } else {
       for (final id in widget.recentIds) {
-        final a = widget.agents.byId(id);
+        final a = widget.skills.byId(id);
         if (a != null) recent.add(a);
       }
     }
@@ -457,7 +457,7 @@ class _AgentPickerSheetState extends State<_AgentPickerSheet> {
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Text('选择 Agent 开始新对话',
+            child: Text('选择 Skill 开始新对话',
                 style: theme.textTheme.titleMedium),
           ),
           // 搜索框
@@ -468,7 +468,7 @@ class _AgentPickerSheetState extends State<_AgentPickerSheet> {
               onChanged: (v) => setState(() => _query = v),
               decoration: InputDecoration(
                 isDense: true,
-                hintText: '搜索 Agent',
+                hintText: '搜索 Skill',
                 prefixIcon: const Icon(Icons.search, size: 20),
                 contentPadding: const EdgeInsets.symmetric(
                     horizontal: 12, vertical: 10),
@@ -525,7 +525,7 @@ class _AgentPickerSheetState extends State<_AgentPickerSheet> {
                   ),
                   const Divider(height: 16),
                 ],
-                // ===== 全部 Agent =====
+                // ===== 全部 Skill =====
                 if (q.isEmpty)
                   ListTile(
                     leading: Icon(
@@ -534,7 +534,7 @@ class _AgentPickerSheetState extends State<_AgentPickerSheet> {
                           : Icons.expand_more,
                       color: theme.colorScheme.primary,
                     ),
-                    title: Text('全部 Agent（${all.length}）',
+                    title: Text('全部 Skill（${all.length}）',
                         style: theme.textTheme.titleSmall),
                     onTap: () {
                       Haptics.light();
