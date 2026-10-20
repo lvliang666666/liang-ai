@@ -21,8 +21,8 @@ void main() {
       ));
 
   group('工具目录', () {
-    test('注册表含全部 26 个内置工具', () {
-      expect(registry.length, 26);
+    test('注册表含全部 29 个内置工具', () {
+      expect(registry.length, 29);
       expect(
         registry.names,
         containsAll([
@@ -51,6 +51,9 @@ void main() {
           'uuid_generate',
           'base64_codec',
           'hash_text',
+          'memory_save',
+          'memory_search',
+          'memory_forget',
         ]),
       );
     });

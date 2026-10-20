@@ -7,6 +7,7 @@ import '../providers/provider_provider.dart';
 import '../providers/skill_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
+import 'memory_page.dart';
 import 'skill_editor_page.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
@@ -24,7 +25,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'Skill 管理', 'API 配置', '对话参数', '说明'];
+  static const _tabs = ['外观', 'Skill 管理', '记忆管理', 'API 配置', '对话参数', '说明'];
 
   late final SettingsService _settings;
   late final PageController _pageController;
@@ -119,6 +120,7 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 _buildAppearanceTab(theme),
                 _buildSkillTab(theme),
+                const MemoryPanel(),
                 _buildApiTab(theme),
                 _buildParamsTab(theme),
                 _buildAboutTab(theme),
