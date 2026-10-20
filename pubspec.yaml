@@ -59,6 +59,8 @@ dependencies:
   # 内置工具：设备信息 + 电量
   device_info_plus: ^13.3.0
   battery_plus: ^7.0.1
+  # 内置工具：哈希计算（hash_text）
+  crypto: ^3.0.6
 
 dev_dependencies:
   flutter_test:

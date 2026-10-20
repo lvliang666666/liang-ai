@@ -139,10 +139,27 @@ void main() {
   });
 
   group('内置工具', () {
-    test('注册表含 3 个内置工具', () {
+    test('注册表含全部内置工具', () {
       final registry = ToolRegistry()..registerAll(builtinTools);
-      expect(registry.length, 3);
-      expect(registry.names, containsAll(['get_current_time', 'get_device_info', 'calculate']));
+      expect(registry.length, 14);
+      expect(
+          registry.names,
+          containsAll([
+            'get_current_time',
+            'get_device_info',
+            'calculate',
+            'date_calc',
+            'unit_convert',
+            'base_convert',
+            'math_function',
+            'random_number',
+            'random_pick',
+            'dice_flip',
+            'text_stats',
+            'uuid_generate',
+            'base64_codec',
+            'hash_text',
+          ]));
     });
 
     test('get_current_time 返回日期时间格式', () async {
