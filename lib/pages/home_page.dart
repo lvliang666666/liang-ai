@@ -749,10 +749,6 @@ class _HomeInputBar extends StatelessWidget {
     // 推理档位：聊天态取会话值，空闲态取预选值（两态都显示）
     final effortValue = inChat ? chat!.session.effort : selectedEffort;
     final effortLabel = effortLabels[effortValue]?.$1 ?? effortValue;
-    // 输入框占位：具体 agent 时显示「给 xx 发送消息」
-    final hintText = currentSkill != null
-        ? '给 ${currentSkill.name} 发送消息'
-        : '给 Liang AI 发送消息';
 
     return SafeArea(
       top: false,
@@ -806,23 +802,20 @@ class _HomeInputBar extends StatelessWidget {
                   child: TextField(
                     controller: controller,
                     focusNode: focusNode,
-                    maxLines: null,
+                    // 默认一行，内容多时向上扩展，最多 5 行
+                    maxLines: 5,
                     minLines: 1,
                     // 仅点击输入框才聚焦（不自动请求焦点，防状态切换乱弹键盘）
                     canRequestFocus: true,
-                    textInputAction: TextInputAction.send,
-                    onSubmitted: (_) => _send(context),
+                    textInputAction: TextInputAction.newline,
                     style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
-                    decoration: InputDecoration(
-                      hintText: hintText,
+                    decoration: const InputDecoration(
                       isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
+                      contentPadding: EdgeInsets.symmetric(
                           horizontal: 14, vertical: 10),
                       filled: true,
-                      fillColor: theme.colorScheme.surfaceContainerHighest
-                          .withValues(alpha: 0.5),
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(22),
+                        borderRadius: BorderRadius.all(Radius.circular(22)),
                         borderSide: BorderSide.none,
                       ),
                     ),
