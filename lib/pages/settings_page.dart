@@ -7,6 +7,7 @@ import '../providers/provider_provider.dart';
 import '../providers/skill_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/settings_service.dart';
+import 'memory_page.dart';
 import 'skill_editor_page.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
@@ -312,6 +313,25 @@ class _SettingsPageState extends State<SettingsPage> {
                           ),
                         )),
                     const SizedBox(height: 8),
+                    // 记忆管理入口（全局记忆池与 Skill 体系并列）
+                    Card(
+                      elevation: 0,
+                      color: theme.colorScheme.surfaceContainerHighest
+                          .withValues(alpha: 0.5),
+                      child: ListTile(
+                        leading: Icon(Icons.psychology_outlined,
+                            color: theme.colorScheme.primary),
+                        title: const Text('记忆管理'),
+                        subtitle: const Text('AI 跨会话记住的偏好与事实'),
+                        trailing: const Icon(Icons.chevron_right),
+                        onTap: () {
+                          Haptics.light();
+                          _unfocusSkillSearch();
+                          _openMemoryPage(context);
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     Text(
                       '· 内置 Skill 不可删除，可复制一份后修改\n'
                       '· Skill = 提示词 + 可用工具 + 参数预设的组合包\n'
@@ -326,6 +346,15 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ],
     );
+  }
+
+  /// 记忆管理页
+  Future<void> _openMemoryPage(BuildContext context) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const MemoryPage()),
+    );
+    if (mounted) _unfocusSkillSearch();
   }
 
   /// 复制内置 Skill：先确认再执行
