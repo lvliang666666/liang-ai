@@ -197,37 +197,14 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 新增对话：预设弹窗（预选 skill/model）→ 确认后进入空闲态（右上角 + 按钮）
+  /// 新增对话：预设弹窗（预选 skill/model）→ 仅点「开始新对话」才退出当前聊天态
+  ///
+  /// 两态统一：都直接弹预设弹窗（聊天态初始值取当前会话配置，新对话从
+  /// 当前设置延续）；点遮罩关闭/取消 = 回到点新建之前的状态，
+  /// 不退出聊天、不改预选。
   Future<void> _newChat() async {
     Haptics.light();
     _unfocus();
-    // 聊天态先确认退出（与删除会话弹窗同款样式）
-    if (_chat != null) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('打开新对话'),
-          content: const Text('当前对话已自动保存，可在左侧列表中找回。确定打开新对话吗？'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Haptics.light();
-                Navigator.pop(context, false);
-              },
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                Haptics.light();
-                Navigator.pop(context, true);
-              },
-              child: const Text('确定'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true || !mounted) return;
-    }
 
     // 预设交互页：预选本次新对话的 skill / model（力度不加，走 tags 预选）
     final skillsProvider = context.read<SkillProvider>();
@@ -237,6 +214,7 @@ class _HomePageState extends State<HomePage> {
     if (!providersProvider.loaded) await providersProvider.load();
     if (!mounted) return;
 
+    final chat = _chat;
     final preset = await showModalBottomSheet<(skill_model.Skill?, (ProviderProfile, String)?)>(
       context: context,
       isScrollControlled: true,
@@ -247,35 +225,35 @@ class _HomePageState extends State<HomePage> {
         skills: skillsProvider,
         providers: providersProvider,
         recentIds: context.read<SettingsService>().recentSkillIds,
-        initialSkill: _selectedSkill,
-        initialModel: _selectedModel,
+        initialSkill: chat?.skill ?? _selectedSkill,
+        initialModel: chat != null ? (chat.profile, chat.model) : _selectedModel,
       ),
     );
-    if (!mounted) return;
-    if (preset != null) {
-      // 确认：应用预选（null skill = 默认助手；null model = 默认供应商模型）
-      final (skill, model) = preset;
-      setState(() {
-        _selectedSkill = skill?.id == '__default__' ? null : skill;
-        _selectedModel = model;
-      });
-      if (_selectedSkill != null) {
-        await context.read<SettingsService>().touchRecentSkill(_selectedSkill!.id);
-      }
-    }
-    // 点遮罩关闭：保留当前预选不变
+    // 点遮罩关闭/取消：什么都不做，保持点新建之前的状态
+    if (preset == null || !mounted) return;
 
-    final chat = _chat;
-    if (chat != null) {
-      if (chat.isStreaming) chat.stopGeneration();
+    // 仅确认「开始新对话」才应用预选并退出当前聊天态
+    final (skill, model) = preset;
+    setState(() {
+      _selectedSkill = skill?.id == '__default__' ? null : skill;
+      _selectedModel = model;
+    });
+    if (_selectedSkill != null) {
+      await context.read<SettingsService>().touchRecentSkill(_selectedSkill!.id);
+      if (!mounted) return;
+    }
+
+    final current = _chat;
+    if (current != null) {
+      if (current.isStreaming) current.stopGeneration();
       // 先置空再 dispose：避免 dispose 后 provider 仍被 UI 引用
       setState(() {
         _chat = null;
         _lastDisplayCount = 0;
       });
-      chat.dispose();
+      current.dispose();
     }
-    if (mounted) context.read<SessionsProvider>().refresh();
+    context.read<SessionsProvider>().refresh();
   }
 
   /// 抽屉点历史会话：主页切换到该会话（聊天态）
