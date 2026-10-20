@@ -1,17 +1,28 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_session.dart';
+import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart' as skill_model;
 import '../providers/chat_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
+import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
+import '../services/attachment_service.dart';
 import '../services/database_service.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
+import '../widgets/attachment_thumbnail.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
 import '../widgets/message_bubble.dart';
@@ -109,7 +120,9 @@ class _HomePageState extends State<HomePage> {
 
   /// 打开即聊：发送首条消息时才创建会话，主页原地进入聊天态
   Future<void> _startChat(String text,
-      {String? skillId, (ProviderProfile, String)? modelPick}) async {
+      {String? skillId,
+      (ProviderProfile, String)? modelPick,
+      List<MessageAttachment> attachments = const []}) async {
     Haptics.light();
     _unfocus();
 
@@ -128,13 +141,15 @@ class _HomePageState extends State<HomePage> {
     );
     if (!mounted) return;
 
-    // 主页原地进入聊天态并自动发送首条消息
-    await _enterChat(session, initialMessage: text);
+    // 主页原地进入聊天态并自动发送首条消息（附件随首条消息发出）
+    await _enterChat(session,
+        initialMessage: text, initialAttachments: attachments);
   }
 
   /// 进入聊天态：构建 ChatProvider 并加载消息
   Future<void> _enterChat(ChatSession session,
-      {String? initialMessage}) async {
+      {String? initialMessage,
+      List<MessageAttachment> initialAttachments = const []}) async {
     // 已有聊天态先释放（切换会话）：先置空再 dispose
     final old = _chat;
     _chat = null;
@@ -170,10 +185,13 @@ class _HomePageState extends State<HomePage> {
       _lastDisplayCount = 0;
     });
 
-    // 自动发送首条消息（等首帧完成）
-    final initial = initialMessage;
-    if (initial != null && initial.isNotEmpty) {
+    // 自动发送首条消息（等首帧完成）；附件先入队再发送
+    final initial = initialMessage ?? '';
+    if (initial.isNotEmpty || initialAttachments.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        for (final att in initialAttachments) {
+          chat.addAttachment(att);
+        }
         chat.sendMessage(initial);
       });
     }
@@ -257,7 +275,7 @@ class _HomePageState extends State<HomePage> {
       });
       chat.dispose();
     }
-    context.read<SessionsProvider>().refresh();
+    if (mounted) context.read<SessionsProvider>().refresh();
   }
 
   /// 抽屉点历史会话：主页切换到该会话（聊天态）
@@ -696,12 +714,15 @@ class _HomePageState extends State<HomePage> {
       _chat?.model ?? _selectedModel?.$2 ?? '默认模型';
 }
 
-/// 主页底部输入区：tags 行（agent/model/effort）+ 输入框 + 发送键
+/// 主页底部输入区：tags 行（agent/model/effort）+ 输入框 + 附件 + 发送键
 ///
 /// 双态共用：
 /// - 空闲态（chat == null）：tags 显示预选值，发送 = 创建会话进入聊天态
 /// - 聊天态（chat != null）：tags 显示会话绑定值，发送 = ChatProvider.sendMessage
-class _HomeInputBar extends StatelessWidget {
+///
+/// 附件：聊天态直接入 ChatProvider 待发队列；空闲态暂存本组件，
+/// 随首条消息经 onSendIdle 传入新会话。
+class _HomeInputBar extends StatefulWidget {
   const _HomeInputBar({
     required this.controller,
     required this.focusNode,
@@ -726,28 +747,239 @@ class _HomeInputBar extends StatelessWidget {
   /// 空闲态预选推理档位（effort tag 空闲态也显示）
   final String selectedEffort;
 
-  /// 空闲态发送（创建会话）
+  /// 空闲态发送（创建会话），附件随首条消息传入
   final void Function(String text,
-      {String? skillId, (ProviderProfile, String)? modelPick}) onSendIdle;
+      {String? skillId,
+      (ProviderProfile, String)? modelPick,
+      List<MessageAttachment> attachments}) onSendIdle;
   final VoidCallback onPickSkill;
   final VoidCallback onPickModel;
   final VoidCallback onPickEffort;
 
   @override
+  State<_HomeInputBar> createState() => _HomeInputBarState();
+}
+
+class _HomeInputBarState extends State<_HomeInputBar> {
+  final _picker = ImagePicker();
+
+  /// 空闲态暂存的待发附件（聊天态附件直接进 ChatProvider）
+  List<MessageAttachment> _idleAttachments = [];
+
+  /// 文件附件沙箱目录异步初始化（就绪前选取的文件不保存原文件）
+  AttachmentService _attachmentService = const AttachmentService();
+
+  @override
+  void initState() {
+    super.initState();
+    _initAttachmentStorage();
+  }
+
+  /// 文件附件沙箱目录（应用文档目录/attachments）
+  Future<void> _initAttachmentStorage() async {
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      if (mounted) {
+        setState(() {
+          _attachmentService = AttachmentService(
+            storageDir: Directory(p.join(docs.path, 'attachments')),
+          );
+        });
+      }
+    } catch (_) {
+      // 目录不可用时保持默认（不保存原文件，仅提取文本）
+    }
+  }
+
+  /// 当前生效的待发附件（聊天态取 provider 队列，空闲态取本地暂存）
+  List<MessageAttachment> get _pendingAttachments {
+    final chat = widget.chat;
+    if (chat != null) return chat.pendingAttachments;
+    return _idleAttachments;
+  }
+
+  bool get _hasPendingAttachments => _pendingAttachments.isNotEmpty;
+
+  /// 添加附件（图片 ≤3、文件 ≤3，超限返回 false）
+  bool _addAttachment(MessageAttachment attachment) {
+    final chat = widget.chat;
+    if (chat != null) return chat.addAttachment(attachment);
+    final images = _idleAttachments.where((a) => a.isImage).length;
+    final files = _idleAttachments.where((a) => a.isFile).length;
+    if (attachment.isImage && images >= 3) return false;
+    if (attachment.isFile && files >= 3) return false;
+    _idleAttachments = [..._idleAttachments, attachment];
+    return true;
+  }
+
+  /// 移除待发附件
+  void _removeAttachment(MessageAttachment attachment) {
+    final chat = widget.chat;
+    if (chat != null) {
+      chat.removeAttachment(attachment);
+      return;
+    }
+    setState(() {
+      _idleAttachments = [
+        for (final a in _idleAttachments)
+          if (!identical(a, attachment)) a,
+      ];
+    });
+  }
+
+  /// 附件来源选择：拍照 / 相册 / 文件
+  Future<void> _pickAttachment() async {
+    Haptics.light();
+    // 打开弹层前收起键盘，避免弹层关闭时焦点自动回到输入框
+    FocusManager.instance.primaryFocus?.unfocus();
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('添加附件'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('拍照'),
+              onTap: () => Navigator.pop(context, 'camera'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_outlined),
+              title: const Text('相册（最多 3 张）'),
+              onTap: () => Navigator.pop(context, 'gallery'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('文件（txt / md / pdf，最多 3 个）'),
+              onTap: () => Navigator.pop(context, 'file'),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+
+    try {
+      switch (action) {
+        case 'camera':
+          final xfile = await _picker.pickImage(
+            source: ImageSource.camera,
+            maxWidth: 1024,
+            maxHeight: 1024,
+            imageQuality: 85,
+          );
+          if (xfile == null) return;
+          final bytes = await xfile.readAsBytes();
+          _addOrWarn(
+              _attachmentService.imageAttachment(xfile.name, bytes));
+        case 'gallery':
+          final xfile = await _picker.pickImage(
+            source: ImageSource.gallery,
+            maxWidth: 1024,
+            maxHeight: 1024,
+            imageQuality: 85,
+          );
+          if (xfile == null) return;
+          final bytes = await xfile.readAsBytes();
+          _addOrWarn(
+              _attachmentService.imageAttachment(xfile.name, bytes));
+        case 'file':
+          final result = await _pickFileWithFallback();
+          if (result == null) return;
+          final (name, bytes) = result;
+          _addOrWarn(await _attachmentService.fileAttachment(name, bytes));
+      }
+    } on AttachmentException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(e.message), duration: const Duration(seconds: 2)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('添加附件失败'), duration: Duration(seconds: 2)),
+        );
+      }
+    }
+  }
+
+  void _addOrWarn(MessageAttachment attachment) {
+    final ok = _addAttachment(attachment);
+    if (!ok && mounted) {
+      Haptics.medium();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('图片最多 3 张、文件最多 3 个'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  /// 文件选取：file_picker 13.x 静态 API（真机）；环境不支持时提示
+  Future<(String, Uint8List)?> _pickFileWithFallback() async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['txt', 'md', 'pdf'],
+      );
+      if (result.isEmpty) return null;
+      final f = result.single;
+      final bytes = await f.readAsBytes();
+      return (f.name, bytes);
+    } on PlatformException {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('当前环境不支持文件选择'),
+              duration: Duration(seconds: 2)),
+        );
+      }
+      return null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final chat = widget.chat;
     final inChat = chat != null;
     final isStreaming = chat?.isStreaming ?? false;
+    // 主题圆角：Minecraft（0）等硬边框风格下输入框不再套圆角胶囊外框
+    final radius = context.watch<ThemeProvider>().cornerRadius;
+    final rounded = radius > 0;
+
+    // 附件按钮显隐：供应商支持视觉能力（空闲态无会话，默认显示）
+    final showAttachmentButton = inChat ? chat.supportsVision : true;
+    final pending = _pendingAttachments;
+
+    // 豆包式右侧动作区：流式中显示停止键；有文字/待发附件显示发送键（覆盖 +）；
+    // 否则只显示 +
+    final hasText = widget.controller.text.trim().isNotEmpty;
+    final showSend = isStreaming || hasText || pending.isNotEmpty;
+    final showPlus = !isStreaming && !hasText && showAttachmentButton;
 
     // tags 配置：聊天态取会话绑定值，空闲态取预选值
-    final currentSkill = inChat ? chat!.skill : selectedSkill;
+    final currentSkill = inChat ? chat.skill : widget.selectedSkill;
     // label 只放名字（icon 由 tag 的 emoji/icon 字段单独渲染，避免重复）
     final skillLabel = currentSkill != null ? currentSkill.name : '默认助手';
     // agent tag 图标：具体 agent 用其 emoji，默认助手用内置 icon
     final skillEmoji = currentSkill?.icon;
-    final modelLabel = inChat ? chat!.model : (selectedModel?.$2 ?? '默认模型');
+    final modelLabel =
+        inChat ? chat.model : (widget.selectedModel?.$2 ?? '默认模型');
     // 推理档位：聊天态取会话值，空闲态取预选值（两态都显示）
-    final effortValue = inChat ? chat!.session.effort : selectedEffort;
+    final effortValue = inChat ? chat.session.effort : widget.selectedEffort;
     final effortLabel = effortLabels[effortValue]?.$1 ?? effortValue;
 
     return SafeArea(
@@ -761,91 +993,122 @@ class _HomeInputBar extends StatelessWidget {
               emoji: skillEmoji,
               icon: skillEmoji == null ? Icons.smart_toy_outlined : null,
               label: skillLabel,
-              onTap: onPickSkill,
+              onTap: widget.onPickSkill,
             ),
             ChatTag(
               icon: Icons.tune,
               label: modelLabel,
-              onTap: onPickModel,
+              onTap: widget.onPickModel,
             ),
             ChatTag(
               icon: Icons.bolt,
               label: effortLabel,
-              onTap: onPickEffort,
+              onTap: widget.onPickEffort,
             ),
           ]),
           const SizedBox(height: 6),
-          // 浮起输入框
+          // 浮起输入框（圆角随主题：Minecraft 直角 + 无外框，避免双框）
           Container(
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
             padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
             decoration: BoxDecoration(
               color: theme.colorScheme.surface,
-              borderRadius: BorderRadius.circular(28),
-              border: Border.all(
-                color:
-                    theme.colorScheme.outlineVariant.withValues(alpha: 0.5),
-                width: 0.5,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: theme.colorScheme.shadow.withValues(alpha: 0.08),
-                  blurRadius: 12,
-                  offset: const Offset(0, 2),
-                ),
-              ],
+              borderRadius: BorderRadius.circular(rounded ? 28 : 0),
+              border: rounded
+                  ? Border.all(
+                      color: theme.colorScheme.outlineVariant
+                          .withValues(alpha: 0.5),
+                      width: 0.5,
+                    )
+                  : null,
+              boxShadow: rounded
+                  ? [
+                      BoxShadow(
+                        color:
+                            theme.colorScheme.shadow.withValues(alpha: 0.08),
+                        blurRadius: 12,
+                        offset: const Offset(0, 2),
+                      ),
+                    ]
+                  : null,
             ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.center,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: controller,
-                    focusNode: focusNode,
-                    // 默认一行，内容多时向上扩展，最多 5 行
-                    maxLines: 5,
-                    minLines: 1,
-                    // 仅点击输入框才聚焦（不自动请求焦点，防状态切换乱弹键盘）
-                    canRequestFocus: true,
-                    textInputAction: TextInputAction.newline,
-                    style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 10),
-                      filled: true,
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.all(Radius.circular(22)),
-                        borderSide: BorderSide.none,
+                // 待发附件预览条
+                if (pending.isNotEmpty)
+                  _HomeAttachmentPreview(
+                    pending: pending,
+                    onRemove: _removeAttachment,
+                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: widget.controller,
+                        focusNode: widget.focusNode,
+                        // 默认一行，内容多时向上扩展，最多 5 行
+                        maxLines: 5,
+                        minLines: 1,
+                        // 仅点击输入框才聚焦（不自动请求焦点，防状态切换乱弹键盘）
+                        canRequestFocus: true,
+                        textInputAction: TextInputAction.newline,
+                        onChanged: (_) => setState(() {}),
+                        style:
+                            theme.textTheme.bodyLarge?.copyWith(height: 1.6),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
+                          filled: true,
+                          fillColor: theme
+                              .colorScheme.surfaceContainerHighest
+                              .withValues(alpha: 0.5),
+                          border: OutlineInputBorder(
+                            borderRadius:
+                                BorderRadius.circular(radius + 6),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
+                    const SizedBox(width: 4),
+                    // 右侧动作区：+ 与 发送/停止
+                    if (showPlus)
+                      IconButton(
+                        onPressed: _pickAttachment,
+                        icon: Icon(Icons.add_circle_outline,
+                            size: 28, color: theme.colorScheme.onSurfaceVariant),
+                        tooltip: '添加附件',
+                      ),
+                    if (isStreaming)
+                      IconButton.filled(
+                        onPressed: () {
+                          Haptics.medium();
+                          chat!.stopGeneration();
+                        },
+                        style: IconButton.styleFrom(
+                          backgroundColor: theme.colorScheme.errorContainer,
+                        ),
+                        icon: Icon(Icons.stop_rounded,
+                            color: theme.colorScheme.onErrorContainer),
+                      )
+                    else if (showSend)
+                      ValueListenableBuilder(
+                        valueListenable: widget.controller,
+                        builder: (context, value, _) {
+                          final canSend = value.text.trim().isNotEmpty ||
+                              _hasPendingAttachments;
+                          return IconButton.filled(
+                            onPressed:
+                                canSend ? () => _send(context) : null,
+                            icon: const Icon(Icons.arrow_upward_rounded),
+                          );
+                        },
+                      ),
+                  ],
                 ),
-                const SizedBox(width: 4),
-                // 发送/停止键
-                if (isStreaming)
-                  IconButton.filled(
-                    onPressed: () {
-                      Haptics.medium();
-                      chat!.stopGeneration();
-                    },
-                    style: IconButton.styleFrom(
-                      backgroundColor: theme.colorScheme.errorContainer,
-                    ),
-                    icon: Icon(Icons.stop_rounded,
-                        color: theme.colorScheme.onErrorContainer),
-                  )
-                else
-                  ValueListenableBuilder(
-                    valueListenable: controller,
-                    builder: (context, value, _) {
-                      final hasText = value.text.trim().isNotEmpty;
-                      return IconButton.filled(
-                        onPressed: hasText ? () => _send(context) : null,
-                        icon: const Icon(Icons.arrow_upward_rounded),
-                      );
-                    },
-                  ),
               ],
             ),
           ),
@@ -855,22 +1118,108 @@ class _HomeInputBar extends StatelessWidget {
   }
 
   void _send(BuildContext context) {
-    final text = controller.text.trim();
-    if (text.isEmpty) return;
+    final text = widget.controller.text.trim();
+    final pending = _pendingAttachments;
+    if (text.isEmpty && pending.isEmpty) return;
+    final chat = widget.chat;
     if (chat != null) {
-      // 聊天态：直接发
-      chat!.sendMessage(text);
+      // 聊天态：附件已在 provider 队列，直接发
+      chat.sendMessage(text);
     } else {
-      // 空闲态：创建会话进入聊天态
-      onSendIdle(
+      // 空闲态：创建会话进入聊天态，附件随首条消息传入
+      final attachments = _idleAttachments;
+      setState(() => _idleAttachments = []);
+      widget.onSendIdle(
         text,
-        skillId: selectedSkill?.id,
-        modelPick: selectedModel,
+        skillId: widget.selectedSkill?.id,
+        modelPick: widget.selectedModel,
+        attachments: attachments,
       );
     }
-    controller.clear();
+    widget.controller.clear();
     // 发送后收起键盘（微信式：发送即收起，不残留焦点）
     FocusManager.instance.primaryFocus?.unfocus();
+  }
+}
+
+/// 主页待发附件预览条（横向滚动缩略图 + 文件卡片）
+class _HomeAttachmentPreview extends StatelessWidget {
+  const _HomeAttachmentPreview({required this.pending, required this.onRemove});
+
+  final List<MessageAttachment> pending;
+  final void Function(MessageAttachment) onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      height: 72,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: pending.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final att = pending[index];
+          return Stack(
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: colorScheme.outlineVariant, width: 0.5),
+                ),
+                child: att.isImage
+                    ? AttachmentThumbnail(
+                        base64: att.base64Data ?? '',
+                        size: 72,
+                        borderRadius: 10,
+                      )
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.description_outlined,
+                              size: 26, color: colorScheme.primary),
+                          const SizedBox(height: 4),
+                          Text(
+                            att.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 9),
+                          ),
+                        ],
+                      ),
+              ),
+              // 移除按钮
+              Positioned(
+                top: 0,
+                right: 0,
+                child: GestureDetector(
+                  onTap: () {
+                    Haptics.light();
+                    onRemove(att);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: colorScheme.outlineVariant, width: 0.5),
+                    ),
+                    child: Icon(Icons.close,
+                        size: 14, color: colorScheme.onSurfaceVariant),
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
 }
 
