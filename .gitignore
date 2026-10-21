@@ -52,3 +52,6 @@ android/build/
 # - releases/：发版 APK 归档（体积大，二进制产物不入库，按 tag 可随时重建）
 /版本管理规范/
 /releases/
+
+# 验收台账：本机协作过程记录（验收方式含本机路径/实例操作），个人资产不入公开仓库
+/ACCEPTANCE.md
