@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -176,6 +177,18 @@ class _HomePageState extends State<HomePage> {
     // 显示）；新建会话（_startChat）无旧态，直接走
     final old = isSwitch ? _chat : null;
 
+    // 切走前把输入框内容存为旧会话草稿（I6 会话独立草稿）
+    if (old != null) {
+      final draft = _inputController.text;
+      final settings = context.read<SettingsService>();
+      if (draft.trim().isEmpty) {
+        await settings.clearDraft(old.session.id);
+      } else {
+        await settings.setDraft(old.session.id, draft);
+      }
+      _inputController.clear();
+    }
+
     final db = DatabaseService.instance;
     final s = await db.getSession(session.id);
     final profiles = await db.getAllProviders();
@@ -217,6 +230,22 @@ class _HomePageState extends State<HomePage> {
       _chat = chat;
       _lastDisplayCount = 0;
     });
+
+    // 恢复目标会话草稿（非空时轻提示，微信式）
+    final draft = context.read<SettingsService>().getDraft(session.id);
+    if (draft.isNotEmpty && mounted) {
+      _inputController.text = draft;
+      _inputController.selection =
+          TextSelection.collapsed(offset: draft.length);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text('已恢复该会话未发送的输入'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+    }
 
     // 自动发送首条消息（等首帧完成）；附件先入队再发送
     final initial = initialMessage ?? '';
@@ -279,12 +308,28 @@ class _HomePageState extends State<HomePage> {
     final current = _chat;
     if (current != null) {
       if (current.isStreaming) current.stopGeneration();
+      // 退出聊天态前存当前会话草稿（I6 会话独立草稿）
+      final draft = _inputController.text;
+      final settings = context.read<SettingsService>();
+      if (draft.trim().isEmpty) {
+        await settings.clearDraft(current.session.id);
+      } else {
+        await settings.setDraft(current.session.id, draft);
+      }
+      _inputController.clear();
       // 先置空再 dispose：避免 dispose 后 provider 仍被 UI 引用
       setState(() {
         _chat = null;
         _lastDisplayCount = 0;
       });
       current.dispose();
+    }
+    // 空闲态恢复新对话草稿（上次在主页打了字没发出去的场景）
+    final idleDraft = context.read<SettingsService>().idleDraft;
+    if (idleDraft.isNotEmpty && mounted) {
+      _inputController.text = idleDraft;
+      _inputController.selection =
+          TextSelection.collapsed(offset: idleDraft.length);
     }
     context.read<SessionsProvider>().refresh();
   }
@@ -323,7 +368,7 @@ class _HomePageState extends State<HomePage> {
           ),
           FilledButton(
             onPressed: () {
-              Haptics.light();
+              Haptics.heavy();
               Navigator.pop(context, true);
             },
             child: const Text('删除'),
@@ -334,6 +379,8 @@ class _HomePageState extends State<HomePage> {
     if (confirmed != true || !mounted) return;
     if (chat.isStreaming) chat.stopGeneration();
     await context.read<SessionsProvider>().deleteSession(chat.session.id);
+    // 会话已删，草稿一并清（I6）
+    await context.read<SettingsService>().clearDraft(chat.session.id);
     if (!mounted) return;
     setState(() => _chat = null);
     chat.dispose();
@@ -393,7 +440,7 @@ class _HomePageState extends State<HomePage> {
           ),
           FilledButton(
             onPressed: () {
-              Haptics.light();
+              Haptics.heavy();
               Navigator.pop(context, true);
             },
             child: const Text('删除'),
@@ -417,6 +464,8 @@ class _HomePageState extends State<HomePage> {
       return;
     }
     await context.read<SessionsProvider>().deleteSession(id);
+    // 会话已删，草稿一并清（I6）
+    await context.read<SettingsService>().clearDraft(id);
     if (mounted) setState(() => _removingSessionIds.remove(id));
   }
 
@@ -526,6 +575,7 @@ class _HomePageState extends State<HomePage> {
               return;
             }
             final provider = this.context.read<SessionsProvider>();
+            final settings = this.context.read<SettingsService>();
             for (final id in ids) {
               // 当前聊天态会话被删时退出聊天态
               if (_chat?.session.id == id) {
@@ -534,6 +584,8 @@ class _HomePageState extends State<HomePage> {
                 chat.dispose();
               }
               await provider.deleteSession(id);
+              // 会话已删，草稿一并清（I6）
+              await settings.clearDraft(id);
             }
             if (mounted) setState(() => _removingSessionIds.removeAll(ids));
           },
@@ -870,10 +922,30 @@ class _HomeInputBarState extends State<_HomeInputBar> {
   /// 文件附件沙箱目录异步初始化（就绪前选取的文件不保存原文件）
   AttachmentService _attachmentService = const AttachmentService();
 
+  /// 空闲态草稿防抖保存（I6）：停顿 800ms 才落盘，避免每键一写 prefs
+  Timer? _idleDraftDebounce;
+
   @override
   void initState() {
     super.initState();
     _initAttachmentStorage();
+  }
+
+  @override
+  void dispose() {
+    _idleDraftDebounce?.cancel();
+    super.dispose();
+  }
+
+  /// 输入变化：空闲态防抖存草稿（聊天态草稿在切换/发送时机存，不逐键写）
+  void _onInputChanged(String text) {
+    setState(() {});
+    if (widget.chat == null) {
+      _idleDraftDebounce?.cancel();
+      _idleDraftDebounce = Timer(const Duration(milliseconds: 800), () {
+        context.read<SettingsService>().setIdleDraft(text.trim());
+      });
+    }
   }
 
   /// 文件附件沙箱目录（应用文档目录/attachments）
@@ -1174,7 +1246,7 @@ class _HomeInputBarState extends State<_HomeInputBar> {
                         // 仅点击输入框才聚焦（不自动请求焦点，防状态切换乱弹键盘）
                         canRequestFocus: true,
                         textInputAction: TextInputAction.newline,
-                        onChanged: (_) => setState(() {}),
+                        onChanged: _onInputChanged,
                         style:
                             theme.textTheme.bodyLarge?.copyWith(height: 1.6),
                         // 豆包式：圆角主题（默认/DeepSeek）内层完全透明，
@@ -1248,12 +1320,14 @@ class _HomeInputBarState extends State<_HomeInputBar> {
     if (text.isEmpty && pending.isEmpty) return;
     final chat = widget.chat;
     if (chat != null) {
-      // 聊天态：附件已在 provider 队列，直接发
+      // 聊天态：附件已在 provider 队列，直接发；草稿随发送清除（I6）
       chat.sendMessage(text);
+      context.read<SettingsService>().clearDraft(chat.session.id);
     } else {
-      // 空闲态：创建会话进入聊天态，附件随首条消息传入
+      // 空闲态：创建会话进入聊天态，附件随首条消息传入；空闲草稿清除（I6）
       final attachments = _idleAttachments;
       setState(() => _idleAttachments = []);
+      context.read<SettingsService>().setIdleDraft('');
       widget.onSendIdle(
         text,
         skillId: widget.selectedSkill?.id,
@@ -1665,7 +1739,7 @@ class _SessionDrawerState extends State<_SessionDrawer>
           ),
           FilledButton(
             onPressed: () {
-              Haptics.light();
+              Haptics.heavy();
               Navigator.pop(context, true);
             },
             child: const Text('删除'),

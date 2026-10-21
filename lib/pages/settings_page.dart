@@ -399,7 +399,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           FilledButton(
             onPressed: () {
-              Haptics.light();
+              Haptics.heavy();
               Navigator.pop(context, true);
             },
             child: const Text('删除'),

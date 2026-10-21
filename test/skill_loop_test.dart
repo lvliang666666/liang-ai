@@ -14,6 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'chat_provider_test.dart' show MockApiService;
+import 'helpers/test_db.dart';
 
 /// 测试工具：返回固定文本
 class StubTool extends ToolHandler {
@@ -53,59 +54,7 @@ void main() {
   late ChatProvider provider;
 
   setUp(() async {
-    final inMemory = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: 7,
-        onCreate: (d, v) async {
-          await d.execute('''
-            CREATE TABLE sessions (
-              id TEXT PRIMARY KEY, title TEXT NOT NULL,
-              created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-              effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
-              skill_id TEXT, provider_id TEXT, model TEXT
-            )
-          ''');
-          await d.execute('''
-            CREATE TABLE messages (
-              id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
-              content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
-              attachments TEXT NOT NULL DEFAULT '[]',
-              tool_calls TEXT NOT NULL DEFAULT '[]', tool_call_id TEXT,
-              created_at INTEGER NOT NULL
-            )
-          ''');
-          await d.execute(
-            'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
-          );
-          await d.execute('''
-            CREATE TABLE skills (
-              id TEXT PRIMARY KEY, name TEXT NOT NULL,
-              icon TEXT NOT NULL DEFAULT '🤖', description TEXT NOT NULL DEFAULT '',
-              prompt TEXT NOT NULL DEFAULT '', temperature REAL, effort TEXT,
-              tools TEXT, is_builtin INTEGER NOT NULL DEFAULT 0
-            )
-          ''');
-          await d.execute('''
-            CREATE TABLE providers (
-              id TEXT PRIMARY KEY, name TEXT NOT NULL,
-              base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
-              default_model TEXT NOT NULL DEFAULT '',
-              capabilities TEXT NOT NULL DEFAULT '{}',
-              dialect TEXT NOT NULL DEFAULT '{}',
-              is_builtin INTEGER NOT NULL DEFAULT 0
-            )
-          ''');
-          await d.execute('''
-            CREATE TABLE memories (
-              id TEXT PRIMARY KEY, content TEXT NOT NULL, tag TEXT,
-              source_skill TEXT, created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-          ''');
-        },
-      ),
-    );
+    final inMemory = await openTestDb();
     db = DatabaseService.instance;
     await db.initForTest(inMemory);
 

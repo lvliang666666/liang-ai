@@ -8,6 +8,8 @@ import 'package:ai_chat_app/services/tools/builtin_tools.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'helpers/test_db.dart';
+
 /// 记忆工具三件套（memory_save / memory_search / memory_forget）行为测试。
 ///
 /// 经 ToolRegistry.execute 走真实链路（参数 JSON 解析 + 异常转 isError），
@@ -30,24 +32,7 @@ void main() {
 
   setUp(() async {
     db = DatabaseService.instance;
-    final inMemory = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: 7,
-        onCreate: (d, v) async {
-          await d.execute('''
-            CREATE TABLE memories (
-              id TEXT PRIMARY KEY,
-              content TEXT NOT NULL,
-              tag TEXT,
-              source_skill TEXT,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-          ''');
-        },
-      ),
-    );
+    final inMemory = await openTestDb();
     await db.initForTest(inMemory);
     registry = ToolRegistry()..registerAll(builtinTools);
   });
