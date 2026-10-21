@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 ///
 /// DeepSeek 式——切换人格/模型的入口从 AppBar 移到这里，
 /// 每个 tag 显示当前选中值，点击触发外部传入的回调（弹选择器）。
+/// 选中值变化时文字淡出下移/淡入上移过渡（AnimatedSwitcher）。
 class ChatTagsBar extends StatelessWidget {
   const ChatTagsBar({super.key, required this.tags});
 
@@ -25,8 +26,11 @@ class ChatTagsBar extends StatelessWidget {
           return InkWell(
             onTap: tag.onTap,
             borderRadius: BorderRadius.circular(18),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest
                     .withValues(alpha: 0.6),
@@ -44,10 +48,35 @@ class ChatTagsBar extends StatelessWidget {
                         size: 15, color: theme.colorScheme.onSurfaceVariant),
                     const SizedBox(width: 4),
                   ],
-                  Text(
-                    tag.label,
-                    style: theme.textTheme.labelMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
+                  // 选中值变化：旧文字淡出下移、新文字淡入上移
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) => FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, 0.5),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
+                      ),
+                    ),
+                    layoutBuilder: (currentChild, previousChildren) => Stack(
+                      alignment: Alignment.centerLeft,
+                      children: [
+                        ...previousChildren,
+                        ?currentChild,
+                      ],
+                    ),
+                    child: Text(
+                      tag.label,
+                      // key 绑定文字内容：label 变化才触发过渡
+                      key: ValueKey(tag.label),
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 2),
