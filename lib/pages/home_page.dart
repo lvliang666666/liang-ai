@@ -28,7 +28,6 @@ import '../widgets/attachment_thumbnail.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
 import '../widgets/gesture_drawer.dart';
-import '../widgets/message_appear.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/pressable.dart';
 import 'settings_page.dart';
@@ -1394,23 +1393,17 @@ class _ChatArea extends StatelessWidget {
                       children: [
                         if (showTime)
                           _MessageTimeLabel(timestamp: msg.createdAt),
-                        MessageAppear(
+                        MessageBubble(
                           key: ValueKey(msg.id),
-                          // 历史消息（非最后一条）不播入场动画：切换会话
-                          // 批量加载时每条一个动画控制器 + 整列表逐帧
-                          // 重绘是掉帧元凶；只有新出现的消息播动画
-                          enabled: isLast,
-                          child: MessageBubble(
-                            message: msg,
-                            isStreaming: isLast && chat.isStreaming,
-                            thinkingSeconds: chat.thinkingSeconds,
-                            toolResults: msg.id == chat.lastToolCallMessageId
-                                ? chat.toolResults
-                                : const [],
-                            toolExecuting:
-                                msg.id == chat.lastToolCallMessageId &&
-                                    chat.status == ChatStatus.toolCalling,
-                          ),
+                          message: msg,
+                          isStreaming: isLast && chat.isStreaming,
+                          thinkingSeconds: chat.thinkingSeconds,
+                          toolResults: msg.id == chat.lastToolCallMessageId
+                              ? chat.toolResults
+                              : const [],
+                          toolExecuting:
+                              msg.id == chat.lastToolCallMessageId &&
+                                  chat.status == ChatStatus.toolCalling,
                         ),
                       ],
                     );
