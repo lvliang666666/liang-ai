@@ -128,7 +128,8 @@ class MessageBubble extends StatelessWidget {
                 GptMarkdown(
                   message.content,
                   isStreaming: isStreaming,
-                  charactersPerSecond: 40,
+                  // 打字机节奏：70 字/秒——长回答不拖沓，短回答仍有打字感
+                  charactersPerSecond: 70,
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(height: 1.6),
                   codeBuilder: (context, name, code, closed) =>

@@ -27,6 +27,7 @@ import '../utils/transitions.dart';
 import '../widgets/attachment_thumbnail.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
+import '../widgets/gesture_drawer.dart';
 import '../widgets/message_appear.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/pressable.dart';
@@ -53,6 +54,9 @@ class _HomePageState extends State<HomePage> {
 
   /// 抽屉批量管理模式开关（长按菜单「批量管理」触发）
   final ValueNotifier<bool> _drawerBatchMode = ValueNotifier(false);
+
+  /// 正在播离场动画的会话 id（删除前先收缩淡出，动画完再真删）
+  final Set<String> _removingSessionIds = {};
 
   // 聊天态：当前会话的 ChatProvider（null = 空闲态）
   ChatProvider? _chat;
@@ -369,8 +373,22 @@ class _HomePageState extends State<HomePage> {
       ),
     );
     if (confirmed == true && context.mounted) {
-      context.read<SessionsProvider>().deleteSession(id);
+      await _removeSessionWithAnimation(context, id);
     }
+  }
+
+  /// 带离场动画的删除：卡片先收缩淡出（200ms），动画完再真删——
+  /// 其余卡片随列表重建平滑上移补位
+  Future<void> _removeSessionWithAnimation(
+      BuildContext context, String id) async {
+    setState(() => _removingSessionIds.add(id));
+    await Future.delayed(const Duration(milliseconds: 200));
+    if (!context.mounted) {
+      _removingSessionIds.remove(id);
+      return;
+    }
+    await context.read<SessionsProvider>().deleteSession(id);
+    if (mounted) setState(() => _removingSessionIds.remove(id));
   }
 
   /// 长按会话卡片：锚点菜单栏（重命名/删除/批量管理）
@@ -445,7 +463,7 @@ class _HomePageState extends State<HomePage> {
 
   /// 抽屉进入批量管理模式（多选删除）
   void _openBatchMode() {
-    _scaffoldKey.currentState?.openDrawer();
+    _openDrawer();
     // 抽屉内部状态切换到多选：通过 drawerKey 通知
     _drawerBatchMode.value = true;
   }
@@ -460,116 +478,137 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       key: _scaffoldKey,
-      // 侧滑抽屉：完整会话列表（DeepSeek 式）
-      drawer: _SessionDrawer(
-        sessions: allSessions,
-        skillsProvider: skillsProvider,
-        loaded: sessions.loaded,
-        batchMode: _drawerBatchMode,
-        onDeleteSelected: (ids) async {
-          for (final id in ids) {
-            // 当前聊天态会话被删时退出聊天态
-            if (_chat?.session.id == id) {
-              final chat = _chat!;
-              setState(() => _chat = null);
-              chat.dispose();
+      // 手势跟手抽屉：拖多少走多少 + 速度甩动（替换内置 Drawer）
+      body: GestureDrawer(
+        key: _drawerKey,
+        drawer: _SessionDrawer(
+          sessions: allSessions,
+          skillsProvider: skillsProvider,
+          loaded: sessions.loaded,
+          batchMode: _drawerBatchMode,
+          removingIds: _removingSessionIds,
+          onClose: _closeDrawer,
+          onDeleteSelected: (ids) async {
+            // 先整体播离场动画（卡片收缩淡出），再逐个真删
+            setState(() => _removingSessionIds.addAll(ids));
+            await Future.delayed(const Duration(milliseconds: 200));
+            if (!mounted) {
+              _removingSessionIds.removeAll(ids);
+              return;
             }
-            await context.read<SessionsProvider>().deleteSession(id);
-          }
-        },
-        onOpenChat: (id) {
-          Navigator.pop(context); // 先关抽屉
-          _openChat(id);
-        },
-        onOpenSettings: () {
-          Navigator.pop(context);
-          Haptics.light();
-          _unfocus();
-          Navigator.push(context, slideUpRoute(const SettingsPage()));
-        },
-        onShowActions: (ctx, id, title, pos) =>
-            _showSessionActions(ctx, id, title, pos),
-      ),
-      // 圆形新对话按钮已移除：主页即聊天入口，历史对话走抽屉
-      body: !sessions.loaded
-          ? const Center(child: CircularProgressIndicator())
-          : SafeArea(
-              child: Column(
-                children: [
-                  // ===== header：抽屉入口 + 会话标题（聊天态）+ 新增对话 =====
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
-                    child: Row(
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.menu),
-                          tooltip: '会话列表',
-                          onPressed: () {
-                            Haptics.light();
-                            _scaffoldKey.currentState?.openDrawer();
-                          },
-                        ),
-                        // 聊天态：header 显示会话标题
-                        Expanded(
-                          child: _chat != null
-                              ? Text(
-                                  _chat!.session.title,
-                                  textAlign: TextAlign.center,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleMedium,
-                                )
-                              : const SizedBox(),
-                        ),
-                        // 右上角：新增对话（聊天态确认后退出回空闲态）
-                        IconButton(
-                          icon: const Icon(Icons.add),
-                          tooltip: '新对话',
-                          onPressed: _newChat,
-                        ),
-                      ],
-                    ),
-                  ),
-                  // ===== 主体：空闲态问候语 / 聊天态消息列表 =====
-                  Expanded(
-                    child: _chat == null
-                        ? Center(
-                            child: Text(
-                              '${_greeting()}，\n想聊点什么？',
-                              textAlign: TextAlign.center,
-                              style:
-                                  theme.textTheme.headlineMedium?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                height: 1.3,
-                              ),
-                            ),
-                          )
-                        : _ChatArea(
-                            key: ValueKey(_chat!.session.id),
-                            chat: _chat!,
-                            scrollController: _chatScrollController,
-                            onCountChanged: _maybeAutoScroll,
-                            onDelete: _deleteCurrentChat,
+            final provider = this.context.read<SessionsProvider>();
+            for (final id in ids) {
+              // 当前聊天态会话被删时退出聊天态
+              if (_chat?.session.id == id) {
+                final chat = _chat!;
+                setState(() => _chat = null);
+                chat.dispose();
+              }
+              await provider.deleteSession(id);
+            }
+            if (mounted) setState(() => _removingSessionIds.removeAll(ids));
+          },
+          onOpenChat: (id) {
+            _closeDrawer();
+            _openChat(id);
+          },
+          onOpenSettings: () {
+            _closeDrawer();
+            Haptics.light();
+            _unfocus();
+            Navigator.push(context, slideUpRoute(const SettingsPage()));
+          },
+          onShowActions: (ctx, id, title, pos) =>
+              _showSessionActions(ctx, id, title, pos),
+        ),
+        // 圆形新对话按钮已移除：主页即聊天入口，历史对话走抽屉
+        child: !sessions.loaded
+            ? const Center(child: CircularProgressIndicator())
+            : SafeArea(
+                child: Column(
+                  children: [
+                    // ===== header：抽屉入口 + 会话标题（聊天态）+ 新增对话 =====
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.menu),
+                            tooltip: '会话列表',
+                            onPressed: () {
+                              Haptics.light();
+                              _openDrawer();
+                            },
                           ),
-                  ),
-                  // ===== 底部：tags 行 + 输入框（空闲态/聊天态共用） =====
-                  _HomeInputBar(
-                    controller: _inputController,
-                    focusNode: _inputFocusNode,
-                    chat: _chat,
-                    selectedSkill: _selectedSkill,
-                    selectedModel: _selectedModel,
-                    selectedEffort: _selectedEffort,
-                    onSendIdle: _startChat,
-                    onPickSkill: _pickSkillForHome,
-                    onPickModel: _pickModelForHome,
-                    onPickEffort: _pickEffortForHome,
-                  ),
-                ],
+                          // 聊天态：header 显示会话标题
+                          Expanded(
+                            child: _chat != null
+                                ? Text(
+                                    _chat!.session.title,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.titleMedium,
+                                  )
+                                : const SizedBox(),
+                          ),
+                          // 右上角：新增对话（聊天态确认后退出回空闲态）
+                          IconButton(
+                            icon: const Icon(Icons.add),
+                            tooltip: '新对话',
+                            onPressed: _newChat,
+                          ),
+                        ],
+                      ),
+                    ),
+                    // ===== 主体：空闲态问候语 / 聊天态消息列表 =====
+                    Expanded(
+                      child: _chat == null
+                          ? Center(
+                              child: Text(
+                                '${_greeting()}，\n想聊点什么？',
+                                textAlign: TextAlign.center,
+                                style:
+                                    theme.textTheme.headlineMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.3,
+                                ),
+                              ),
+                            )
+                          : _ChatArea(
+                              key: ValueKey(_chat!.session.id),
+                              chat: _chat!,
+                              scrollController: _chatScrollController,
+                              onCountChanged: _maybeAutoScroll,
+                              onDelete: _deleteCurrentChat,
+                            ),
+                    ),
+                    // ===== 底部：tags 行 + 输入框（空闲态/聊天态共用） =====
+                    _HomeInputBar(
+                      controller: _inputController,
+                      focusNode: _inputFocusNode,
+                      chat: _chat,
+                      selectedSkill: _selectedSkill,
+                      selectedModel: _selectedModel,
+                      selectedEffort: _selectedEffort,
+                      onSendIdle: _startChat,
+                      onPickSkill: _pickSkillForHome,
+                      onPickModel: _pickModelForHome,
+                      onPickEffort: _pickEffortForHome,
+                    ),
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
+
+  /// 手势抽屉开合（按钮触发 / 抽屉内回调关闭）
+  final GlobalKey<GestureDrawerState> _drawerKey =
+      GlobalKey<GestureDrawerState>();
+
+  void _openDrawer() => _drawerKey.currentState?.open();
+  void _closeDrawer() => _drawerKey.currentState?.close();
 
   /// effort tag：空闲态改预选档位 / 聊天态改当前会话档位
   Future<void> _pickEffortForHome() async {
@@ -1412,6 +1451,8 @@ class _SessionDrawer extends StatefulWidget {
     required this.skillsProvider,
     required this.loaded,
     required this.batchMode,
+    required this.removingIds,
+    required this.onClose,
     required this.onDeleteSelected,
     required this.onOpenChat,
     required this.onOpenSettings,
@@ -1424,6 +1465,12 @@ class _SessionDrawer extends StatefulWidget {
 
   /// 批量管理模式开关（主页长按菜单触发进入）
   final ValueNotifier<bool> batchMode;
+
+  /// 正在播离场动画的会话 id（卡片收缩淡出中，动画完由宿主真删）
+  final Set<String> removingIds;
+
+  /// 关闭抽屉（打开会话/设置前调用）
+  final VoidCallback onClose;
 
   /// 批量删除选中的会话
   final Future<void> Function(List<String> ids) onDeleteSelected;
@@ -1576,7 +1623,8 @@ class _SessionDrawerState extends State<_SessionDrawer>
     final allFilteredIds = _filtered.map((s) => s.id).toSet();
     final allSelected =
         allFilteredIds.isNotEmpty && allFilteredIds.every(_selectedIds.contains);
-    return Drawer(
+    return Material(
+      color: theme.colorScheme.surface,
       child: SafeArea(
         child: FadeTransition(
           opacity: _appear,
@@ -1746,11 +1794,35 @@ class _SessionDrawerState extends State<_SessionDrawer>
                                                       .onSurfaceVariant)),
                                     ),
                                     for (final s in entry.value)
-                                      // GestureDetector 包 ListTile：
-                                      // ListTile 无 onLongPressStart，
-                                      // 外包一层拿长按点全局坐标（锚点菜单用）
-                                      PressableScale(
-                                        child: GestureDetector(
+                                      // 离场动画：删除确认后卡片收缩淡出
+                                      //（200ms），动画完宿主才真删，其余
+                                      // 卡片随列表重建平滑上移补位
+                                      AnimatedOpacity(
+                                        duration: const Duration(
+                                            milliseconds: 200),
+                                        curve: Curves.easeOutCubic,
+                                        opacity: widget.removingIds
+                                                .contains(s.id)
+                                            ? 0.0
+                                            : 1.0,
+                                        child: AnimatedSize(
+                                          duration: const Duration(
+                                              milliseconds: 200),
+                                          curve: Curves.easeOutCubic,
+                                          alignment: Alignment.topCenter,
+                                          child: AnimatedScale(
+                                            duration: const Duration(
+                                                milliseconds: 200),
+                                            curve: Curves.easeOutCubic,
+                                            scale: widget.removingIds
+                                                    .contains(s.id)
+                                                ? 0.9
+                                                : 1.0,
+                                            // GestureDetector 包 ListTile：
+                                            // ListTile 无 onLongPressStart，
+                                            // 外包一层拿长按点全局坐标（锚点菜单用）
+                                            child: PressableScale(
+                                              child: GestureDetector(
                                         behavior: HitTestBehavior.translucent,
                                         onLongPressStart: _batchMode
                                             ? null
@@ -1805,6 +1877,9 @@ class _SessionDrawerState extends State<_SessionDrawer>
                                             }
                                           },
                                         ),
+                                              ),
+                                            ),
+                                          ),
                                         ),
                                       ),
                                   ],
