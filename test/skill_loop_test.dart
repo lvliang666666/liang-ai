@@ -528,6 +528,75 @@ void main() {
       await waitUntil(() => memProvider.status == ChatStatus.idle);
       memProvider.dispose();
     });
+
+    test('memory_save 落库带来源 Skill（sourceSkill 激活）', () async {
+      final memory = MemoryService(database: db);
+      final memProvider = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+            id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
+        profile: toolProfile(),
+        model: 'm1',
+        skill: Skill(id: 'sk-tutor', name: '导师', prompt: '你是导师'),
+        toolCatalog: [const StubTool('工具结果OK'), ...builtinTools],
+        memory: memory,
+      );
+      await memProvider.loadMessages();
+      await memProvider.sendMessage('记住一件事');
+
+      // 模型调用 memory_save
+      api.emit(const SseToolCallDelta(
+          index: 0,
+          id: 'call_m',
+          name: 'memory_save',
+          argumentsFragment: '{"content":"用户在备考","tag":"背景"}'));
+      api.emit(const SseToolCallsFinished());
+
+      // 工具执行后进入第二轮，再收尾
+      await waitUntil(() => api.chatStreamCalls == 2);
+      api.emit(const SseDone());
+      await waitUntil(() => memProvider.status == ChatStatus.idle);
+
+      // 落库的记忆带来源 Skill 名
+      final all = await memory.getAll();
+      expect(all.length, 1);
+      expect(all.single.content, '用户在备考');
+      expect(all.single.sourceSkill, '导师');
+      memProvider.dispose();
+    });
+
+    test('无 Skill 时 memory_save 落库 sourceSkill 为空', () async {
+      final memory = MemoryService(database: db);
+      final memProvider = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+            id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
+        profile: toolProfile(),
+        model: 'm1',
+        toolCatalog: [const StubTool('工具结果OK'), ...builtinTools],
+        memory: memory,
+      );
+      await memProvider.loadMessages();
+      await memProvider.sendMessage('记住一件事');
+
+      api.emit(const SseToolCallDelta(
+          index: 0,
+          id: 'call_m',
+          name: 'memory_save',
+          argumentsFragment: '{"content":"用户偏好深色主题"}'));
+      api.emit(const SseToolCallsFinished());
+
+      // 工具执行后进入第二轮，再收尾
+      await waitUntil(() => api.chatStreamCalls == 2);
+      api.emit(const SseDone());
+      await waitUntil(() => memProvider.status == ChatStatus.idle);
+
+      final all = await memory.getAll();
+      expect(all.single.sourceSkill, isNull);
+      memProvider.dispose();
+    });
   });
 
   group('DB v6 tool 消息', () {

@@ -64,16 +64,20 @@ class ChatProvider extends ChangeNotifier {
   ///
   /// toolNames null = 全部目录工具（默认助手/迁移老数据）；
   /// [] = 无工具；非空 = 指定子集（目录中不存在的名字忽略）。
+  /// memory_save 工具按当前 Skill 注入来源名（记忆溯源）。
   static ToolRegistry _buildRegistry(
       Skill? skill, List<ToolHandler> catalog) {
     final registry = ToolRegistry();
     final allowed = skill?.toolNames;
-    if (allowed == null) {
-      registry.registerAll(catalog);
-    } else {
-      registry
-          .registerAll(catalog.where((t) => allowed.contains(t.name)).toList());
-    }
+    final selected = allowed == null
+        ? catalog
+        : catalog.where((t) => allowed.contains(t.name)).toList();
+    registry.registerAll([
+      for (final t in selected)
+        t is MemorySaveTool
+            ? MemorySaveTool(sourceSkill: skill?.name)
+            : t,
+    ]);
     return registry;
   }
 
