@@ -231,20 +231,12 @@ class _HomePageState extends State<HomePage> {
       _lastDisplayCount = 0;
     });
 
-    // 恢复目标会话草稿（非空时轻提示，微信式）
+    // 恢复目标会话草稿（静默恢复：输入框里看得见，无需弹提示）
     final draft = context.read<SettingsService>().getDraft(session.id);
     if (draft.isNotEmpty && mounted) {
       _inputController.text = draft;
       _inputController.selection =
           TextSelection.collapsed(offset: draft.length);
-      ScaffoldMessenger.of(context)
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text('已恢复该会话未发送的输入'),
-            duration: Duration(seconds: 2),
-          ),
-        );
     }
 
     // 自动发送首条消息（等首帧完成）；附件先入队再发送
