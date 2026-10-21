@@ -626,27 +626,36 @@ class _HomePageState extends State<HomePage> {
                                   ),
                                 ),
                               )
-                            : _ChatArea(
-                                key: _chatAreaKey,
-                                chatKey: ValueKey(_chat!.session.id),
-                                chat: _chat!,
-                                onCountChanged: _maybeAutoScroll,
-                                onDelete: _deleteCurrentChat,
+                            : RepaintBoundary(
+                                // 隔离聊天区重绘：流式打字机逐帧重绘若向上
+                                // 传播会重录主页大层，拖拽抽屉时掉帧
+                                child: _ChatArea(
+                                  key: _chatAreaKey,
+                                  chatKey: ValueKey(_chat!.session.id),
+                                  chat: _chat!,
+                                  onCountChanged: _maybeAutoScroll,
+                                  onDelete: _deleteCurrentChat,
+                                ),
                               ),
                       ),
                     ),
                     // ===== 底部：tags 行 + 输入框（空闲态/聊天态共用） =====
-                    _HomeInputBar(
-                      controller: _inputController,
-                      focusNode: _inputFocusNode,
-                      chat: _chat,
-                      selectedSkill: _selectedSkill,
-                      selectedModel: _selectedModel,
-                      selectedEffort: _selectedEffort,
-                      onSendIdle: _startChat,
-                      onPickSkill: _pickSkillForHome,
-                      onPickModel: _pickModelForHome,
-                      onPickEffort: _pickEffortForHome,
+                    // RepaintBoundary 隔离输入栏重绘：光标每 500ms 闪烁
+                    // 重绘若向上传播，会重录主页大层（含聊天列表）——
+                    // 拖拽抽屉时周期性掉帧的元凶
+                    RepaintBoundary(
+                      child: _HomeInputBar(
+                        controller: _inputController,
+                        focusNode: _inputFocusNode,
+                        chat: _chat,
+                        selectedSkill: _selectedSkill,
+                        selectedModel: _selectedModel,
+                        selectedEffort: _selectedEffort,
+                        onSendIdle: _startChat,
+                        onPickSkill: _pickSkillForHome,
+                        onPickModel: _pickModelForHome,
+                        onPickEffort: _pickEffortForHome,
+                      ),
                     ),
                   ],
                 ),

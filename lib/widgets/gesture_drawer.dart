@@ -21,6 +21,9 @@ import 'package:flutter/material.dart';
 ///   每帧只更新变换矩阵与 Scrim 透明度，主页面/抽屉内容走缓存层合成
 ///   不重绘。boundary 包在变换外侧时，矩阵变化会把整个 boundary 子树
 ///   标脏，主页内容逐帧重绘（切换会话掉帧元凶之一）
+/// - 主页/抽屉内容内部的高频重绘源（输入框光标闪烁、流式打字机）必须
+///   再包 RepaintBoundary 隔离：否则光标每 500ms 重绘会向上传播到主页
+///   大层，重录重栅格化整页画面——拖拽期间周期性掉帧（"滑出卡顿"）
 /// - close() 返回动画完成 Future（被拖拽打断则永不完成，等待方需
 ///   超时兜底）：宿主可等抽屉关完再做重活（如切换会话的列表构建），
 ///   避免与关闭动画抢主线程
@@ -68,6 +71,18 @@ class GestureDrawerState extends State<GestureDrawer>
   double _drawerWidth(BuildContext context) =>
       MediaQuery.widthOf(context) - widget.edgeMargin;
 
+  /// 抽屉宽度缓存：didChangeDependencies 随 MediaQuery 刷新（旋转/分屏
+  /// 自动跟进）。拖拽回调逐帧高频执行，缓存后不再在指针事件里反复
+  /// 查 InheritedWidget（依赖注册也不该发生在 build 之外）
+  double _width = 0;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _width = _drawerWidth(context);
+  }
+
+
   // ===== 外部触发（按钮） =====
 
   void open() {
@@ -95,9 +110,8 @@ class GestureDrawerState extends State<GestureDrawer>
     // （Flutter 内置 Drawer 同款做法）。若写成"起始进度 + delta"直接
     // 赋值，进度每帧都被重置回起手附近——抽屉完全不跟手，松手才靠
     // 甩动动画打开（"抖一下再滑"的主根因）
-    final width = _drawerWidth(context);
     final delta = details.primaryDelta ?? 0;
-    _controller.value = (_controller.value + delta / width).clamp(0.0, 1.0);
+    _controller.value = (_controller.value + delta / _width).clamp(0.0, 1.0);
   }
 
   void _onDragEnd(DragEndDetails details) {
@@ -143,7 +157,7 @@ class GestureDrawerState extends State<GestureDrawer>
 
   @override
   Widget build(BuildContext context) {
-    final width = _drawerWidth(context);
+    final width = _width;
     // 主页/抽屉内容只构建一次（child 参数），动画每帧只重建
     // Transform/Scrim 这几个轻量包装节点，内容层不进 builder
     return AnimatedBuilder(
@@ -157,24 +171,26 @@ class GestureDrawerState extends State<GestureDrawer>
             // 拖拽回调常驻：打开态被面板/Scrim 覆盖不会误触发；
             // 条件挂载会在拖拽中途销毁 recognizer 导致卡死（见类注释）。
             // RepaintBoundary 在 Transform 内侧：内容层缓存化，每帧
-            // 只重算矩阵，不把主页子树标脏重绘
-            Transform.translate(
-              offset: Offset(-width * 0.12 * p, 0),
-              child: Transform.scale(
-                scale: 1 - 0.04 * p,
-                child: RepaintBoundary(
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    // down：拖拽位移从按下点起算。默认 start 会把手势竞技场
-                    // 裁决前（约一个触摸容差 ~18px）的位移吞掉——起手先有
-                    // 一段抽屉不动的死区、随后突然追赶，体感即"抖一下再
-                    // 滑、不跟手"（右滑开抽屉的元凶）
-                    dragStartBehavior: DragStartBehavior.down,
-                    onHorizontalDragStart: _onDragStart,
-                    onHorizontalDragUpdate: _onDragUpdate,
-                    onHorizontalDragEnd: _onDragEnd,
-                    child: widget.child,
-                  ),
+            // 只重算矩阵，不把主页子树标脏重绘。
+            // 平移+缩放合并进单个 Matrix4：两层 Transform 会产生两层
+            // TransformLayer，拖拽逐帧多一次层矩阵更新与合成
+            Transform(
+              transform: Matrix4.identity()
+                ..translate(-width * 0.12 * p, 0.0)
+                ..scale(1 - 0.04 * p),
+              alignment: Alignment.center,
+              child: RepaintBoundary(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  // down：拖拽位移从按下点起算。默认 start 会把手势竞技场
+                  // 裁决前（约一个触摸容差 ~18px）的位移吞掉——起手先有
+                  // 一段抽屉不动的死区、随后突然追赶，体感即"抖一下再
+                  // 滑、不跟手"（右滑开抽屉的元凶）
+                  dragStartBehavior: DragStartBehavior.down,
+                  onHorizontalDragStart: _onDragStart,
+                  onHorizontalDragUpdate: _onDragUpdate,
+                  onHorizontalDragEnd: _onDragEnd,
+                  child: widget.child,
                 ),
               ),
             ),
