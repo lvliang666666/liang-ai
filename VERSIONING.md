@@ -13,7 +13,7 @@
 v2.3.2 在 v2.3.1 基础上优化（分支「动效打磨」合并，交互动效优化 → PATCH）：
 
 - 全局动效体系 10 项落地（克制风格：小幅位移 + 淡入淡出，easeOutCubic 主曲线）：
-  - 消息入场：新消息淡入 + 8px 上滑（MessageAppear 组件，ValueKey 绑定防流式重建重播）
+  - 消息入场：新消息淡入 + 8px 上滑（MessageAppear 组件，ValueKey 绑定防流式重建重播）**——v2.3.2 发布后补丁移除（用户反馈观感不佳，气泡直接出现）**
   - 按压反馈：卡片/按钮按下 0.98 缩放（PressableScale 组件，Listener 实现）
   - 页面转场：二级页统一轻推滑入 + 淡入（slideUpRoute，280ms/240ms）
   - 思考块/工具卡片展开：AnimatedCrossFade 统一 250ms easeOutCubic 三曲线
