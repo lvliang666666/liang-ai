@@ -128,7 +128,8 @@ class MessageBubble extends StatelessWidget {
                 GptMarkdown(
                   message.content,
                   isStreaming: isStreaming,
-                  charactersPerSecond: 40,
+                  // 打字机节奏：70 字/秒——长回答不拖沓，短回答仍有打字感
+                  charactersPerSecond: 70,
                   style: theme.textTheme.bodyMedium
                       ?.copyWith(height: 1.6),
                   codeBuilder: (context, name, code, closed) =>
@@ -497,16 +498,22 @@ class _TypingIndicatorState extends State<_TypingIndicator>
       builder: (context, _) {
         Widget dot(int i) {
           final t = (_controller.value * 3 - i).clamp(0.0, 1.0);
-          final scale = 0.6 + 0.4 * (1 - (2 * t - 1).abs());
-          return Transform.scale(
-            scale: scale,
-            child: Container(
-              width: 7,
-              height: 7,
-              margin: const EdgeInsets.symmetric(horizontal: 2),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primary,
-                shape: BoxShape.circle,
+          final wave = 1 - (2 * t - 1).abs();
+          final scale = 0.6 + 0.4 * wave;
+          // 透明度与缩放同相位：跳动高点最实，低点最虚（DeepSeek 质感）
+          final opacity = 0.35 + 0.65 * wave;
+          return Opacity(
+            opacity: opacity,
+            child: Transform.scale(
+              scale: scale,
+              child: Container(
+                width: 7,
+                height: 7,
+                margin: const EdgeInsets.symmetric(horizontal: 2),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
               ),
             ),
           );
