@@ -34,7 +34,8 @@ class TagBar extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
             onTap: () => onTap(index),
             child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeOutCubic,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
               alignment: Alignment.center,
               decoration: BoxDecoration(

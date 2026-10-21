@@ -11,6 +11,7 @@ import 'memory_page.dart';
 import 'skill_editor_page.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
+import '../utils/transitions.dart';
 import '../widgets/tag_bar.dart';
 
 /// 设置页：顶部可滑动 Tags 栏 + 分页内容
@@ -373,7 +374,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _openSkillEditor(BuildContext context, {Skill? skill}) async {
     final saved = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(builder: (_) => SkillEditorPage(skill: skill)),
+      slideUpRoute(SkillEditorPage(skill: skill)),
     );
 
     if (saved != true || !mounted) return;
