@@ -564,6 +564,9 @@ class ChatProvider extends ChangeNotifier {
     _disposed = true;
     _subscription?.cancel();
     _cancelToken?.cancel();
+    // 关闭底层 dio 连接池：切换会话会重建 ChatProvider，不关则每次
+    // 切换泄漏一个 HttpClient 实例（连接与内存），累积加重 GC 卡顿
+    _api.dispose();
     super.dispose();
   }
 }
