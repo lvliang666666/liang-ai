@@ -8,6 +8,14 @@ import 'package:flutter/material.dart';
 /// - Scrim 遮罩随进度加深，点击关闭
 /// - 内容宽度 = 屏宽 - [edgeMargin]（右侧留出主页面边缘）
 ///
+/// 性能与稳定性要点：
+/// - 拖拽回调**常驻**（不按进度条件挂载）——条件挂载会在拖拽中途把
+///   GestureDetector 重建为无手势形态，进行中的 recognizer 被销毁，
+///   拖拽当场中断（抽屉卡在微开状态的根因）。打开态主页面被
+///   面板/Scrim 覆盖，回调天然不会触发，无需条件守卫
+/// - 三层各包 RepaintBoundary：拖拽每帧只更新 Transform 矩阵与
+///   Scrim 透明度，主页面/抽屉内容用缓存层合成，不整树重绘
+///
 /// [drawer] 抽屉内容；[child] 主页面。
 class GestureDrawer extends StatefulWidget {
   const GestureDrawer({
@@ -128,37 +136,38 @@ class GestureDrawerState extends State<GestureDrawer>
         final p = _progress;
         return Stack(
           children: [
-            // 主页面：随抽屉打开轻微左移 + 缩放（层次感）；
-            // 左缘 20px 拖拽区可拉出抽屉（关闭态）
-            Transform.translate(
-              offset: Offset(-width * 0.12 * p, 0),
-              child: Transform.scale(
-                scale: 1 - 0.04 * p,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  // 仅关闭态启用边缘拖出（打开态由 Scrim/面板接管）
-                  onHorizontalDragStart:
-                      p < 0.05 ? _onDragStart : null,
-                  onHorizontalDragUpdate:
-                      p < 0.05 ? _onDragUpdate : null,
-                  onHorizontalDragEnd: p < 0.05 ? _onDragEnd : null,
-                  child: widget.child,
-                ),
-              ),
-            ),
-            // Scrim：随进度加深，点击关闭
-            if (p > 0)
-              Positioned.fill(
-                child: IgnorePointer(
-                  ignoring: p < 0.05,
+            // 主页面：随抽屉打开轻微左移 + 缩放（层次感）。
+            // 拖拽回调常驻：打开态被面板/Scrim 覆盖不会误触发；
+            // 条件挂载会在拖拽中途销毁 recognizer 导致卡死（见类注释）
+            RepaintBoundary(
+              child: Transform.translate(
+                offset: Offset(-width * 0.12 * p, 0),
+                child: Transform.scale(
+                  scale: 1 - 0.04 * p,
                   child: GestureDetector(
-                    onTap: close,
-                    child: ColoredBox(
-                      color: widget.scrimColor.withValues(alpha: 0.5 * p),
-                    ),
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragStart: _onDragStart,
+                    onHorizontalDragUpdate: _onDragUpdate,
+                    onHorizontalDragEnd: _onDragEnd,
+                    child: widget.child,
                   ),
                 ),
               ),
+            ),
+            // Scrim：随进度加深，点击关闭。
+            // 常驻不条件挂载（p=0 时全透明且不接收事件），
+            // 避免拖拽开始/结束时插入移除节点引发子树重建
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: p < 0.05,
+                child: GestureDetector(
+                  onTap: close,
+                  child: ColoredBox(
+                    color: widget.scrimColor.withValues(alpha: 0.5 * p),
+                  ),
+                ),
+              ),
+            ),
             // 抽屉面板：跟手平移（-100% ~ 0），面板内水平拖拽也可关闭
             Positioned(
               left: 0,
