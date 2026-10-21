@@ -28,6 +28,10 @@ class ToolCallBlock extends StatefulWidget {
   /// 是否正在执行工具（toolCalling 状态）
   final bool executing;
 
+  /// 展开/折叠过渡时长与曲线（与 ThinkingBlock 保持一致）
+  static const _expandDuration = Duration(milliseconds: 250);
+  static const _expandCurve = Curves.easeOutCubic;
+
   @override
   State<ToolCallBlock> createState() => _ToolCallBlockState();
 }
@@ -128,7 +132,8 @@ class _ToolCallBlockState extends State<ToolCallBlock> {
                   ),
                   AnimatedRotation(
                     turns: _expanded ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 200),
+                    duration: ToolCallBlock._expandDuration,
+                    curve: ToolCallBlock._expandCurve,
                     child: Icon(
                       Icons.keyboard_arrow_down,
                       size: 20,
@@ -140,7 +145,10 @@ class _ToolCallBlockState extends State<ToolCallBlock> {
             ),
           ),
           AnimatedCrossFade(
-            duration: const Duration(milliseconds: 200),
+            duration: ToolCallBlock._expandDuration,
+            firstCurve: ToolCallBlock._expandCurve,
+            secondCurve: ToolCallBlock._expandCurve,
+            sizeCurve: ToolCallBlock._expandCurve,
             crossFadeState: _expanded
                 ? CrossFadeState.showFirst
                 : CrossFadeState.showSecond,

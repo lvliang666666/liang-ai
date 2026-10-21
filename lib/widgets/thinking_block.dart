@@ -19,6 +19,10 @@ class ThinkingBlock extends StatefulWidget {
   final bool streaming;
   final int seconds;
 
+  /// 展开/折叠过渡时长与曲线（与 ToolCallBlock 保持一致）
+  static const _expandDuration = Duration(milliseconds: 250);
+  static const _expandCurve = Curves.easeOutCubic;
+
   @override
   State<ThinkingBlock> createState() => _ThinkingBlockState();
 }
@@ -101,7 +105,8 @@ class _ThinkingBlockState extends State<ThinkingBlock> {
                   ),
                   AnimatedRotation(
                     turns: _expanded ? 0.5 : 0,
-                    duration: const Duration(milliseconds: 200),
+                    duration: ThinkingBlock._expandDuration,
+                    curve: ThinkingBlock._expandCurve,
                     child: Icon(
                       Icons.keyboard_arrow_down,
                       size: 20,
@@ -113,7 +118,10 @@ class _ThinkingBlockState extends State<ThinkingBlock> {
             ),
           ),
           AnimatedCrossFade(
-            duration: const Duration(milliseconds: 200),
+            duration: ThinkingBlock._expandDuration,
+            firstCurve: ThinkingBlock._expandCurve,
+            secondCurve: ThinkingBlock._expandCurve,
+            sizeCurve: ThinkingBlock._expandCurve,
             crossFadeState: _expanded
                 ? CrossFadeState.showFirst
                 : CrossFadeState.showSecond,
