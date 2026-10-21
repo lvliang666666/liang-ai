@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'chat_provider_test.dart' show MockApiService;
+import 'helpers/test_db.dart';
 
 /// 阶段 3 验证：ChatProvider 附件队列 + 气泡附件展示
 void main() {
@@ -29,27 +30,7 @@ void main() {
     late ChatProvider provider;
 
     setUp(() async {
-      final inMemory = await databaseFactory.openDatabase(
-        inMemoryDatabasePath,
-        options: OpenDatabaseOptions(version: 5),
-      );
-      await inMemory.execute('''
-        CREATE TABLE IF NOT EXISTS sessions (
-          id TEXT PRIMARY KEY, title TEXT NOT NULL,
-          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-          effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
-          provider_id TEXT, model TEXT
-        )
-      ''');
-      await inMemory.execute('''
-        CREATE TABLE IF NOT EXISTS messages (
-          id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
-          content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
-          attachments TEXT NOT NULL DEFAULT '[]',
-          tool_calls TEXT NOT NULL DEFAULT '[]', tool_call_id TEXT,
-          created_at INTEGER NOT NULL
-        )
-      ''');
+      final inMemory = await openTestDb();
       db = DatabaseService.instance;
       await db.initForTest(inMemory);
       api = MockApiService();

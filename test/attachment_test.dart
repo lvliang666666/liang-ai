@@ -201,22 +201,11 @@ void main() {
       });
       await v2db.close();
 
-      // 2. 用 DatabaseService 重新打开（触发 v2→v3 迁移）
+      // 2. 用 DatabaseService 重新打开（触发生产 onUpgrade 本尊 v2→v5 迁移链）
       final reopened = await databaseFactory.openDatabase(dbPath,
           options: OpenDatabaseOptions(
             version: 5,
-            onUpgrade: (db, oldV, newV) async {
-              if (oldV < 3) {
-                await db.execute(
-                    "ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
-              }
-              if (oldV < 5) {
-                await db.execute(
-                    "ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'");
-                await db.execute(
-                    'ALTER TABLE messages ADD COLUMN tool_call_id TEXT');
-              }
-            },
+            onUpgrade: DatabaseService.onUpgrade,
           ));
       final svc = DatabaseService.instance;
       await svc.initForTest(reopened);
@@ -249,22 +238,12 @@ void main() {
     });
 
     test('全新 v3 库直接建表含 attachments 列', () async {
+      // 生产 onCreate 本尊建当前版本库（attachments 列必然在内）
       final db = await databaseFactory.openDatabase(dbPath,
-          options: OpenDatabaseOptions(version: 5, onCreate: (d, v) async {
-        await d.execute('''
-          CREATE TABLE messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL DEFAULT '',
-            reasoning TEXT NOT NULL DEFAULT '',
-            attachments TEXT NOT NULL DEFAULT '[]',
-            tool_calls TEXT NOT NULL DEFAULT '[]',
-            tool_call_id TEXT,
-            created_at INTEGER NOT NULL
-          )
-        ''');
-      }));
+          options: OpenDatabaseOptions(
+            version: DatabaseService.dbVersion,
+            onCreate: DatabaseService.onCreate,
+          ));
       final svc = DatabaseService.instance;
       await svc.initForTest(db);
 

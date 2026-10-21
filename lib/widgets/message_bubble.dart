@@ -185,6 +185,7 @@ class MessageBubble extends StatelessWidget {
 
     if (action == 'copy') {
       await Clipboard.setData(ClipboardData(text: message.content));
+      Haptics.medium(); // 复制完成反馈（三档词汇表：medium）
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(

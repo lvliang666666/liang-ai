@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'helpers/test_db.dart';
+
 /// 归一化函数暴露给测试断言用（与 MemoryService.normalize 同源）
 String norm(String s) => MemoryService.normalize(s);
 
@@ -19,24 +21,7 @@ void main() {
 
   setUp(() async {
     db = DatabaseService.instance;
-    final inMemory = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: 7,
-        onCreate: (d, v) async {
-          await d.execute('''
-            CREATE TABLE memories (
-              id TEXT PRIMARY KEY,
-              content TEXT NOT NULL,
-              tag TEXT,
-              source_skill TEXT,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-          ''');
-        },
-      ),
-    );
+    final inMemory = await openTestDb();
     await db.initForTest(inMemory);
     service = MemoryService(database: db);
   });

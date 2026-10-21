@@ -4,6 +4,8 @@ import 'package:ai_chat_app/services/database_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'helpers/test_db.dart';
+
 void main() {
   setUpAll(() {
     sqfliteFfiInit();
@@ -14,68 +16,7 @@ void main() {
 
   setUp(() async {
     db = DatabaseService.instance;
-    final inMemory = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: 6,
-        onCreate: (d, v) async {
-        await d.execute('''
-          CREATE TABLE sessions (
-            id TEXT PRIMARY KEY,
-            title TEXT NOT NULL,
-            created_at INTEGER NOT NULL,
-            updated_at INTEGER NOT NULL,
-            effort TEXT NOT NULL DEFAULT 'max',
-            agent_id TEXT,
-            skill_id TEXT,
-            provider_id TEXT,
-            model TEXT
-          )
-        ''');
-        await d.execute('''
-          CREATE TABLE messages (
-            id TEXT PRIMARY KEY,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT NOT NULL DEFAULT '',
-            reasoning TEXT NOT NULL DEFAULT '',
-            attachments TEXT NOT NULL DEFAULT '[]',
-            tool_calls TEXT NOT NULL DEFAULT '[]',
-            tool_call_id TEXT,
-            created_at INTEGER NOT NULL
-          )
-        ''');
-        await d.execute(
-          'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
-        );
-        await d.execute('''
-          CREATE TABLE skills (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            icon TEXT NOT NULL DEFAULT '🤖',
-            description TEXT NOT NULL DEFAULT '',
-            prompt TEXT NOT NULL DEFAULT '',
-            temperature REAL,
-            effort TEXT,
-            tools TEXT,
-            is_builtin INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-        await d.execute('''
-          CREATE TABLE providers (
-            id TEXT PRIMARY KEY,
-            name TEXT NOT NULL,
-            base_url TEXT NOT NULL DEFAULT '',
-            api_key TEXT NOT NULL DEFAULT '',
-            default_model TEXT NOT NULL DEFAULT '',
-            capabilities TEXT NOT NULL DEFAULT '{}',
-            dialect TEXT NOT NULL DEFAULT '{}',
-            is_builtin INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-      },
-      ),
-    );
+    final inMemory = await openTestDb();
     await db.initForTest(inMemory);
   });
 
@@ -179,6 +120,45 @@ void main() {
 
       await db.deleteMessage('m1');
       expect(await db.getMessages('s1'), isEmpty);
+    });
+  });
+
+  group('schema 同源与迁移链（E2 根治验证）', () {
+    test('v1 老库逐版本迁移到当前版本，schema 与新装一致', () async {
+      // v1 基线建库 → 生产 onUpgrade 链升到当前版本
+      final migrated = await openTestDbFromVersion(1);
+
+      // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/memories）
+      final tables = await migrated.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      );
+      expect(
+        tables.map((r) => r['name']).toList(),
+        containsAll(['sessions', 'messages', 'skills', 'providers', 'memories']),
+      );
+      expect(tables.length, 5); // agents 表应已在 v6 迁移中删除
+
+      // 迁移后可正常写入读出（走一遍核心链路）
+      await migrated.insert('sessions', {
+        'id': 's1',
+        'title': '迁移后新会话',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      expect((await migrated.query('sessions')).first['title'], '迁移后新会话');
+      await migrated.close();
+    });
+
+    test('新装库含 memories 表（v7 schema 完整性）', () async {
+      final fresh = await openTestDb();
+      final cols = await fresh.rawQuery(
+        "PRAGMA table_info(memories)",
+      );
+      expect(
+        cols.map((c) => c['name']).toList(),
+        containsAll(['id', 'content', 'tag', 'source_skill', 'created_at', 'updated_at']),
+      );
+      await fresh.close();
     });
   });
 }

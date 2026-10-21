@@ -4,6 +4,8 @@ import 'package:ai_chat_app/services/memory_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'helpers/test_db.dart';
+
 /// dispose 测试哨兵：标记 provider 已手动 dispose，tearDown 跳过
 class _DisposedSentinel extends MemoryProvider {
   _DisposedSentinel()
@@ -25,24 +27,7 @@ void main() {
 
   setUp(() async {
     db = DatabaseService.instance;
-    final inMemory = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: 7,
-        onCreate: (d, v) async {
-          await d.execute('''
-            CREATE TABLE memories (
-              id TEXT PRIMARY KEY,
-              content TEXT NOT NULL,
-              tag TEXT,
-              source_skill TEXT,
-              created_at INTEGER NOT NULL,
-              updated_at INTEGER NOT NULL
-            )
-          ''');
-        },
-      ),
-    );
+    final inMemory = await openTestDb();
     await db.initForTest(inMemory);
     provider = MemoryProvider(
       service: MemoryService(database: db),
