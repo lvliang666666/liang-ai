@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 /// 手势跟手侧滑抽屉：手指拖多少走多少 + 松手速度/位置判断
@@ -13,6 +14,9 @@ import 'package:flutter/material.dart';
 ///   GestureDetector 重建为无手势形态，进行中的 recognizer 被销毁，
 ///   拖拽当场中断（抽屉卡在微开状态的根因）。打开态主页面被
 ///   面板/Scrim 覆盖，回调天然不会触发，无需条件守卫
+/// - dragStartBehavior 用 **down**（位移从按下点起算）：默认 start 会
+///   吞掉竞技场裁决前的位移（约一个触摸容差），起手有死区、随后突然
+///   追赶，体感"抖一下再滑、不跟手"
 /// - RepaintBoundary 包在 Transform **内侧**（缓存内容层）：拖拽/动画
 ///   每帧只更新变换矩阵与 Scrim 透明度，主页面/抽屉内容走缓存层合成
 ///   不重绘。boundary 包在变换外侧时，矩阵变化会把整个 boundary 子树
@@ -56,6 +60,10 @@ class GestureDrawerState extends State<GestureDrawer>
 
   double get _progress => _controller.value;
 
+  /// 当前开合进度（0 = 关闭，1 = 打开）。
+  /// 公开只读口：宿主/测试可感知拖拽与动画的实时进度
+  double get progress => _controller.value;
+
   /// 抽屉宽度 = 屏宽 - 右侧留边
   double _drawerWidth(BuildContext context) =>
       MediaQuery.widthOf(context) - widget.edgeMargin;
@@ -77,24 +85,22 @@ class GestureDrawerState extends State<GestureDrawer>
 
   // ===== 拖拽手势 =====
 
-  double? _dragStartProgress;
-
   void _onDragStart(DragStartDetails details) {
+    // 冻结进行中的开/关动画，从当前进度接管跟手
     _controller.stop();
-    _dragStartProgress = _progress;
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
-    if (_dragStartProgress == null) return;
+    // primaryDelta 是"距上次更新"的逐帧增量，必须**累加**到进度上
+    // （Flutter 内置 Drawer 同款做法）。若写成"起始进度 + delta"直接
+    // 赋值，进度每帧都被重置回起手附近——抽屉完全不跟手，松手才靠
+    // 甩动动画打开（"抖一下再滑"的主根因）
     final width = _drawerWidth(context);
     final delta = details.primaryDelta ?? 0;
-    _controller.value =
-        (_dragStartProgress! + delta / width).clamp(0.0, 1.0);
+    _controller.value = (_controller.value + delta / width).clamp(0.0, 1.0);
   }
 
   void _onDragEnd(DragEndDetails details) {
-    if (_dragStartProgress == null) return;
-    _dragStartProgress = null;
     final velocity = details.primaryVelocity ?? 0;
     final p = _progress;
 
@@ -159,6 +165,11 @@ class GestureDrawerState extends State<GestureDrawer>
                 child: RepaintBoundary(
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
+                    // down：拖拽位移从按下点起算。默认 start 会把手势竞技场
+                    // 裁决前（约一个触摸容差 ~18px）的位移吞掉——起手先有
+                    // 一段抽屉不动的死区、随后突然追赶，体感即"抖一下再
+                    // 滑、不跟手"（右滑开抽屉的元凶）
+                    dragStartBehavior: DragStartBehavior.down,
                     onHorizontalDragStart: _onDragStart,
                     onHorizontalDragUpdate: _onDragUpdate,
                     onHorizontalDragEnd: _onDragEnd,
@@ -191,6 +202,7 @@ class GestureDrawerState extends State<GestureDrawer>
                 offset: Offset(-width * (1 - p), 0),
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
+                  dragStartBehavior: DragStartBehavior.down, // 同上：消除起手死区
                   onHorizontalDragStart: _onDragStart,
                   onHorizontalDragUpdate: _onDragUpdate,
                   onHorizontalDragEnd: _onDragEnd,
