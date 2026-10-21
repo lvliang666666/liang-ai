@@ -23,11 +23,13 @@ import '../services/database_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
+import '../utils/transitions.dart';
 import '../widgets/attachment_thumbnail.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
 import '../widgets/message_appear.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/pressable.dart';
 import 'settings_page.dart';
 
 /// 首页：DeepSeek 风格单页架构——主页即聊天页
@@ -483,10 +485,7 @@ class _HomePageState extends State<HomePage> {
           Navigator.pop(context);
           Haptics.light();
           _unfocus();
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const SettingsPage()),
-          );
+          Navigator.push(context, slideUpRoute(const SettingsPage()));
         },
         onShowActions: (ctx, id, title, pos) =>
             _showSessionActions(ctx, id, title, pos),
@@ -1437,11 +1436,22 @@ class _SessionDrawer extends StatefulWidget {
   State<_SessionDrawer> createState() => _SessionDrawerState();
 }
 
-class _SessionDrawerState extends State<_SessionDrawer> {
+class _SessionDrawerState extends State<_SessionDrawer>
+    with SingleTickerProviderStateMixin {
   bool _searching = false;
   String _query = '';
   final _searchController = TextEditingController();
   final _searchFocusNode = FocusNode();
+
+  /// 抽屉内容入场动画：整体淡入 + 轻微右滑（每次打开抽屉重播）
+  late final AnimationController _appearController = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
+  late final Animation<double> _appear = CurvedAnimation(
+    parent: _appearController,
+    curve: Curves.easeOutCubic,
+  );
 
   // 批量管理模式状态
   bool _batchMode = false;
@@ -1450,6 +1460,8 @@ class _SessionDrawerState extends State<_SessionDrawer> {
   @override
   void initState() {
     super.initState();
+    // 抽屉内容随 DrawerController 打开动画交错入场
+    _appearController.forward();
     // 主页长按菜单「批量管理」→ 进入多选模式
     widget.batchMode.addListener(_onBatchModeChanged);
   }
@@ -1477,6 +1489,7 @@ class _SessionDrawerState extends State<_SessionDrawer> {
   @override
   void dispose() {
     widget.batchMode.removeListener(_onBatchModeChanged);
+    _appearController.dispose();
     _searchController.dispose();
     _searchFocusNode.dispose();
     super.dispose();
@@ -1565,7 +1578,14 @@ class _SessionDrawerState extends State<_SessionDrawer> {
         allFilteredIds.isNotEmpty && allFilteredIds.every(_selectedIds.contains);
     return Drawer(
       child: SafeArea(
-        child: Column(
+        child: FadeTransition(
+          opacity: _appear,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.02, 0),
+              end: Offset.zero,
+            ).animate(_appear),
+            child: Column(
           children: [
             // 抽屉头部：批量模式操作栏 / 常规 Logo + 搜索 + 设置
             if (_batchMode)
@@ -1729,7 +1749,8 @@ class _SessionDrawerState extends State<_SessionDrawer> {
                                       // GestureDetector 包 ListTile：
                                       // ListTile 无 onLongPressStart，
                                       // 外包一层拿长按点全局坐标（锚点菜单用）
-                                      GestureDetector(
+                                      PressableScale(
+                                        child: GestureDetector(
                                         behavior: HitTestBehavior.translucent,
                                         onLongPressStart: _batchMode
                                             ? null
@@ -1784,12 +1805,15 @@ class _SessionDrawerState extends State<_SessionDrawer> {
                                             }
                                           },
                                         ),
+                                        ),
                                       ),
                                   ],
                               ],
                             ),
             ),
           ],
+            ),
+          ),
         ),
       ),
     );
