@@ -188,7 +188,14 @@ class _HomePageState extends State<HomePage> {
       model: s.model?.isNotEmpty == true ? s.model! : profile.defaultModel,
       skill: skill,
       memory: MemoryService(database: db),
-    )..loadMessages();
+    );
+    // 消息先加载完再进聊天态：避免 setState 后首帧渲染空列表
+    // （转圈）→ 消息到达 → 整列表重建，两帧重活叠一起掉帧
+    await chat.loadMessages();
+    if (!mounted) {
+      chat.dispose();
+      return;
+    }
     setState(() {
       _chat = chat;
       _lastDisplayCount = 0;
@@ -272,6 +279,15 @@ class _HomePageState extends State<HomePage> {
     final sessions = context.read<SessionsProvider>();
     final session = sessions.sessions.where((s) => s.id == id).firstOrNull;
     if (session == null) return;
+    // 切换会话：先让旧列表退场（置空聊天态），新列表构建放到下一帧，
+    // 避免旧列表销毁 + 新列表整树构建落在同一帧造成掉帧
+    final old = _chat;
+    if (old != null) {
+      setState(() => _chat = null);
+      old.dispose();
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+    }
     await _enterChat(session);
   }
 
@@ -508,8 +524,11 @@ class _HomePageState extends State<HomePage> {
             }
             if (mounted) setState(() => _removingSessionIds.removeAll(ids));
           },
-          onOpenChat: (id) {
-            _closeDrawer();
+          onOpenChat: (id) async {
+            // 先等抽屉关完再切会话：_enterChat 的 DB 读取 + 整列表
+            // Markdown 构建是重活，与关闭动画同帧会掉帧
+            await _closeDrawerAndWait();
+            if (!mounted) return;
             _openChat(id);
           },
           onOpenSettings: () {
@@ -608,6 +627,17 @@ class _HomePageState extends State<HomePage> {
       GlobalKey<GestureDrawerState>();
 
   void _openDrawer() => _drawerKey.currentState?.open();
+
+  /// 关抽屉并等动画走完（600ms 兜底：拖拽中调用动画不推进，Future
+  /// 永不完成，不能裸 await）。重活（切会话的列表构建）放在动画后，
+  /// 避免与关闭动画抢主线程造成掉帧
+  Future<void> _closeDrawerAndWait() async {
+    final closing = _drawerKey.currentState?.close();
+    if (closing == null) return;
+    await closing.timeout(const Duration(milliseconds: 600),
+        onTimeout: () {});
+  }
+
   void _closeDrawer() => _drawerKey.currentState?.close();
 
   /// effort tag：空闲态改预选档位 / 聊天态改当前会话档位
@@ -1366,6 +1396,10 @@ class _ChatArea extends StatelessWidget {
                           _MessageTimeLabel(timestamp: msg.createdAt),
                         MessageAppear(
                           key: ValueKey(msg.id),
+                          // 历史消息（非最后一条）不播入场动画：切换会话
+                          // 批量加载时每条一个动画控制器 + 整列表逐帧
+                          // 重绘是掉帧元凶；只有新出现的消息播动画
+                          enabled: isLast,
                           child: MessageBubble(
                             message: msg,
                             isStreaming: isLast && chat.isStreaming,
