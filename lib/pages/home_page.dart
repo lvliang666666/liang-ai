@@ -26,6 +26,7 @@ import '../utils/haptics.dart';
 import '../widgets/attachment_thumbnail.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
+import '../widgets/message_appear.dart';
 import '../widgets/message_bubble.dart';
 import 'settings_page.dart';
 
@@ -1325,15 +1326,19 @@ class _ChatArea extends StatelessWidget {
                       children: [
                         if (showTime)
                           _MessageTimeLabel(timestamp: msg.createdAt),
-                        MessageBubble(
-                          message: msg,
-                          isStreaming: isLast && chat.isStreaming,
-                          thinkingSeconds: chat.thinkingSeconds,
-                          toolResults: msg.id == chat.lastToolCallMessageId
-                              ? chat.toolResults
-                              : const [],
-                          toolExecuting: msg.id == chat.lastToolCallMessageId &&
-                              chat.status == ChatStatus.toolCalling,
+                        MessageAppear(
+                          key: ValueKey(msg.id),
+                          child: MessageBubble(
+                            message: msg,
+                            isStreaming: isLast && chat.isStreaming,
+                            thinkingSeconds: chat.thinkingSeconds,
+                            toolResults: msg.id == chat.lastToolCallMessageId
+                                ? chat.toolResults
+                                : const [],
+                            toolExecuting:
+                                msg.id == chat.lastToolCallMessageId &&
+                                    chat.status == ChatStatus.toolCalling,
+                          ),
                         ),
                       ],
                     );
