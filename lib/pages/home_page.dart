@@ -48,7 +48,9 @@ class _HomePageState extends State<HomePage> {
   final _scaffoldKey = GlobalKey<ScaffoldState>();
   final _inputController = TextEditingController();
   final _inputFocusNode = FocusNode();
-  final _chatScrollController = ScrollController();
+
+  /// 当前聊天区（滚动跟随用：经 GlobalKey 取 _ChatArea 自持的控制器）
+  final _chatAreaKey = GlobalKey<_ChatAreaState>();
   int _lastDisplayCount = 0;
 
   /// 抽屉批量管理模式开关（长按菜单「批量管理」触发）
@@ -85,7 +87,6 @@ class _HomePageState extends State<HomePage> {
     WidgetsBinding.instance.removeObserver(_KeyboardDismissObserver(this));
     _inputController.dispose();
     _inputFocusNode.dispose();
-    _chatScrollController.dispose();
     _drawerBatchMode.dispose();
     _chat?.dispose();
     _chat = null;
@@ -108,20 +109,24 @@ class _HomePageState extends State<HomePage> {
   }
 
   // ===== 滚动跟随（与原聊天页同逻辑） =====
+  // 滚动控制器由 _ChatArea 自持（每会话独立，随 State 销毁）；
+  // 宿主通过 GlobalKey 拿当前活跃的控制器做底部锚定
   void _maybeAutoScroll(int newCount) {
-    if (!_chatScrollController.hasClients) return;
+    final area = _chatAreaKey.currentState;
+    final controller = area?._scrollController;
+    if (controller == null || !controller.hasClients) return;
     if (newCount != _lastDisplayCount) {
       final isNewMessage = newCount > _lastDisplayCount;
       _lastDisplayCount = newCount;
       if (isNewMessage) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_chatScrollController.hasClients) {
-            _chatScrollController.jumpTo(0);
+          if (controller.hasClients) {
+            controller.jumpTo(0);
           }
         });
       }
-    } else if (_chatScrollController.offset <= 0.5) {
-      _chatScrollController.jumpTo(0);
+    } else if (controller.offset <= 0.5) {
+      controller.jumpTo(0);
     }
   }
 
@@ -154,18 +159,29 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 进入聊天态：构建 ChatProvider 并加载消息
+  ///
+  /// 切换会话时旧内容保持显示（不清空），数据在后台加载，就绪后
+  /// 一次性原子替换——加载时间被藏掉，UI 无空档无闪页。
+  /// [_switchToken] 递增防快速连点：只有最后一次切换的结果生效，
+  /// 过期结果直接丢弃（provider 已 dispose）。
+  int _switchToken = 0;
+
   Future<void> _enterChat(ChatSession session,
       {String? initialMessage,
       List<MessageAttachment> initialAttachments = const []}) async {
-    // 已有聊天态先释放（切换会话）：先置空再 dispose
-    final old = _chat;
-    _chat = null;
-    old?.dispose();
+    final token = ++_switchToken;
+    final isSwitch = _chat != null && _chat!.session.id != session.id;
+
+    // 切换会话：旧 provider 延后到新数据就绪再 dispose（旧内容保持
+    // 显示）；新建会话（_startChat）无旧态，直接走
+    final old = isSwitch ? _chat : null;
 
     final db = DatabaseService.instance;
     final s = await db.getSession(session.id);
     final profiles = await db.getAllProviders();
-    if (!mounted) return;
+    if (!mounted || token != _switchToken) {
+      return;
+    }
     if (s == null || profiles.isEmpty) return;
 
     ProviderProfile profile;
@@ -191,10 +207,12 @@ class _HomePageState extends State<HomePage> {
     // 消息先加载完再进聊天态：避免 setState 后首帧渲染空列表
     // （转圈）→ 消息到达 → 整列表重建，两帧重活叠一起掉帧
     await chat.loadMessages();
-    if (!mounted) {
+    if (!mounted || token != _switchToken) {
+      // 过期结果（期间用户又点了别的会话）：直接丢弃
       chat.dispose();
       return;
     }
+    old?.dispose();
     setState(() {
       _chat = chat;
       _lastDisplayCount = 0;
@@ -272,21 +290,17 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 抽屉点历史会话：主页切换到该会话（聊天态）
+  ///
+  /// 旧内容保持显示，_enterChat 后台加载数据，就绪后原子替换 +
+  /// 滑入过渡（_ChatArea 外层 AnimatedSwitcher）——无空档无闪页。
+  /// 点同一个会话 = 忽略（避免无意义的重载闪烁）。
   Future<void> _openChat(String id) async {
     Haptics.light();
     _unfocus();
+    if (_chat?.session.id == id) return;
     final sessions = context.read<SessionsProvider>();
     final session = sessions.sessions.where((s) => s.id == id).firstOrNull;
     if (session == null) return;
-    // 切换会话：先让旧列表退场（置空聊天态），新列表构建放到下一帧，
-    // 避免旧列表销毁 + 新列表整树构建落在同一帧造成掉帧
-    final old = _chat;
-    if (old != null) {
-      setState(() => _chat = null);
-      old.dispose();
-      await WidgetsBinding.instance.endOfFrame;
-      if (!mounted) return;
-    }
     await _enterChat(session);
   }
 
@@ -580,26 +594,46 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     // ===== 主体：空闲态问候语 / 聊天态消息列表 =====
+                    // AnimatedSwitcher：切换会话时新内容从右轻滑入+淡入，
+                    // 旧内容淡出（key 绑定会话 id，同会话重建不触发）。
+                    // 空闲态问候语与聊天态之间切换同样过渡，无闪页
                     Expanded(
-                      child: _chat == null
-                          ? Center(
-                              child: Text(
-                                '${_greeting()}，\n想聊点什么？',
-                                textAlign: TextAlign.center,
-                                style:
-                                    theme.textTheme.headlineMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.3,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 240),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) =>
+                            FadeTransition(
+                          opacity: animation,
+                          child: SlideTransition(
+                            position: Tween<Offset>(
+                              begin: const Offset(0.04, 0),
+                              end: Offset.zero,
+                            ).animate(animation),
+                            child: child,
+                          ),
+                        ),
+                        child: _chat == null
+                            ? Center(
+                                key: ValueKey('greeting'),
+                                child: Text(
+                                  '${_greeting()}，\n想聊点什么？',
+                                  textAlign: TextAlign.center,
+                                  style: theme.textTheme.headlineMedium
+                                      ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    height: 1.3,
+                                  ),
                                 ),
+                              )
+                            : _ChatArea(
+                                key: _chatAreaKey,
+                                chatKey: ValueKey(_chat!.session.id),
+                                chat: _chat!,
+                                onCountChanged: _maybeAutoScroll,
+                                onDelete: _deleteCurrentChat,
                               ),
-                            )
-                          : _ChatArea(
-                              key: ValueKey(_chat!.session.id),
-                              chat: _chat!,
-                              scrollController: _chatScrollController,
-                              onCountChanged: _maybeAutoScroll,
-                              onDelete: _deleteCurrentChat,
-                            ),
+                      ),
                     ),
                     // ===== 底部：tags 行 + 输入框（空闲态/聊天态共用） =====
                     _HomeInputBar(
@@ -1306,31 +1340,57 @@ class _HomeAttachmentPreview extends StatelessWidget {
 }
 
 /// 主页内嵌聊天区：消息列表（reverse 底部锚定）+ 错误提示
-class _ChatArea extends StatelessWidget {
+///
+/// 切换会话过渡：外层 AnimatedSwitcher——新会话内容从右轻滑入 +
+/// 淡入（240ms easeOutCubic），旧内容淡出。key 绑定会话 id，
+/// 同会话流式重建不触发过渡。加载在数据就绪后才发生（_enterChat
+/// 原子替换），过渡期间无空帧无加载态。
+/// ScrollController 自持：每个会话实例独立控制器，随 State 销毁，
+/// 避免跨会话复用同一控制器（旧列表 detach/新列表 attach 竞态）。
+class _ChatArea extends StatefulWidget {
   const _ChatArea({
     super.key,
+    required this.chatKey,
     required this.chat,
-    required this.scrollController,
     required this.onCountChanged,
     required this.onDelete,
   });
 
+  /// 会话身份 key：AnimatedSwitcher 据此判断是否播过渡
+  /// （宿主持 GlobalKey，此 key 作为 child 身份挂在内部）
+  final Key chatKey;
   final ChatProvider chat;
-  final ScrollController scrollController;
   final void Function(int newCount) onCountChanged;
   final VoidCallback onDelete;
+
+  @override
+  State<_ChatArea> createState() => _ChatAreaState();
+}
+
+class _ChatAreaState extends State<_ChatArea> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     // 订阅 ChatProvider 重建（流式/状态变化）。
     // 单页架构下 ChatProvider 不在 Provider 树中，必须用 ListenableBuilder。
-    return ListenableBuilder(
-      listenable: chat,
-      builder: (context, _) {
-        onCountChanged(chat.displayMessages.length);
-        return _buildList(context, theme);
-      },
+    // KeyedSubtree 挂会话身份 key：AnimatedSwitcher 的过渡判定依据
+    return KeyedSubtree(
+      key: widget.chatKey,
+      child: ListenableBuilder(
+        listenable: widget.chat,
+        builder: (context, _) {
+          widget.onCountChanged(widget.chat.displayMessages.length);
+          return _buildList(context, theme);
+        },
+      ),
     );
   }
 
@@ -1338,7 +1398,7 @@ class _ChatArea extends StatelessWidget {
     return Column(
       children: [
         // 错误提示条
-        if (chat.status == ChatStatus.error)
+        if (widget.chat.status == ChatStatus.error)
           Container(
             width: double.infinity,
             margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -1355,7 +1415,7 @@ class _ChatArea extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    chat.errorMessage,
+                    widget.chat.errorMessage,
                     style: TextStyle(
                         fontSize: 13,
                         color: theme.colorScheme.onErrorContainer),
@@ -1364,7 +1424,7 @@ class _ChatArea extends StatelessWidget {
                 InkWell(
                   onTap: () {
                     Haptics.light();
-                    chat.clearError();
+                    widget.chat.clearError();
                   },
                   child: Icon(Icons.close,
                       size: 16, color: theme.colorScheme.onErrorContainer),
@@ -1374,17 +1434,17 @@ class _ChatArea extends StatelessWidget {
           ),
         // 消息列表（reverse：底部锚定，内容置顶显示）
         Expanded(
-          child: chat.displayMessages.isEmpty
+          child: widget.chat.displayMessages.isEmpty
               ? const Center(child: CircularProgressIndicator())
               : ListView.builder(
-                  controller: scrollController,
+                  controller: _scrollController,
                   reverse: true,
                   padding:
                       const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  itemCount: chat.displayMessages.length,
+                  itemCount: widget.chat.displayMessages.length,
                   itemBuilder: (context, index) {
-                    final msg = chat.displayMessages[
-                        chat.displayMessages.length - 1 - index];
+                    final msg = widget.chat.displayMessages[
+                        widget.chat.displayMessages.length - 1 - index];
                     if (msg.isToolResult) return const SizedBox.shrink();
                     final isLast = index == 0;
                     // 微信式时间戳：首条必显，之后与上一条间隔 >5 分钟才显示
@@ -1396,14 +1456,14 @@ class _ChatArea extends StatelessWidget {
                         MessageBubble(
                           key: ValueKey(msg.id),
                           message: msg,
-                          isStreaming: isLast && chat.isStreaming,
-                          thinkingSeconds: chat.thinkingSeconds,
-                          toolResults: msg.id == chat.lastToolCallMessageId
-                              ? chat.toolResults
+                          isStreaming: isLast && widget.chat.isStreaming,
+                          thinkingSeconds: widget.chat.thinkingSeconds,
+                          toolResults: msg.id == widget.chat.lastToolCallMessageId
+                              ? widget.chat.toolResults
                               : const [],
                           toolExecuting:
-                              msg.id == chat.lastToolCallMessageId &&
-                                  chat.status == ChatStatus.toolCalling,
+                              msg.id == widget.chat.lastToolCallMessageId &&
+                                  widget.chat.status == ChatStatus.toolCalling,
                         ),
                       ],
                     );
@@ -1416,7 +1476,7 @@ class _ChatArea extends StatelessWidget {
 
   /// 是否在该消息上方显示时间标签（微信规则：首条必显 + 间隔超 5 分钟）
   bool _shouldShowTime(int index) {
-    final msgs = chat.displayMessages;
+    final msgs = widget.chat.displayMessages;
     if (index >= msgs.length) return false;
     final msg = msgs[msgs.length - 1 - index];
     if (msg.isToolResult) return false;
