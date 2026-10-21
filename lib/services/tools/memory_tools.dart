@@ -12,7 +12,13 @@ import '../tool_registry.dart';
 
 /// 保存记忆：用户明确表达偏好/事实/背景时调用
 class MemorySaveTool extends ToolHandler {
-  const MemorySaveTool();
+  const MemorySaveTool({this.sourceSkill});
+
+  /// 来源 Skill 名（ChatProvider 构建注册表时注入，溯源用，可空）
+  ///
+  /// 非 final：const 目录里的实例是共享模板，注册表构建时按当前会话
+  /// 的 Skill 复制并填入来源。
+  final String? sourceSkill;
 
   @override
   String get name => 'memory_save';
@@ -49,6 +55,7 @@ class MemorySaveTool extends ToolHandler {
     final memory = await MemoryService(database: DatabaseService.instance).save(
       content,
       tag: tag is String && tag.trim().isNotEmpty ? tag.trim() : null,
+      sourceSkill: sourceSkill,
     );
     return '已记住：${memory.content}'
         '${memory.tag != null ? '（标签：${memory.tag}）' : ''}';
