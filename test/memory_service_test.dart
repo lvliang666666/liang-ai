@@ -5,6 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+/// 归一化函数暴露给测试断言用（与 MemoryService.normalize 同源）
+String norm(String s) => MemoryService.normalize(s);
+
 void main() {
   setUpAll(() {
     sqfliteFfiInit();
@@ -113,6 +116,64 @@ void main() {
       expect(updated.tag, '新标签');
     });
 
+    test('近似去重：仅标点/空白/大小写差异视为同一条', () async {
+      await service.saveAt('用户喜欢简洁回答。', now: 1000);
+      final updated = await service.saveAt('用户，喜欢 简洁回答', now: 2000);
+      expect(await service.count(), 1);
+      expect(updated.updatedAt, 2000);
+      expect(updated.createdAt, 1000); // 原条目时间保留
+    });
+
+    test('近似去重：英文大小写归一化', () async {
+      await service.saveAt('User likes Flutter', now: 1000);
+      await service.saveAt('user likes flutter', now: 2000);
+      expect(await service.count(), 1);
+    });
+
+    test('包含合并：新句包含旧句时保留信息更全的新句', () async {
+      await service.saveAt('用户在上海工作', now: 1000);
+      final updated =
+          await service.saveAt('用户在上海工作，公司做人工智能', now: 2000);
+      expect(await service.count(), 1);
+      expect(updated.content, '用户在上海工作，公司做人工智能');
+    });
+
+    test('包含合并：旧句信息更全时保留旧句（只刷新时间戳）', () async {
+      await service.saveAt('用户喜欢简洁回答，讨厌冗长废话', now: 1000);
+      final updated = await service.saveAt('用户喜欢简洁回答', now: 2000);
+      expect(await service.count(), 1);
+      expect(updated.content, '用户喜欢简洁回答，讨厌冗长废话');
+      expect(updated.updatedAt, 2000);
+    });
+
+    test('部分重叠不合并：互不包含的两句正常共存', () async {
+      await service.saveAt('用户在上海浦东新区工作，公司做人工智能', now: 1000);
+      await service.saveAt('用户在上海工作', now: 2000);
+      expect(await service.count(), 2); // 「上海工作」不是长句的子串
+    });
+
+    test('包含合并不误伤：短边不足 6 字不合并', () async {
+      await service.saveAt('用户喜欢简洁回答风格', now: 1000);
+      await service.saveAt('喜欢简洁', now: 2000);
+      expect(await service.count(), 2); // 「喜欢简洁」只有 4 字，不合并
+    });
+
+    test('否定句守卫：「喜欢」与「不喜欢」不合并', () async {
+      await service.saveAt('用户不喜欢冗长回答', now: 1000);
+      await service.saveAt('用户喜欢冗长回答', now: 2000);
+      expect(await service.count(), 2);
+    });
+
+    test('归档行不参与去重：新记忆与归档内容相同仍正常新建', () async {
+      // 手工造一条归档行
+      await service.saveAt('用户喜欢简洁回答', tag: Memory.archiveTag, now: 1);
+      await service.saveAt('用户喜欢简洁回答', now: 2);
+      expect(await service.count(), 2);
+      final all = await service.getAll();
+      final active = all.where((m) => !m.isArchived).toList();
+      expect(active.single.content, '用户喜欢简洁回答');
+    });
+
     test('save 空内容抛 ArgumentError', () {
       expect(() => service.save('   '), throwsArgumentError);
     });
@@ -163,6 +224,16 @@ void main() {
       expect(await service.count(), 1);
     });
 
+    test('deleteByKeyword 不删归档行', () async {
+      await service.saveAt('用户喜欢简洁回答', now: 1);
+      await service.saveAt('用户喜欢简洁回答', tag: Memory.archiveTag, now: 2);
+
+      final deleted = await service.deleteByKeyword('简洁');
+      expect(deleted, 1); // 只删活跃那条
+      expect(await service.count(), 1);
+      expect((await service.getAll()).single.isArchived, isTrue);
+    });
+
     test('deleteAll 清空', () async {
       await service.saveAt('a', now: 1);
       await service.saveAt('b', now: 2);
@@ -197,34 +268,99 @@ void main() {
 - 记忆5
 - 记忆4''');
     });
+
+    test('归档行置尾单独成段，不占活跃条数名额', () async {
+      await service.saveAt('活跃记忆A', now: 1000);
+      await service.saveAt('活跃记忆B', now: 2000);
+      await service.saveAt('归档摘要内容', tag: Memory.archiveTag, now: 500);
+
+      final text = await service.recentText(limit: 2);
+      expect(text, '''
+【用户记忆】（长期有效，跨会话）
+- 活跃记忆B
+- 活跃记忆A
+【历史归档】（早期记忆的压缩摘要，仅供参考）
+- 归档摘要内容''');
+    });
+
+    test('只有归档行时也正常渲染归档段', () async {
+      await service.saveAt('归档摘要内容', tag: Memory.archiveTag, now: 1);
+      final text = await service.recentText();
+      expect(text, '''
+【用户记忆】（长期有效，跨会话）
+【历史归档】（早期记忆的压缩摘要，仅供参考）
+- 归档摘要内容''');
+    });
   });
 
-  group('容量上限', () {
-    test('超过 200 条删最旧', () async {
+  group('容量上限（滚动压缩）', () {
+    test('超过 200 条：最旧 40 条活跃记忆压缩为一条归档摘要', () async {
       for (var i = 1; i <= MemoryService.maxMemories + 10; i++) {
         await service.saveAt('记忆$i', now: i);
       }
-      expect(await service.count(), MemoryService.maxMemories);
-      // 最旧的 10 条被删，最新保留
+      // 210 - 40（压缩） + 1（归档行） = 171
+      expect(await service.count(), MemoryService.maxMemories + 10 - 40 + 1);
       final all = await service.getAll();
+      // 最新记忆保留
       expect(all.first.content, '记忆${MemoryService.maxMemories + 10}');
-      expect(
-          anyOfMemoryExists(all, '记忆10'), isFalse); // 第 10 条已被挤出
+      // 最旧 40 条（记忆1~40）已从活跃区消失
+      expect(anyOfMemoryExists(all, '记忆1'), isFalse);
+      expect(anyOfMemoryExists(all, '记忆40'), isFalse);
+      // 第 41 条仍在
+      expect(anyOfMemoryExists(all, '记忆41'), isTrue);
+      // 归档摘要行存在且包含被压缩条目的内容
+      final archived = all.where((m) => m.isArchived).toList();
+      expect(archived.length, 1);
+      expect(archived.single.content, contains('记忆1'));
+      expect(archived.single.content, contains('记忆40'));
+      expect(archived.single.tag, Memory.archiveTag);
     });
 
-    test('去重更新不触发误删（更新旧条目时间戳后它变成最新）', () async {
+    test('归档行永不二次压缩：池满后归档行保留', () async {
+      // 第一轮压缩产生归档行
+      for (var i = 1; i <= MemoryService.maxMemories + 40; i++) {
+        await service.saveAt('记忆$i', now: i);
+      }
+      final firstArchive = (await service.getAll())
+          .where((m) => m.isArchived)
+          .toList();
+      expect(firstArchive.length, 1);
+
+      // 再灌 40 条触发第二轮压缩，旧归档行仍在
+      for (var i = 241; i <= 280; i++) {
+        await service.saveAt('记忆$i', now: i);
+      }
+      final archives = (await service.getAll())
+          .where((m) => m.isArchived)
+          .toList();
+      expect(archives.length, 2); // 两轮各一条，互不合并
+      expect(archives.any((m) => m.id == firstArchive.single.id), isTrue);
+    });
+
+    test('去重更新不触发误压缩（更新旧条目时间戳后它变成最新）', () async {
       for (var i = 1; i <= MemoryService.maxMemories; i++) {
         await service.saveAt('记忆$i', now: i);
       }
-      // 更新最旧的一条 → 时间戳变最新，不应被挤出
+      // 更新最旧的一条 → 时间戳变最新，不应被压缩
       await service.saveAt('记忆1', now: MemoryService.maxMemories + 1);
       expect(await service.count(), MemoryService.maxMemories);
       final all = await service.getAll();
       expect(all.first.content, '记忆1'); // 升到最新
-      // 满员状态下更新不增不减：没有任何条目被挤出
-      //（记忆2 时间戳 2 仍是最旧，但总数未超上限，无需删除）
+      // 满员状态下更新不增不减：没有任何条目被压缩
+      expect(all.where((m) => m.isArchived), isEmpty);
       expect(anyOfMemoryExists(all, '记忆2'), isTrue);
-      expect(anyOfMemoryExists(all, '记忆1'), isTrue);
+    });
+  });
+
+  group('归一化 normalize', () {
+    test('去空白/标点/大小写', () {
+      expect(norm('用户，喜欢 简洁回答。'), '用户喜欢简洁回答');
+      expect(norm('User Likes Flutter!'), 'userlikesflutter');
+      expect(norm('  有 空格  '), '有空格');
+    });
+
+    test('中文引号与破折号也去除', () {
+      expect(norm('「记住」——这件事'), '记住这件事');
     });
   });
 
