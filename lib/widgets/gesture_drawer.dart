@@ -13,8 +13,13 @@ import 'package:flutter/material.dart';
 ///   GestureDetector 重建为无手势形态，进行中的 recognizer 被销毁，
 ///   拖拽当场中断（抽屉卡在微开状态的根因）。打开态主页面被
 ///   面板/Scrim 覆盖，回调天然不会触发，无需条件守卫
-/// - 三层各包 RepaintBoundary：拖拽每帧只更新 Transform 矩阵与
-///   Scrim 透明度，主页面/抽屉内容用缓存层合成，不整树重绘
+/// - RepaintBoundary 包在 Transform **内侧**（缓存内容层）：拖拽/动画
+///   每帧只更新变换矩阵与 Scrim 透明度，主页面/抽屉内容走缓存层合成
+///   不重绘。boundary 包在变换外侧时，矩阵变化会把整个 boundary 子树
+///   标脏，主页内容逐帧重绘（切换会话掉帧元凶之一）
+/// - close() 返回动画完成 Future（被拖拽打断则永不完成，等待方需
+///   超时兜底）：宿主可等抽屉关完再做重活（如切换会话的列表构建），
+///   避免与关闭动画抢主线程
 ///
 /// [drawer] 抽屉内容；[child] 主页面。
 class GestureDrawer extends StatefulWidget {
@@ -62,8 +67,11 @@ class GestureDrawerState extends State<GestureDrawer>
         duration: _animateDuration, curve: Curves.easeOutCubic);
   }
 
-  void close() {
-    _controller.animateBack(0,
+  /// 关闭抽屉并返回动画完成 Future。
+  /// 拖拽中调用（stop 后）动画不会推进，Future 永不完成——
+  /// 等待方必须加超时兜底，不能裸 await。
+  Future<void> close() {
+    return _controller.animateBack(0,
         duration: _animateDuration, curve: Curves.easeInCubic);
   }
 
@@ -130,20 +138,25 @@ class GestureDrawerState extends State<GestureDrawer>
   @override
   Widget build(BuildContext context) {
     final width = _drawerWidth(context);
+    // 主页/抽屉内容只构建一次（child 参数），动画每帧只重建
+    // Transform/Scrim 这几个轻量包装节点，内容层不进 builder
     return AnimatedBuilder(
       animation: _controller,
-      builder: (context, child) {
+      child: RepaintBoundary(child: widget.drawer),
+      builder: (context, drawerChild) {
         final p = _progress;
         return Stack(
           children: [
             // 主页面：随抽屉打开轻微左移 + 缩放（层次感）。
             // 拖拽回调常驻：打开态被面板/Scrim 覆盖不会误触发；
-            // 条件挂载会在拖拽中途销毁 recognizer 导致卡死（见类注释）
-            RepaintBoundary(
-              child: Transform.translate(
-                offset: Offset(-width * 0.12 * p, 0),
-                child: Transform.scale(
-                  scale: 1 - 0.04 * p,
+            // 条件挂载会在拖拽中途销毁 recognizer 导致卡死（见类注释）。
+            // RepaintBoundary 在 Transform 内侧：内容层缓存化，每帧
+            // 只重算矩阵，不把主页子树标脏重绘
+            Transform.translate(
+              offset: Offset(-width * 0.12 * p, 0),
+              child: Transform.scale(
+                scale: 1 - 0.04 * p,
+                child: RepaintBoundary(
                   child: GestureDetector(
                     behavior: HitTestBehavior.translucent,
                     onHorizontalDragStart: _onDragStart,
@@ -181,15 +194,13 @@ class GestureDrawerState extends State<GestureDrawer>
                   onHorizontalDragStart: _onDragStart,
                   onHorizontalDragUpdate: _onDragUpdate,
                   onHorizontalDragEnd: _onDragEnd,
-                  child: child,
+                  child: drawerChild,
                 ),
               ),
             ),
           ],
         );
       },
-      // 抽屉内容只构建一次（平移由 Transform 完成）
-      child: RepaintBoundary(child: widget.drawer),
     );
   }
 }
