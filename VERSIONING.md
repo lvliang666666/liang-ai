@@ -8,7 +8,17 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.3.6**（2026-10-22 发布）
+**当前版本：v2.3.7**（2026-10-22 发布）
+
+v2.3.7 在 v2.3.6 基础上优化（分支「UI批次1」合并，UI 体验改进 → PATCH）：
+
+- 代码块复制按钮内状态切换（bd15d2e）：点「复制」原地变绿色对勾「✓已复制」（#34C759），1500ms 自动还原；重复点击重新计时；不再弹底部条
+- 全局 Toast 兜底（a4ba923）：新增 lib/widgets/app_toast.dart（Overlay 实现，非 SnackBar）——深色胶囊底部居中、不遮输入栏、不阻断点击、单例新替旧；淡入 200ms / 停留 2000ms / 淡出 150ms；17 处 SnackBar 全量迁移（消息气泡/输入栏/模型面板/记忆页/设置页/Skill 编辑页/主页）
+- Skill 选择面板改标准 Bottom Sheet（bd15d2e）：新 lib/widgets/app_bottom_sheet.dart 统一骨架（showAppBottomSheet + SheetScaffold + SheetKeyboardInset）——顶部圆角 16、内容最大 60% 屏高、下拉关闭、遮罩 rgba(0,0,0,0.4)、250ms ease-out 滑入；搜索框固定顶部、键盘弹出自动滚回顶部、空状态「暂无可用 Skill」
+- Skill 面板键盘适配修复（1f31fd7）：高度上限从 showModalBottomSheet.constraints（键盘 padding 外层）移到 SheetKeyboardInset 的 padding 内层 ConstrainedBox——键盘弹出时内容 = min(60%屏高, 屏高−键盘高) 不被挤占，面板整体平滑上移至键盘上沿、搜索框不贴键盘、列表保持完整可视；收起回落原位；极端高键盘内容自动收缩不溢出
+- 387 项测试全绿（新增 7 项：SheetKeyboardInset 键盘适配布局回归）
+
+### v2.3.6（2026-10-22）
 
 v2.3.6 在 v2.3.5 基础上优化（分支「快赢批次」合并，测试根治 + 体验小改进 → PATCH）：
 
