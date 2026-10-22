@@ -169,16 +169,18 @@ void main() {
       await tester.pump();
 
       await tester.tap(find.text('保存'));
-      await tester.pump(const Duration(milliseconds: 400)); // 动画 + SnackBar
+      // Toast 走 Overlay：第 1 帧 post-frame 写入文案，第 2 帧才上屏
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
 
       // 未 pop：编辑页还在
       expect(find.byType(SkillEditorPage), findsOneWidget);
-      // 提示了名称错误
+      // 提示了名称错误（Toast 走 Overlay，文案在 post-frame 帧才上屏）
       expect(find.text('名称不能为空'), findsOneWidget);
       // 未触发 create
       expect(provider.created, isEmpty);
 
-      // 收尾：让 SnackBar timer 走完，避免 pending timer 报错
+      // 收尾：让 Toast timer 走完，避免 pending timer 报错
       await tester.pump(const Duration(seconds: 4));
     });
 
