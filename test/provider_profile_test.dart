@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'helpers/test_db.dart';
+
 void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
@@ -76,28 +78,7 @@ void main() {
 
     setUp(() async {
       db = DatabaseService.instance;
-      final inMemory = await databaseFactory.openDatabase(
-        inMemoryDatabasePath,
-        options: OpenDatabaseOptions(version: 4),
-      );
-      await inMemory.execute('''
-        CREATE TABLE IF NOT EXISTS sessions (
-          id TEXT PRIMARY KEY, title TEXT NOT NULL,
-          created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-          effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
-          skill_id TEXT, provider_id TEXT, model TEXT
-        )
-      ''');
-      await inMemory.execute('''
-        CREATE TABLE IF NOT EXISTS providers (
-          id TEXT PRIMARY KEY, name TEXT NOT NULL,
-          base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
-          default_model TEXT NOT NULL DEFAULT '',
-          capabilities TEXT NOT NULL DEFAULT '{}',
-          dialect TEXT NOT NULL DEFAULT '{}',
-          is_builtin INTEGER NOT NULL DEFAULT 0
-        )
-      ''');
+      final inMemory = await openTestDb();
       await db.initForTest(inMemory);
     });
 
@@ -285,28 +266,12 @@ void main() {
       });
       await old.close();
 
-      // 以 v4 打开，触发 onUpgrade
+      // 以 v4 打开，触发生产 onUpgrade 本尊（v3→v4 迁移链）
       final upgraded = await databaseFactory.openDatabase(
         dbPath,
         options: OpenDatabaseOptions(
           version: 4,
-          onUpgrade: (db, oldV, newV) async {
-            if (oldV < 4) {
-              await db.execute(
-                  'ALTER TABLE sessions ADD COLUMN provider_id TEXT');
-              await db.execute('ALTER TABLE sessions ADD COLUMN model TEXT');
-              await db.execute('''
-                CREATE TABLE IF NOT EXISTS providers (
-                  id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                  base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
-                  default_model TEXT NOT NULL DEFAULT '',
-                  capabilities TEXT NOT NULL DEFAULT '{}',
-                  dialect TEXT NOT NULL DEFAULT '{}',
-                  is_builtin INTEGER NOT NULL DEFAULT 0
-                )
-              ''');
-            }
-          },
+          onUpgrade: DatabaseService.onUpgrade,
         ),
       );
 

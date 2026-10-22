@@ -10,6 +10,8 @@ import 'package:ai_chat_app/services/tool_registry.dart';
 import 'package:ai_chat_app/services/tools/builtin_tools.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'helpers/test_db.dart';
+
 void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
@@ -17,46 +19,7 @@ void main() {
   late Database db;
 
   setUp(() async {
-    db = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(version: 6, onCreate: (db, version) async {
-        await db.execute('''
-          CREATE TABLE sessions (
-            id TEXT PRIMARY KEY, title TEXT NOT NULL,
-            created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-            effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
-            skill_id TEXT, provider_id TEXT, model TEXT
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE messages (
-            id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
-            content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
-            attachments TEXT NOT NULL DEFAULT '[]',
-            tool_calls TEXT NOT NULL DEFAULT '[]', tool_call_id TEXT,
-            created_at INTEGER NOT NULL
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE skills (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL,
-            icon TEXT NOT NULL DEFAULT '🤖', description TEXT NOT NULL DEFAULT '',
-            prompt TEXT NOT NULL DEFAULT '', temperature REAL, effort TEXT,
-            tools TEXT, is_builtin INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-        await db.execute('''
-          CREATE TABLE providers (
-            id TEXT PRIMARY KEY, name TEXT NOT NULL,
-            base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
-            default_model TEXT NOT NULL DEFAULT '',
-            capabilities TEXT NOT NULL DEFAULT '{}',
-            dialect TEXT NOT NULL DEFAULT '{}',
-            is_builtin INTEGER NOT NULL DEFAULT 0
-          )
-        ''');
-      }),
-    );
+    db = await openTestDb();
     await DatabaseService.instance.initForTest(db);
   });
 

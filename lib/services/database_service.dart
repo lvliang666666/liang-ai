@@ -15,7 +15,9 @@ class DatabaseService {
   static final DatabaseService instance = DatabaseService._();
 
   static const _dbName = 'ai_chat.db';
-  static const _dbVersion = 7;
+
+  /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
+  static const int dbVersion = 7;
 
   Database? _db;
 
@@ -33,13 +35,23 @@ class DatabaseService {
     final dir = await getDatabasesPath();
     return openDatabase(
       p.join(dir, _dbName),
-      version: _dbVersion,
+      version: dbVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
   }
 
-  Future<void> _onCreate(Database db, int version) async {
+  /// 建表入口（公开给测试 fixture：测试库直接跑生产建表逻辑，
+  /// schema 与生产同源，杜绝手写 CREATE TABLE 漂移）
+  static Future<void> onCreate(Database db, int version) => _onCreate(db, version);
+
+  /// 迁移入口（公开给测试 fixture：迁移测试直接跑生产迁移链）
+  static Future<void> onUpgrade(Database db, int oldVersion, int newVersion) =>
+      _onUpgrade(db, oldVersion, newVersion);
+
+  static Future<void> _onCreate(Database db, int version) async {
+    // 注意：这里建的是「当前版本」的完整 schema。老版本升级路径由
+    // _onUpgrade 覆盖（v1 老库 → 逐版本迁移上来），两条路径都必须维护。
     await db.execute('''
       CREATE TABLE sessions (
         id TEXT PRIMARY KEY,
@@ -75,7 +87,8 @@ class DatabaseService {
   }
 
   /// 版本迁移：老用户数据无损升级
-  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+  static Future<void> _onUpgrade(
+      Database db, int oldVersion, int newVersion) async {
     if (oldVersion < 2) {
       // v1 → v2：sessions 加 agent_id 列 + 新建 agents 表
       await db.execute('ALTER TABLE sessions ADD COLUMN agent_id TEXT');
@@ -121,7 +134,7 @@ class DatabaseService {
     }
   }
 
-  Future<void> _createAgentsTable(Database db) async {
+  static Future<void> _createAgentsTable(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
@@ -136,7 +149,7 @@ class DatabaseService {
     ''');
   }
 
-  Future<void> _createSkillsTable(Database db) async {
+  static Future<void> _createSkillsTable(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS skills (
         id TEXT PRIMARY KEY,
@@ -152,7 +165,7 @@ class DatabaseService {
     ''');
   }
 
-  Future<void> _createProvidersTable(Database db) async {
+  static Future<void> _createProvidersTable(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS providers (
         id TEXT PRIMARY KEY,
@@ -167,7 +180,7 @@ class DatabaseService {
     ''');
   }
 
-  Future<void> _createMemoriesTable(Database db) async {
+  static Future<void> _createMemoriesTable(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,

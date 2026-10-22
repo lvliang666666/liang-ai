@@ -42,8 +42,8 @@ class CodeBlockWidget extends StatelessWidget {
                 const Spacer(),
                 InkWell(
                   onTap: () async {
-                    Haptics.light();
                     await Clipboard.setData(ClipboardData(text: code));
+                    Haptics.medium(); // 复制完成反馈（三档词汇表：medium）
                     if (context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
