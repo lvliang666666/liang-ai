@@ -26,6 +26,7 @@ import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import '../utils/transitions.dart';
 import '../widgets/attachment_thumbnail.dart';
+import '../widgets/app_bottom_sheet.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
 import '../widgets/gesture_drawer.dart';
@@ -742,6 +743,8 @@ class _HomePageState extends State<HomePage> {
   /// 主页 agent tag：空闲态改预选 / 聊天态改当前会话 Skill
   Future<void> _pickSkillForHome() async {
     Haptics.light();
+    // 打开面板前收起键盘（需求：点「+」/tag 后键盘先收起，面板再滑出）
+    FocusManager.instance.primaryFocus?.unfocus();
     final skills = context.read<SkillProvider>();
     if (!skills.loaded) await skills.load();
     if (!mounted) return;
@@ -750,12 +753,8 @@ class _HomePageState extends State<HomePage> {
     final chat = _chat;
     final currentId = chat != null ? chat.skill?.id : _selectedSkill?.id;
 
-    final result = await showModalBottomSheet<skill_model.Skill?>(
+    final result = await showAppBottomSheet<skill_model.Skill?>(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
       builder: (context) => _SkillPickerSheet(
         skills: skills,
         recentIds: context.read<SettingsService>().recentSkillIds,
@@ -2098,6 +2097,15 @@ class _SkillPickerSheetState extends State<_SkillPickerSheet> {
   String _query = '';
   bool _showAll = false;
 
+  // 键盘适配：内容区滚动控制器（键盘弹出时自动滚到顶部，让搜索框可见）
+  final ScrollController _listController = ScrollController();
+
+  @override
+  void dispose() {
+    _listController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -2127,35 +2135,44 @@ class _SkillPickerSheetState extends State<_SkillPickerSheet> {
     }
     final recentIdsInFiltered = recent.map((a) => a.id).toSet();
 
-    return SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text('选择 Skill 开始新对话',
-                style: theme.textTheme.titleMedium),
-          ),
-          // 搜索框
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: TextField(
-              autofocus: false,
-              onChanged: (v) => setState(() => _query = v),
-              decoration: InputDecoration(
-                isDense: true,
-                hintText: '搜索 Skill',
-                prefixIcon: const Icon(Icons.search, size: 20),
-                contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
-              ),
+    // 键盘适配：键盘弹出时内容区被压缩，自动滚到顶部让搜索框保持可见
+    // （搜索框在 SheetScaffold 的固定 header 区，不随列表滚动）
+    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    if (keyboardInset > 0 && _listController.hasClients) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_listController.hasClients &&
+            _listController.offset > 0) {
+          _listController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
+          );
+        }
+      });
+    }
+
+    return SheetKeyboardInset(
+      child: SheetScaffold(
+        title: '选择 Skill',
+        onClose: () => Navigator.pop(context),
+        header: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: TextField(
+            autofocus: false,
+            onChanged: (v) => setState(() => _query = v),
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: '搜索 Skill',
+              prefixIcon: const Icon(Icons.search, size: 20),
+              contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
             ),
           ),
-          Flexible(
-            child: ListView(
-              shrinkWrap: true,
-              padding: const EdgeInsets.only(bottom: 8),
-              children: [
+        ),
+        child: ListView(
+          controller: _listController,
+          padding: const EdgeInsets.only(bottom: 8),
+          children: [
                 // ===== 默认助手（主页 agent tag 模式） =====
                 if (widget.includeDefault)
                   ListTile(
@@ -2271,10 +2288,18 @@ class _SkillPickerSheetState extends State<_SkillPickerSheet> {
                                   theme.colorScheme.onSurfaceVariant)),
                     ),
                   ),
-              ],
-            ),
-          ),
-        ],
+                // 空状态：无任何 Skill 时显示（需求：不出现空白面板）
+                if (all.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Center(
+                      child: Text('暂无可用 Skill',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant)),
+                    ),
+                  ),
+          ],
+        ),
       ),
     );
   }
@@ -2330,13 +2355,8 @@ class _NewChatPresetSheetState extends State<_NewChatPresetSheet> {
             trailing: const Icon(Icons.keyboard_arrow_down),
             onTap: () async {
               Haptics.light();
-              final picked = await showModalBottomSheet<skill_model.Skill?>(
+              final picked = await showAppBottomSheet<skill_model.Skill?>(
                 context: context,
-                isScrollControlled: true,
-                shape: const RoundedRectangleBorder(
-                  borderRadius:
-                      BorderRadius.vertical(top: Radius.circular(16)),
-                ),
                 builder: (context) => _SkillPickerSheet(
                   skills: widget.skills,
                   recentIds: widget.recentIds,
