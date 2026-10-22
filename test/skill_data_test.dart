@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'helpers/test_db.dart';
+
 void main() {
   setUpAll(() {
     sqfliteFfiInit();
@@ -14,52 +16,7 @@ void main() {
 
   setUp(() async {
     db = DatabaseService.instance;
-    final inMemory = await databaseFactory.openDatabase(
-      inMemoryDatabasePath,
-      options: OpenDatabaseOptions(
-        version: 6,
-        onCreate: (d, v) async {
-          await d.execute('''
-            CREATE TABLE sessions (
-              id TEXT PRIMARY KEY, title TEXT NOT NULL,
-              created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
-              effort TEXT NOT NULL DEFAULT 'max', agent_id TEXT,
-              skill_id TEXT, provider_id TEXT, model TEXT
-            )
-          ''');
-          await d.execute('''
-            CREATE TABLE messages (
-              id TEXT PRIMARY KEY, session_id TEXT NOT NULL, role TEXT NOT NULL,
-              content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '',
-              attachments TEXT NOT NULL DEFAULT '[]',
-              tool_calls TEXT NOT NULL DEFAULT '[]', tool_call_id TEXT,
-              created_at INTEGER NOT NULL
-            )
-          ''');
-          await d.execute(
-            'CREATE INDEX idx_messages_session ON messages(session_id, created_at)',
-          );
-          await d.execute('''
-            CREATE TABLE skills (
-              id TEXT PRIMARY KEY, name TEXT NOT NULL,
-              icon TEXT NOT NULL DEFAULT '🤖', description TEXT NOT NULL DEFAULT '',
-              prompt TEXT NOT NULL DEFAULT '', temperature REAL, effort TEXT,
-              tools TEXT, is_builtin INTEGER NOT NULL DEFAULT 0
-            )
-          ''');
-          await d.execute('''
-            CREATE TABLE providers (
-              id TEXT PRIMARY KEY, name TEXT NOT NULL,
-              base_url TEXT NOT NULL DEFAULT '', api_key TEXT NOT NULL DEFAULT '',
-              default_model TEXT NOT NULL DEFAULT '',
-              capabilities TEXT NOT NULL DEFAULT '{}',
-              dialect TEXT NOT NULL DEFAULT '{}',
-              is_builtin INTEGER NOT NULL DEFAULT 0
-            )
-          ''');
-        },
-      ),
-    );
+    final inMemory = await openTestDb();
     await db.initForTest(inMemory);
   });
 
@@ -239,33 +196,12 @@ void main() {
       });
       await old.close();
 
-      // 重新以 v6 打开，触发 onUpgrade（与 DatabaseService._onUpgrade 一致）
+      // 重新以 v6 打开，触发生产 onUpgrade 本尊（v5→v6 迁移链）
       final upgraded = await databaseFactory.openDatabase(
         dbPath,
         options: OpenDatabaseOptions(
           version: 6,
-          onUpgrade: (d, oldV, newV) async {
-            if (oldV < 6) {
-              await d.execute('ALTER TABLE sessions ADD COLUMN skill_id TEXT');
-              await d.execute('''
-                CREATE TABLE IF NOT EXISTS skills (
-                  id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                  icon TEXT NOT NULL DEFAULT '🤖', description TEXT NOT NULL DEFAULT '',
-                  prompt TEXT NOT NULL DEFAULT '', temperature REAL, effort TEXT,
-                  tools TEXT, is_builtin INTEGER NOT NULL DEFAULT 0
-                )
-              ''');
-              await d.execute('''
-                INSERT INTO skills (id, name, icon, description, prompt,
-                                    temperature, effort, tools, is_builtin)
-                SELECT id, name, icon, description, prompt,
-                       temperature, effort, NULL, is_builtin
-                FROM agents
-              ''');
-              await d.execute('UPDATE sessions SET skill_id = agent_id');
-              await d.execute('DROP TABLE agents');
-            }
-          },
+          onUpgrade: DatabaseService.onUpgrade,
         ),
       );
 

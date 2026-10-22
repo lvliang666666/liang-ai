@@ -215,7 +215,7 @@ class _MemoryPanelState extends State<MemoryPanel> {
           ),
           FilledButton(
             onPressed: () {
-              Haptics.light();
+              Haptics.heavy();
               Navigator.pop(context, true);
             },
             child: const Text('清空'),

@@ -69,4 +69,71 @@ class SettingsService {
     }
     await _prefs.setStringList(_kRecentSkillIds, list);
   }
+
+  // ===== 会话草稿（I6：按会话 ID 存取输入框未发送内容） =====
+  // key 前缀 + 会话 id；空闲态（新对话）用固定键 [idleDraftKey]。
+  // LRU 上限防膨胀：超限时淘汰最久未写的草稿。
+  static const _kDraftPrefix = 'draft_';
+  static const _kDraftOrder = 'draft_order';
+  static const draftLimit = 20;
+
+  /// 空闲态（新对话）草稿的固定键
+  static const idleDraftKey = '$_kDraftPrefix:idle';
+
+  String _draftKey(String sessionId) => '$_kDraftPrefix$sessionId';
+
+  /// 读会话草稿（无草稿返回空串）
+  String getDraft(String sessionId) =>
+      _prefs.getString(_draftKey(sessionId)) ?? '';
+
+  /// 读空闲态草稿
+  String get idleDraft => _prefs.getString(idleDraftKey) ?? '';
+
+  /// 保存会话草稿（空文本 = 清除草稿），并记入 LRU 顺序
+  Future<void> setDraft(String sessionId, String text) async {
+    final key = _draftKey(sessionId);
+    if (text.isEmpty) {
+      await _prefs.remove(key);
+      await _touchDraftOrder(sessionId, remove: true);
+      return;
+    }
+    await _prefs.setString(key, text);
+    await _touchDraftOrder(sessionId);
+    await _evictDraftOverflow();
+  }
+
+  /// 保存空闲态草稿（空文本 = 清除）
+  Future<void> setIdleDraft(String text) async {
+    if (text.isEmpty) {
+      await _prefs.remove(idleDraftKey);
+      return;
+    }
+    await _prefs.setString(idleDraftKey, text);
+  }
+
+  /// 删除会话时同步清草稿
+  Future<void> clearDraft(String sessionId) async {
+    await _prefs.remove(_draftKey(sessionId));
+    await _touchDraftOrder(sessionId, remove: true);
+  }
+
+  /// LRU 顺序表：最近写的会话 id 在最前
+  Future<void> _touchDraftOrder(String sessionId,
+      {bool remove = false}) async {
+    final list = _prefs.getStringList(_kDraftOrder) ?? [];
+    list.remove(sessionId);
+    if (!remove) list.insert(0, sessionId);
+    await _prefs.setStringList(_kDraftOrder, list);
+  }
+
+  /// 草稿超上限时淘汰最久未写的（只删内容，顺序表同步收缩）
+  Future<void> _evictDraftOverflow() async {
+    final list = _prefs.getStringList(_kDraftOrder) ?? [];
+    if (list.length <= draftLimit) return;
+    for (final id in list.sublist(draftLimit)) {
+      await _prefs.remove(_draftKey(id));
+    }
+    await _prefs.setStringList(
+        _kDraftOrder, list.sublist(0, draftLimit));
+  }
 }
