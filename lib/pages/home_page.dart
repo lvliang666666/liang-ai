@@ -27,6 +27,7 @@ import '../utils/haptics.dart';
 import '../utils/transitions.dart';
 import '../widgets/attachment_thumbnail.dart';
 import '../widgets/app_bottom_sheet.dart';
+import '../widgets/app_toast.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_tags_bar.dart';
 import '../widgets/gesture_drawer.dart';
@@ -842,11 +843,7 @@ class _HomePageState extends State<HomePage> {
     if (chat != null) {
       final ok = await chat.switchProvider(selected.$1, selected.$2);
       if (mounted && !ok) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('生成进行中，无法切换模型'),
-              duration: Duration(seconds: 2)),
-        );
+        showAppToast(context, '生成进行中，无法切换模型');
       }
     } else {
       setState(() => _selectedModel = selected);
@@ -1063,17 +1060,11 @@ class _HomeInputBarState extends State<_HomeInputBar> {
       }
     } on AttachmentException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(e.message), duration: const Duration(seconds: 2)),
-        );
+        showAppToast(context, e.message);
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('添加附件失败'), duration: Duration(seconds: 2)),
-        );
+        showAppToast(context, '添加附件失败');
       }
     }
   }
@@ -1082,12 +1073,7 @@ class _HomeInputBarState extends State<_HomeInputBar> {
     final ok = _addAttachment(attachment);
     if (!ok && mounted) {
       Haptics.medium();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('图片最多 3 张、文件最多 3 个'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      showAppToast(context, '图片最多 3 张、文件最多 3 个');
       return;
     }
     // 空闲态附件存本地列表（聊天态由 provider notifyListeners 驱动重建），
@@ -1110,11 +1096,7 @@ class _HomeInputBarState extends State<_HomeInputBar> {
       return (f.name, bytes);
     } on PlatformException {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('当前环境不支持文件选择'),
-              duration: Duration(seconds: 2)),
-        );
+        showAppToast(context, '当前环境不支持文件选择');
       }
       return null;
     }
