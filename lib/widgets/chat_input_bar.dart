@@ -13,6 +13,7 @@ import '../providers/chat_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/attachment_service.dart';
 import '../utils/haptics.dart';
+import 'app_toast.dart';
 import 'attachment_thumbnail.dart';
 import 'chat_tags_bar.dart';
 
@@ -169,16 +170,11 @@ class _ChatInputBarState extends State<ChatInputBar> {
       }
     } on AttachmentException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.message), duration: const Duration(seconds: 2)),
-        );
+        showAppToast(context, e.message);
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('添加附件失败'), duration: Duration(seconds: 2)),
-        );
+        showAppToast(context, '添加附件失败');
       }
     }
   }
@@ -187,12 +183,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
     final ok = chat.addAttachment(attachment);
     if (!ok && mounted) {
       Haptics.medium();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('图片最多 3 张、文件最多 3 个'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      showAppToast(context, '图片最多 3 张、文件最多 3 个');
     }
   }
 
@@ -209,10 +200,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
       return (f.name, bytes);
     } on PlatformException {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('当前环境不支持文件选择'), duration: Duration(seconds: 2)),
-        );
+        showAppToast(context, '当前环境不支持文件选择');
       }
       return null;
     }
