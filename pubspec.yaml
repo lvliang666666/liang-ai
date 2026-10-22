@@ -62,6 +62,14 @@ dependencies:
   # 内置工具：哈希计算（hash_text）
   crypto: ^3.0.6
 
+# 锁定 Android 侧插件版本（v2.3.6 白屏事故修复，2026-10-22）
+# shared_preferences_android 2.5.x 改走 JNI native interop 路径，release
+# 构建下 SharedPreferencesApiRegistrar.getAll 抛 NoSuchMethodError →
+# 启动即白屏（模拟器已复现）。2.4.28 是 Pigeon MethodChannel 路径，
+# v2.3.5 及之前全部版本实测稳定。等上游修复后再评估升级。
+dependency_overrides:
+  shared_preferences_android: 2.4.28
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

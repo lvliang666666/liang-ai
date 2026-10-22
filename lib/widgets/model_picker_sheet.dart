@@ -5,6 +5,7 @@ import '../models/provider_profile.dart';
 import '../providers/chat_provider.dart';
 import '../providers/provider_provider.dart';
 import '../utils/haptics.dart';
+import 'app_toast.dart';
 
 /// 模型/供应商选择弹窗（共享）：按供应商分组列出 + 自定义模型名输入。
 ///
@@ -92,9 +93,6 @@ Future<void> showModelSwitcher(
   if (model.isEmpty) return;
   final ok = await chat.switchProvider(profile, model);
   if (context.mounted && !ok) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-          content: Text('生成进行中，无法切换模型'), duration: Duration(seconds: 2)),
-    );
+    showAppToast(context, '生成进行中，无法切换模型');
   }
 }

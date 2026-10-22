@@ -5,6 +5,7 @@ import '../models/skill.dart';
 import '../providers/skill_provider.dart';
 import '../services/tools/builtin_tools.dart';
 import '../utils/haptics.dart';
+import '../widgets/app_toast.dart';
 import '../widgets/tag_bar.dart';
 
 /// Skill 新建/编辑整页（复用设置页 TagBar + PageView 布局）
@@ -86,16 +87,12 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
     // 校验失败：提示 + 自动跳到出错分区
     if (name.isEmpty) {
       _goToTab(0);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('名称不能为空')),
-      );
+      showAppToast(context, '名称不能为空');
       return;
     }
     if (prompt.isEmpty) {
       _goToTab(1);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('提示词不能为空')),
-      );
+      showAppToast(context, '提示词不能为空');
       return;
     }
 

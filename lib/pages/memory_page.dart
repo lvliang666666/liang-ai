@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/memory_provider.dart';
 import '../utils/haptics.dart';
+import '../widgets/app_toast.dart';
 
 /// 记忆管理面板：查看/搜索/删除/手动添加 AI 长期记忆
 ///
@@ -192,9 +193,7 @@ class _MemoryPanelState extends State<MemoryPanel> {
     if (trimmed.isEmpty || !mounted) return;
     await context.read<MemoryProvider>().add(trimmed);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已添加'), duration: Duration(seconds: 1)),
-      );
+      showAppToast(context, '已添加');
     }
   }
 
@@ -226,9 +225,7 @@ class _MemoryPanelState extends State<MemoryPanel> {
     if (confirmed != true || !mounted) return;
     await context.read<MemoryProvider>().deleteAll();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('已清空'), duration: Duration(seconds: 1)),
-      );
+      showAppToast(context, '已清空');
     }
   }
 }

@@ -10,6 +10,7 @@ import '../models/chat_message.dart';
 import '../models/tool_call.dart';
 import '../services/file_export_service.dart';
 import '../utils/haptics.dart';
+import 'app_toast.dart';
 import 'attachment_thumbnail.dart';
 import 'code_block_widget.dart';
 import 'thinking_block.dart';
@@ -187,10 +188,8 @@ class MessageBubble extends StatelessWidget {
       await Clipboard.setData(ClipboardData(text: message.content));
       Haptics.medium(); // 复制完成反馈（三档词汇表：medium）
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('已复制'), duration: Duration(seconds: 1)),
-        );
+        // 长按菜单的复制无按钮可切换状态 → 全局 Toast 兜底
+        showAppToast(context, '已复制');
       }
       return;
     }
@@ -266,9 +265,7 @@ class MessageBubble extends StatelessWidget {
       }
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('导出失败：$e')),
-        );
+        showAppToast(context, '导出失败：$e');
       }
     }
   }
@@ -339,22 +336,12 @@ class _UserAttachments extends StatelessWidget {
   Future<void> _openFile(BuildContext context, f) async {
     Haptics.light();
     if (!f.hasFile) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('旧版本消息未保存原文件，无法打开'),
-          duration: Duration(seconds: 2),
-        ),
-      );
+      showAppToast(context, '旧版本消息未保存原文件，无法打开');
       return;
     }
     final result = await OpenFilex.open(f.filePath!);
     if (result.type != ResultType.done && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.message),
-          duration: const Duration(seconds: 2),
-        ),
-      );
+      showAppToast(context, result.message);
     }
   }
 }

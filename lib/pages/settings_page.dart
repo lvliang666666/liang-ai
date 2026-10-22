@@ -12,6 +12,7 @@ import 'skill_editor_page.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
 import '../utils/transitions.dart';
+import '../widgets/app_toast.dart';
 import '../widgets/tag_bar.dart';
 
 /// 设置页：顶部可滑动 Tags 栏 + 分页内容
@@ -77,9 +78,7 @@ class _SettingsPageState extends State<SettingsPage> {
     await _settings.setDefaultEffort(_effort);
     await _settings.setTemperature(_temperature);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('设置已保存'), duration: Duration(seconds: 1)),
-      );
+      showAppToast(context, '设置已保存');
     }
   }
 
@@ -361,11 +360,7 @@ class _SettingsPageState extends State<SettingsPage> {
       _unfocusSkillSearch();
       await context.read<SkillProvider>().duplicate(skill);
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text('已复制为「${skill.name} 副本」'),
-              duration: const Duration(seconds: 1)),
-        );
+        showAppToast(context, '已复制为「${skill.name} 副本」');
       }
     }
   }
@@ -638,9 +633,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final name = nameCtrl.text.trim();
     final url = urlCtrl.text.trim();
     if (name.isEmpty || url.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('名称和 Base URL 不能为空')),
-      );
+      showAppToast(context, '名称和 Base URL 不能为空');
       return;
     }
 
