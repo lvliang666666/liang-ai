@@ -332,6 +332,8 @@ void main() {
       expect(body['chat_template_kwargs'], {'reasoning_effort': 'high'});
       expect(body['model'], 'glm5.1');
       expect(body['stream'], isTrue);
+      // F3：请求末帧 usage 统计（vLLM 标准参数）
+      expect(body['stream_options'], {'include_usage': true});
     });
 
     test('无 effortParam 方言：不发送推理档位参数', () {

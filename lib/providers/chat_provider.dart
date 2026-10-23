@@ -112,6 +112,13 @@ class ChatProvider extends ChangeNotifier {
   StreamSubscription<SseEvent>? _subscription;
   DateTime? _thinkingStart;
 
+  /// 本轮 usage 统计（SseUsage 末帧捕获；null = 网关未透传，走估算）
+  int? _roundPromptTokens;
+  int? _roundCompletionTokens;
+
+  /// 本轮发起请求前的 prompt 估算（订阅前算好，供无 usage 时兜底）
+  int _promptEstimate = 0;
+
   /// dispose 标记：loop 在后台推进，dispose 后不再通知 UI
   bool _disposed = false;
 
@@ -151,6 +158,29 @@ class ChatProvider extends ChangeNotifier {
     if (_streamingMessage == null) return _messages;
     return [..._messages, _streamingMessage!];
   }
+
+  /// 会话累计 token 消耗（输入+输出，落库消息求和；F3 Token 水位仪表盘）
+  int get totalTokens {
+    var sum = 0;
+    for (final m in _messages) {
+      sum += (m.promptTokens ?? 0) + (m.completionTokens ?? 0);
+    }
+    return sum;
+  }
+
+  /// 最近一轮输入 token（上下文水位条用；无记录返回 null）
+  int? get lastPromptTokens {
+    for (final m in _messages.reversed) {
+      if (m.promptTokens != null) return m.promptTokens;
+    }
+    return null;
+  }
+
+  /// 生效的推理档位（UI 展示用，与请求实际发送值一致）
+  String get effectiveEffort => _effectiveEffort;
+
+  /// 生效的温度（UI 展示用）
+  double get effectiveTemperature => _effectiveTemperature;
 
   /// 待发送附件（输入栏预览条渲染用）
   List<MessageAttachment> get pendingAttachments =>
@@ -253,6 +283,10 @@ class ChatProvider extends ChangeNotifier {
       // 发起流式请求（Agent system prompt 插入消息头部）
       _cancelToken = CancelToken();
       final history = _buildApiMessages(forceSummary: forceSummary);
+      // F3：本轮 token 统计复位 + prompt 估算（订阅前完成，无 await 间隙）
+      _roundPromptTokens = null;
+      _roundCompletionTokens = null;
+      _promptEstimate = estimatePromptTokens(history);
       final completer = Completer<void>();
       // 本轮是否已进入工具执行流程（防止 [DONE] 尾随分片重复收尾）
       var toolRoundStarted = false;
@@ -279,9 +313,19 @@ class ChatProvider extends ChangeNotifier {
               _notify();
             case SseToolCallDelta():
               _accumulateToolCallFragment(event);
+            case SseUsage(:final promptTokens, :final completionTokens):
+              // F3：网关透传的真实用量（末帧），优先于本地估算
+              _roundPromptTokens = promptTokens;
+              _roundCompletionTokens = completionTokens;
             case SseToolCallsFinished():
               toolRoundStarted = true;
-              if (!completer.isCompleted) completer.complete();
+              // 延迟到微任务后 complete：vLLM 在 finish_reason=tool_calls
+              // 之后同批还会发 usage 末帧（+ [DONE]），同步 complete 会让
+              // loop 在 usage 投递前取消订阅（真实用量丢失）。让出微任务
+              // 让同批事件先走完，兼容不发 usage/[DONE] 的服务端。
+              scheduleMicrotask(() {
+                if (!completer.isCompleted) completer.complete();
+              });
             case SseDone():
               // 工具轮后服务端常尾随 [DONE]：此时本轮已交给工具流程，忽略
               if (toolRoundStarted) return;
@@ -353,6 +397,7 @@ class ChatProvider extends ChangeNotifier {
     // 2. 当前 assistant 消息（含 tool_calls + 已收 content/reasoning）落库
     final assistantMsg = _streamingMessage!;
     assistantMsg.toolCalls = calls;
+    _stampTokenUsage(assistantMsg);
     await _db.insertMessage(assistantMsg);
     _messages = [..._messages, assistantMsg];
     _lastToolCallMessageId = assistantMsg.id;
@@ -413,6 +458,7 @@ class ChatProvider extends ChangeNotifier {
       if (msg.content.isNotEmpty ||
           msg.reasoning.isNotEmpty ||
           msg.toolCalls.isNotEmpty) {
+        _stampTokenUsage(msg);
         _db.insertMessage(msg);
         _messages = [..._messages, msg];
       }
@@ -524,6 +570,26 @@ class ChatProvider extends ChangeNotifier {
     ];
   }
 
+  /// 把本轮 token 用量写到 assistant 消息上（落库前调用）
+  ///
+  /// 优先网关透传的真实 usage；无 usage 时本地估算兜底：
+  /// prompt 用订阅前算好的 [_promptEstimate]，completion 按
+  /// reasoning+content 字符数估。工具轮的 assistant 消息同样盖章。
+  void _stampTokenUsage(ChatMessage msg) {
+    msg.promptTokens =
+        _roundPromptTokens ?? (_promptEstimate > 0 ? _promptEstimate : null);
+    final completionEstimate =
+        estimateTextTokens(msg.reasoning + msg.content);
+    msg.completionTokens = _roundCompletionTokens ??
+        (completionEstimate > 0 ? completionEstimate : null);
+  }
+
+  /// F5 上下文透视镜：预览下一轮请求将发送的完整 messages payload
+  ///
+  /// 复用 [_buildApiMessages]（Skill system prompt + 记忆注入 + 全部历史），
+  /// 只读不落库。附件消息按 toApiMessage 的多模态结构原样展示。
+  List<Map<String, Object?>> buildPayloadPreview() => _buildApiMessages();
+
   /// 生效的推理档位：Skill 预设优先于会话设置
   ///
   /// 会话 effort 是用户在聊天中可手动调整的值；Skill 预设只在
@@ -576,4 +642,57 @@ class _ToolCallAccumulator {
   String id = '';
   String name = '';
   final StringBuffer arguments = StringBuffer();
+}
+
+/// 本地 token 估算：CJK 字符 ≈1 token/字，其他 ≈1 token/4 字符
+///
+/// 网关不透传 usage 时的兜底（F3）。粗估但量级正确——水位仪表盘
+/// 的意义在趋势与相对水位，不在精确对账。
+int estimateTextTokens(String text) {
+  if (text.isEmpty) return 0;
+  var cjk = 0;
+  var other = 0;
+  for (final rune in text.runes) {
+    // CJK 统一表意文字 + 扩展 A + 兼容表意区
+    if ((rune >= 0x4E00 && rune <= 0x9FFF) ||
+        (rune >= 0x3400 && rune <= 0x4DBF) ||
+        (rune >= 0xF900 && rune <= 0xFAFF)) {
+      cjk++;
+    } else {
+      other++;
+    }
+  }
+  return cjk + (other / 4).ceil();
+}
+
+/// 估算一条 API 消息的 token 数（content 字符串或多模态数组）
+///
+/// 多模态：text 部分按文本估算，图片按定额 800 token/张
+/// （glm-4v 类视觉模型典型值，量级参考用）。
+int estimateMessageTokens(Map<String, Object?> message) {
+  final content = message['content'];
+  if (content is String) return estimateTextTokens(content);
+  if (content is List) {
+    var sum = 0;
+    for (final part in content) {
+      if (part is Map<String, dynamic>) {
+        final text = part['text'];
+        if (text is String) sum += estimateTextTokens(text);
+        if (part['type'] == 'image_url') sum += 800;
+      }
+    }
+    return sum;
+  }
+  return 0;
+}
+
+/// 估算整条请求的 prompt token（system + 记忆 + 历史 + 附加提示）
+int estimatePromptTokens(List<Map<String, Object?>> messages) {
+  var sum = 0;
+  for (final m in messages) {
+    sum += estimateMessageTokens(m);
+    // 每条消息的角色/结构开销（OpenAI 经验值）
+    sum += 4;
+  }
+  return sum;
 }

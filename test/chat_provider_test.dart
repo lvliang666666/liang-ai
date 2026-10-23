@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
@@ -181,6 +182,110 @@ void main() {
 
       expect(provider.displayMessages.length, 2);
       expect(provider.displayMessages.last.content, 'x');
+    });
+  });
+
+  group('F3 Token 用量捕获', () {
+    test('usage 末帧捕获：落库 assistant 消息带真实 prompt/completion',
+        () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('答案'));
+      api.emit(const SseUsage(promptTokens: 120, completionTokens: 45));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      expect(provider.status, ChatStatus.idle);
+      final msgs = await db.getMessages('s1');
+      final assistant = msgs.last;
+      expect(assistant.role, 'assistant');
+      expect(assistant.promptTokens, 120);
+      expect(assistant.completionTokens, 45);
+    });
+
+    test('无 usage 帧：本地估算兜底（prompt/completion 均 > 0）', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('这是一段足够长的中文输入用来验证估算逻辑');
+      api.emit(const SseDeltaContent('这是模型的回答内容'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      final msgs = await db.getMessages('s1');
+      final assistant = msgs.last;
+      expect(assistant.promptTokens, greaterThan(0));
+      expect(assistant.completionTokens, greaterThan(0));
+      // 估算值应明显小于真实大模型值量级（粗估：输入 < 100）
+      expect(assistant.promptTokens, lessThan(100));
+    });
+
+    test('usage 优先于估算：两者同时可得时用真实值', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('答案'));
+      api.emit(const SseUsage(promptTokens: 500, completionTokens: 30));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      final msgs = await db.getMessages('s1');
+      expect(msgs.last.promptTokens, 500);
+      expect(msgs.last.completionTokens, 30);
+    });
+
+    test('totalTokens 汇总全部落库消息的 token', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('第一轮'));
+      api.emit(const SseUsage(promptTokens: 100, completionTokens: 20));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      // 第二轮
+      await provider.sendMessage('继续');
+      api.emit(const SseDeltaContent('第二轮'));
+      api.emit(const SseUsage(promptTokens: 200, completionTokens: 30));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      // 100+20 + 200+30 = 350
+      expect(provider.totalTokens, 350);
+      expect(provider.lastPromptTokens, 200);
+    });
+
+    test('工具轮：assistant 消息（含 tool_calls）也带 token 统计', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('查时间');
+      // 真实时序：工具分片 → finish_reason=tool_calls → usage 末帧 → [DONE]，
+      // 同一批 emit（广播流按序投递，usage 在 loop 恢复前已被捕获）
+      api.emit(const SseToolCallDelta(
+        index: 0,
+        id: 'call_1',
+        name: 'get_current_time',
+        argumentsFragment: '',
+      ));
+      api.emit(const SseToolCallsFinished());
+      api.emit(const SseUsage(promptTokens: 80, completionTokens: 10));
+      await Future.delayed(Duration.zero);
+
+      final msgs = await db.getMessages('s1');
+      final assistantWithCalls =
+          msgs.firstWhere((m) => m.role == 'assistant' && m.toolCalls.isNotEmpty);
+      expect(assistantWithCalls.promptTokens, 80);
+      expect(assistantWithCalls.completionTokens, 10);
+    });
+
+    test('老数据（无 token 列值）：totalTokens 不崩溃，lastPromptTokens 为 null',
+        () async {
+      await db.insertMessage(ChatMessage(
+        id: 'legacy1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '老消息',
+        createdAt: 1,
+      ));
+      await provider.loadMessages();
+
+      expect(provider.totalTokens, 0);
+      expect(provider.lastPromptTokens, isNull);
     });
   });
 }
