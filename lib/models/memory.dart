@@ -17,6 +17,9 @@ class Memory {
   /// 记录来源 Skill 名（溯源用，可空）
   String? sourceSkill;
 
+  /// 用户置顶（永久记忆）：注入排最前、不占注入名额、不参与滚动压缩
+  bool pinned;
+
   final int createdAt;
   int updatedAt;
 
@@ -25,6 +28,7 @@ class Memory {
     required this.content,
     this.tag,
     this.sourceSkill,
+    this.pinned = false,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -34,6 +38,7 @@ class Memory {
         'content': content,
         'tag': tag,
         'source_skill': sourceSkill,
+        'pinned': pinned ? 1 : 0,
         'created_at': createdAt,
         'updated_at': updatedAt,
       };
@@ -43,6 +48,7 @@ class Memory {
         content: (map['content'] as String?) ?? '',
         tag: map['tag'] as String?,
         sourceSkill: map['source_skill'] as String?,
+        pinned: ((map['pinned'] as int?) ?? 0) != 0,
         createdAt: (map['created_at'] as int?) ?? 0,
         updatedAt: (map['updated_at'] as int?) ?? 0,
       );
@@ -54,6 +60,7 @@ class Memory {
     String? content,
     String? tag,
     String? sourceSkill,
+    bool? pinned,
     int? updatedAt,
   }) =>
       Memory(
@@ -61,6 +68,7 @@ class Memory {
         content: content ?? this.content,
         tag: tag ?? this.tag,
         sourceSkill: sourceSkill ?? this.sourceSkill,
+        pinned: pinned ?? this.pinned,
         createdAt: createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );

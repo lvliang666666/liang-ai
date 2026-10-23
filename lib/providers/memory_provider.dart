@@ -57,6 +57,22 @@ class MemoryProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 置顶/取消置顶（策展台操作）
+  Future<void> setPinned(String id, bool pinned) async {
+    await _service.setPinned(id, pinned);
+    _memories = [
+      for (final m in _memories)
+        if (m.id == id) m.copyWith(pinned: pinned) else m
+    ];
+    notifyListeners();
+  }
+
+  /// 编辑记忆内容/标签（策展台操作）
+  Future<void> update(String id, {String? content, String? tag}) async {
+    await _service.update(id, content: content, tag: tag);
+    await load(); // 编辑可能影响去重语义外的排序（updatedAt 变化），全量重载
+  }
+
   /// 按关键词删除（模型 memory_forget 同款语义），返回删除条数
   Future<int> deleteByKeyword(String keyword) async {
     final deleted = await _service.deleteByKeyword(keyword);
