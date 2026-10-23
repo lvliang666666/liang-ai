@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
@@ -21,10 +22,11 @@ import 'tool_call_block.dart';
 
 /// 消息气泡：用户右侧蓝色，助手左侧含思考块 + 工具卡片 + Markdown
 ///
-/// 「选择文字」为原地模式：长按菜单选「选择文字」后，正文在原气泡内
-/// 切换为 SelectableText（顶部浮出「完成」胶囊退出）。选择态是开关式
-/// 而非常驻——SelectableText 的手势识别器会吃掉横滑，常驻会永久
-/// 破坏横滑复制。
+/// 「选择文字」为豆包式自然截取：长按菜单选「选择文字」后，正文在
+/// 原气泡内包一层 [SelectionArea]——Markdown 渲染原样保留，长按即
+/// 选中词、拖手柄扩选、系统工具条复制，与原生文本体验一致。选择态
+/// 是开关式而非常驻：SelectionArea 的拖拽选字会与横滑复制抢手势，
+/// 选择期间横滑识别器整体退场（[SwipeActionContainer.enabled]）。
 class MessageBubble extends StatefulWidget {
   const MessageBubble({
     super.key,
@@ -50,8 +52,18 @@ class MessageBubble extends StatefulWidget {
 }
 
 class _MessageBubbleState extends State<MessageBubble> {
-  /// 原地选择文字模式（助手气泡正文切换为 SelectableText）
+  /// 豆包式选择文字模式（正文包 SelectionArea，Markdown 渲染不变）
   bool _selecting = false;
+
+  /// 选择区状态：用于「完成」按钮的显隐（有选中内容才需要退出入口）
+  final SelectionListenerNotifier _selectionNotifier =
+      SelectionListenerNotifier();
+
+  @override
+  void dispose() {
+    _selectionNotifier.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -136,13 +148,16 @@ class _MessageBubbleState extends State<MessageBubble> {
       child: SwipeActionContainer(
         // 助手消息左滑复制（v2.5.0 定版方案，快捷操作开时生效）。
         // v2.5.3 方向锁保留：识别器只认领左滑，右滑弃权让位抽屉——
-        // 气泡上右滑仍是"开会话列表"，与复制互不干扰
+        // 气泡上右滑仍是"开会话列表"，与复制互不干扰。
+        // 选择文字模式整体退场：拖拽选字与横滑不共存
         direction: SwipeDirection.rightToLeft,
         icon: Icons.copy_outlined,
         label: '复制',
         color: colorScheme.primary,
-        enabled:
-            swipeEnabled && message.content.isNotEmpty && !isStreaming,
+        enabled: swipeEnabled &&
+            message.content.isNotEmpty &&
+            !isStreaming &&
+            !_selecting,
         onAction: () => _copyMessage(context, message),
         child: Container(
           margin: const EdgeInsets.only(right: 40, top: 4, bottom: 4),
@@ -156,7 +171,7 @@ class _MessageBubbleState extends State<MessageBubble> {
           ),
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            // 选择模式下长按交给 SelectableText 挑字，不再弹菜单
+            // 选择模式下长按交给 SelectionArea 挑字，不再弹菜单
             onLongPressStart: _selecting
                 ? null
                 : (details) {
@@ -169,42 +184,30 @@ class _MessageBubbleState extends State<MessageBubble> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 选择模式顶栏：提示 + 退出（原地选择，不弹层）
-                if (_selecting) ...[
-                  Row(
-                    children: [
-                      Icon(Icons.highlight_alt,
-                          size: 16, color: colorScheme.primary),
-                      const SizedBox(width: 6),
-                      Expanded(
+                // 选择模式顶栏：仅一个「完成」退出入口（豆包式——
+                // 选中/复制全走系统工具条，App 不再额外提示）
+                if (_selecting)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: GestureDetector(
+                      onTap: () => setState(() => _selecting = false),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: colorScheme.primaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
                         child: Text(
-                          '长按文字挑选片段，用系统工具条复制',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colorScheme.onSurfaceVariant,
+                          '完成',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: colorScheme.onPrimaryContainer,
                           ),
                         ),
                       ),
-                      GestureDetector(
-                        onTap: () => setState(() => _selecting = false),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: colorScheme.primaryContainer,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            '完成',
-                            style: theme.textTheme.labelMedium?.copyWith(
-                              color: colorScheme.onPrimaryContainer,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                  const SizedBox(height: 8),
-                ],
+                if (_selecting) const SizedBox(height: 8),
                 // 思考过程块
                 if (message.reasoning.isNotEmpty || thinkingStreaming)
                   ThinkingBlock(
@@ -219,14 +222,36 @@ class _MessageBubbleState extends State<MessageBubble> {
                     results: widget.toolResults,
                     executing: widget.toolExecuting,
                   ),
-                // 正文：选择模式 = 纯文本 SelectableText（Markdown 渲染会
-                // 拆散文字流，选择操作基于纯文本才完整）；常规 = Markdown
+                // 正文：选择模式 = SelectionArea 包住 Markdown（渲染
+                // 原样保留，长按选词/拖手柄/系统工具条复制）；常规 =
+                // 裸 Markdown。GptMarkdown 的段落是 Text/RichText，
+                // 会自动注册到 SelectionContainer，选择天然生效
                 if (message.content.isNotEmpty)
                   _selecting
-                      ? SelectableText(
-                          message.content,
-                          style: theme.textTheme.bodyMedium
-                              ?.copyWith(height: 1.6),
+                      ? SelectionListener(
+                          selectionNotifier: _selectionNotifier,
+                          child: SelectionArea(
+                            onSelectionChanged: (_) {
+                              // 有选中内容才亮出「完成」（无选中时顶栏
+                              // 不占位，视觉与常规态一致）
+                              if (mounted &&
+                                  _selectionNotifier.registered &&
+                                  _selectionNotifier.selection.status !=
+                                      SelectionStatus.none) {
+                                setState(() {});
+                              }
+                            },
+                            child: GptMarkdown(
+                              message.content,
+                              isStreaming: isStreaming,
+                              // 打字机节奏：70 字/秒——长回答不拖沓，短回答仍有打字感
+                              charactersPerSecond: 70,
+                              style: theme.textTheme.bodyMedium
+                                  ?.copyWith(height: 1.6),
+                              codeBuilder: (context, name, code, closed) =>
+                                  CodeBlockWidget(code: code, language: name),
+                            ),
+                          ),
                         )
                       : GptMarkdown(
                           message.content,
@@ -332,7 +357,7 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
 
     if (action == 'select') {
-      // 原地选择：正文在原气泡内切换为 SelectableText（不弹层）
+      // 豆包式选择：正文包 SelectionArea（Markdown 渲染不变，不弹层）
       if (mounted) setState(() => _selecting = true);
       return;
     }
