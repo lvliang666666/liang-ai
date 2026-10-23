@@ -1,6 +1,8 @@
 import 'package:ai_chat_app/models/chat_message.dart';
+import 'package:ai_chat_app/widgets/gesture_drawer.dart';
 import 'package:ai_chat_app/widgets/message_bubble.dart';
 import 'package:ai_chat_app/widgets/swipe_action.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -150,6 +152,58 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(fired, 0);
+    });
+
+    testWidgets('方向锁：rightToLeft 容器上右滑不认领（识别器弃权）',
+        (tester) async {
+      // 方向锁核心语义：反方向横滑时识别器保持 possible 态不认领，
+      // 竞技场让位给其他竞争者（真实场景 = 右滑抽屉）。这里用
+      // "外层也监听横滑"模拟竞争者：反方向滑动时外层应收到手势。
+      var outerDragged = 0.0;
+      var fired = 0;
+      await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: RawGestureDetector(
+              behavior: HitTestBehavior.translucent,
+              gestures: {
+                HorizontalDragGestureRecognizer:
+                    GestureRecognizerFactoryWithHandlers<
+                        HorizontalDragGestureRecognizer>(
+                  () => HorizontalDragGestureRecognizer()
+                    ..dragStartBehavior = DragStartBehavior.down,
+                  (instance) {
+                    instance.onUpdate = (d) =>
+                        outerDragged += d.primaryDelta ?? 0;
+                  },
+                ),
+              },
+              child: SwipeActionContainer(
+                direction: SwipeDirection.rightToLeft,
+                icon: Icons.copy_outlined,
+                label: '复制',
+                color: Colors.blue,
+                onAction: () => fired++,
+                child: const SizedBox(width: 200, height: 60),
+              ),
+            ),
+          ),
+        ),
+      ));
+      await tester.pump();
+
+      // 右滑（反方向）：外层收到全部位移，容器不触发
+      await dragHorizontally(tester, find.byType(SwipeActionContainer),
+          dx: 80);
+      expect(outerDragged, greaterThan(60),
+          reason: '反方向横滑应让位给外层识别器');
+      expect(fired, 0);
+
+      // 左滑（同方向）：容器正常认领并触发
+      await dragHorizontally(tester, find.byType(SwipeActionContainer),
+          dx: -80);
+      expect(fired, 1);
+      await tester.pumpAndSettle();
     });
   });
 
@@ -302,6 +356,87 @@ void main() {
       expect(find.text('选择文字'), findsOneWidget);
       expect(find.text('长按文字挑选片段，用系统工具条复制'), findsOneWidget);
       expect(find.text('助手回答内容'), findsNWidgets(2));
+    });
+  });
+
+  group('SwipeActionContainer × GestureDrawer 共存（v2.5.3 方向锁）', () {
+    testWidgets('助手气泡上右滑：开抽屉（方向锁让位，不触发复制）',
+        (tester) async {
+      final drawerKey = GlobalKey<GestureDrawerState>();
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(MaterialApp(
+        home: GestureDrawer(
+          key: drawerKey,
+          drawer: const SizedBox.expand(),
+          child: Scaffold(
+            body: ListView(
+              children: [MessageBubble(message: msg)],
+            ),
+          ),
+        ),
+      ));
+      await tester.pump();
+
+      // 助手气泡文字上右滑 600px：应开抽屉而非触发复制
+      //（抽屉宽 800-40=760，松手过半判定需 >380px，200px 会被回弹）
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.text('助手回答内容')));
+      await gesture.moveBy(const Offset(200, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(200, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(200, 0));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // 抽屉打开（进度 1.0），复制未触发
+      expect(drawerKey.currentState!.progress, 1.0,
+          reason: '气泡上右滑应开抽屉（方向锁弃权让位）');
+    });
+
+    testWidgets('助手气泡上左滑：触发复制（抽屉不动）', (tester) async {
+      final drawerKey = GlobalKey<GestureDrawerState>();
+      final msg = ChatMessage(
+        id: 'm2',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(MaterialApp(
+        home: GestureDrawer(
+          key: drawerKey,
+          drawer: const SizedBox.expand(),
+          child: Scaffold(
+            body: ListView(
+              children: [MessageBubble(message: msg)],
+            ),
+          ),
+        ),
+      ));
+      await tester.pump();
+
+      // 左滑 200px：容器认领（同方向），抽屉进度保持 0
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.text('助手回答内容')));
+      await gesture.moveBy(const Offset(-60, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(-60, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(-80, 0));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(drawerKey.currentState!.progress, 0.0,
+          reason: '左滑复制时抽屉不应被误开');
     });
   });
 }
