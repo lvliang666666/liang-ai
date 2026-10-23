@@ -33,6 +33,8 @@ import '../widgets/chat_tags_bar.dart';
 import '../widgets/gesture_drawer.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/pressable.dart';
+import '../widgets/token_usage_sheet.dart';
+import 'payload_lens_page.dart';
 import 'settings_page.dart';
 
 /// 首页：DeepSeek 风格单页架构——主页即聊天页
@@ -1169,6 +1171,13 @@ class _HomeInputBarState extends State<_HomeInputBar> {
               label: effortLabel,
               onTap: widget.onPickEffort,
             ),
+            // F3 Token 水位仪表盘：仅聊天态显示，label = 会话累计 token
+            if (inChat)
+              ChatTag(
+                icon: Icons.data_usage,
+                label: formatTokenCount(chat.totalTokens),
+                onTap: () => _openTokenUsageSheet(context, chat),
+              ),
           ]),
           const SizedBox(height: 6),
           // 浮起输入框：圆角主题（默认/DeepSeek）外层容器即唯一输入框（豆包式）；
@@ -1311,6 +1320,24 @@ class _HomeInputBarState extends State<_HomeInputBar> {
     widget.controller.clear();
     // 发送后收起键盘（微信式：发送即收起，不残留焦点）
     FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  /// F3 Token 用量详情 Sheet（tags 行 token 标签点击入口）
+  Future<void> _openTokenUsageSheet(
+      BuildContext context, ChatProvider chat) async {
+    Haptics.light();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await showTokenUsageSheet(
+      context,
+      chat,
+      onOpenPayload: () {
+        Navigator.pop(context);
+        Navigator.push(
+          context,
+          slideUpRoute(PayloadLensPage(chat: chat)),
+        );
+      },
+    );
   }
 }
 

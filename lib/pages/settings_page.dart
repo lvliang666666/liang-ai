@@ -1,12 +1,23 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../models/provider_profile.dart';
 import '../models/skill.dart';
+import '../providers/memory_provider.dart';
 import '../providers/provider_provider.dart';
+import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
 import '../providers/theme_provider.dart';
+import '../services/backup_service.dart';
+import '../services/database_service.dart';
 import '../services/settings_service.dart';
+import '../theme/app_theme_id.dart';
 import 'memory_page.dart';
 import 'skill_editor_page.dart';
 import '../theme/app_theme_registry.dart';
@@ -27,7 +38,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'Skill 管理', '记忆管理', 'API 配置', '对话参数', '说明'];
+  static const _tabs = ['外观', 'Skill 管理', '记忆管理', 'API 配置', '对话参数', '备份', '说明'];
 
   late final SettingsService _settings;
   late final PageController _pageController;
@@ -123,6 +134,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 const MemoryPanel(),
                 _buildApiTab(theme),
                 _buildParamsTab(theme),
+                _buildBackupTab(theme),
                 _buildAboutTab(theme),
               ],
             ),
@@ -742,7 +754,149 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ===== Tag 4：说明 =====
+  // ===== Tag 5：备份（E1 备份/导出） =====
+  Widget _buildBackupTab(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            '· 备份包含：会话、消息、Skill、记忆、供应商配置（不含 API Key）\n'
+            '· 导出为 JSON 文件，通过系统分享面板发送（微信/网盘/邮件均可）\n'
+            '· 导入会**清空并替换**当前全部数据，操作前请先导出一份备份\n'
+            '· 导入后建议返回主页再继续聊天',
+            style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+          ),
+        ),
+        const SizedBox(height: 16),
+        ListTile(
+          leading: Icon(Icons.ios_share,
+              color: theme.colorScheme.primary),
+          title: const Text('导出备份'),
+          subtitle: const Text('生成 JSON 文件并分享'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _exportBackup,
+        ),
+        const Divider(),
+        ListTile(
+          leading: Icon(Icons.restore,
+              color: theme.colorScheme.primary),
+          title: const Text('导入备份'),
+          subtitle: const Text('从 JSON 文件恢复（覆盖当前数据）'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _importBackup,
+        ),
+      ],
+    );
+  }
+
+  /// 导出备份：生成文件 + 系统分享面板
+  Future<void> _exportBackup() async {
+    Haptics.light();
+    try {
+      final service = BackupService(
+        database: DatabaseService.instance,
+        settings: _settings,
+      );
+      final result = await service.shareBackup();
+      if (mounted && result?.status == ShareResultStatus.success) {
+        showAppToast(context, '备份已生成');
+      }
+    } catch (e) {
+      if (mounted) showAppToast(context, '导出失败：$e');
+    }
+  }
+
+  /// 导入备份：选文件 → 确认覆盖 → 恢复 → 全量刷新
+  Future<void> _importBackup() async {
+    Haptics.light();
+    // 1. 选文件
+    List<PlatformFile> picked;
+    try {
+      picked = await FilePicker.pickFiles(type: FileType.custom,
+          allowedExtensions: ['json']);
+    } on PlatformException {
+      if (mounted) showAppToast(context, '当前环境不支持文件选择');
+      return;
+    }
+    if (picked.isEmpty) return;
+    final file = picked.single;
+    final String jsonText;
+    try {
+      jsonText = await File(file.path!).readAsString();
+    } catch (_) {
+      if (mounted) showAppToast(context, '文件读取失败');
+      return;
+    }
+
+    // 2. 确认覆盖（不可逆操作）
+    if (!mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('导入备份'),
+        content: const Text('导入会清空并替换当前全部数据（会话/消息/Skill/记忆/供应商），'
+            '此操作不可撤销。确定继续吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('导入'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    // 3. 恢复
+    try {
+      final service = BackupService(
+        database: DatabaseService.instance,
+        settings: _settings,
+      );
+      final stats = await service.restore(jsonText);
+
+      // 4. 应用备份中的主题 + 全量刷新四个 Provider
+      final data =
+          (const JsonDecoder().convert(jsonText) as Map)['data']
+              as Map?;
+      final themeId = data?['settings']?['theme_id'];
+      if (themeId is String && mounted) {
+        // 只应用备份里合法的主题 id（未知 id 不动当前主题）
+        for (final id in AppThemeId.values) {
+          if (id.name == themeId) {
+            await context.read<ThemeProvider>().setTheme(id);
+            break;
+          }
+        }
+      }
+      if (!mounted) return;
+      await context.read<SessionsProvider>().refresh();
+      await context.read<SkillProvider>().load();
+      await context.read<ProviderProvider>().load();
+      await context.read<MemoryProvider>().load();
+
+      if (mounted) {
+        showAppToast(context,
+            '导入完成：${stats.sessions} 会话 / ${stats.messages} 消息');
+      }
+    } on BackupFormatException catch (e) {
+      if (mounted) showAppToast(context, e.message);
+    } catch (e) {
+      if (mounted) showAppToast(context, '导入失败：$e');
+    }
+  }
+
+  // ===== Tag 6：说明 =====
   Widget _buildAboutTab(ThemeData theme) {
     return ListView(
       padding: const EdgeInsets.all(16),

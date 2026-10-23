@@ -8,6 +8,7 @@ import '../models/chat_session.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart';
+import 'secure_key_store.dart';
 
 /// 本地数据库服务：sessions / messages / skills / providers / memories 五表
 class DatabaseService {
@@ -17,7 +18,11 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 7;
+  static const int dbVersion = 8;
+
+  /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
+  /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
+  static SecureKeyBridge? keyBridge;
 
   Database? _db;
 
@@ -75,6 +80,8 @@ class DatabaseService {
         attachments TEXT NOT NULL DEFAULT '[]',
         tool_calls TEXT NOT NULL DEFAULT '[]',
         tool_call_id TEXT,
+        prompt_tokens INTEGER,
+        completion_tokens INTEGER,
         created_at INTEGER NOT NULL
       )
     ''');
@@ -131,6 +138,13 @@ class DatabaseService {
     if (oldVersion < 7) {
       // v6 → v7：记忆系统——新建 memories 表（全局共享记忆池）
       await _createMemoriesTable(db);
+    }
+    if (oldVersion < 8) {
+      // v7 → v8：Token 水位仪表盘（F3）——messages 加 prompt/completion
+      // token 列（usage 末帧或本地估算；NULL = 老数据/未统计）
+      await db.execute('ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER');
+      await db.execute(
+          'ALTER TABLE messages ADD COLUMN completion_tokens INTEGER');
     }
   }
 
@@ -359,9 +373,15 @@ class DatabaseService {
 
   // ===== Providers =====
 
+  /// 写入供应商行；bridge 在场时 DB 只存空串，Key 进安全存储（E6）
   Future<void> insertProvider(ProviderProfile profile) async {
     final db = await database;
-    await db.insert('providers', _providerRow(profile),
+    final bridge = keyBridge;
+    if (bridge != null && profile.apiKey.isNotEmpty) {
+      await bridge.store(profile.id, profile.apiKey);
+    }
+    await db.insert(
+        'providers', _providerRow(profile, redactKey: bridge != null),
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -372,23 +392,29 @@ class DatabaseService {
       'providers',
       orderBy: 'is_builtin DESC, name ASC',
     );
-    return rows.map(_profileFromRow).toList();
+    return [for (final row in rows) await _profileFromRowAsync(row)];
   }
 
   Future<ProviderProfile?> getProvider(String id) async {
     final db = await database;
     final rows =
         await db.query('providers', where: 'id = ?', whereArgs: [id], limit: 1);
-    return rows.isEmpty ? null : _profileFromRow(rows.first);
+    return rows.isEmpty ? null : await _profileFromRowAsync(rows.first);
   }
 
   Future<void> updateProvider(ProviderProfile profile) async {
     final db = await database;
-    await db.update('providers', _providerRow(profile),
+    final bridge = keyBridge;
+    if (bridge != null && profile.apiKey.isNotEmpty) {
+      await bridge.store(profile.id, profile.apiKey);
+    }
+    await db.update(
+        'providers', _providerRow(profile, redactKey: bridge != null),
         where: 'id = ?', whereArgs: [profile.id]);
   }
 
-  /// 删除自定义供应商；同时把引用它的会话解绑（回退默认供应商）
+  /// 删除自定义供应商；同时把引用它的会话解绑（回退默认供应商）；
+  /// bridge 在场时同步清掉安全存储里的 Key
   Future<void> deleteProvider(String id) async {
     final db = await database;
     await db.transaction((txn) async {
@@ -396,6 +422,7 @@ class DatabaseService {
           where: 'provider_id = ?', whereArgs: [id]);
       await txn.delete('providers', where: 'id = ?', whereArgs: [id]);
     });
+    await keyBridge?.remove(id);
   }
 
   /// 内置供应商是否已入库（首次启动种子判断）
@@ -484,8 +511,13 @@ class DatabaseService {
             capabilities: updated.capabilities.copyWith(toolCalls: true));
       }
       if (updated.capabilities != profile.capabilities) {
-        await db.update('providers', _providerRow(updated),
-            where: 'id = ?', whereArgs: [profile.id]);
+        // 能力升级不改 Key：bridge 在场时继续置空（Key 在安全存储）
+        await db.update(
+            'providers',
+            _providerRow(updated,
+                redactKey: keyBridge != null && profile.apiKey.isEmpty),
+            where: 'id = ?',
+            whereArgs: [profile.id]);
       }
     }
   }
@@ -500,16 +532,38 @@ class DatabaseService {
     ),
   };
 
-  Map<String, Object?> _providerRow(ProviderProfile profile) => {
+  /// 供应商行组装；[redactKey] = bridge 在场，DB 只存空串（E6）
+  Map<String, Object?> _providerRow(ProviderProfile profile,
+          {bool redactKey = false}) =>
+      providerRow(profile, redactKey: redactKey);
+
+  /// 供应商 DB 行格式（公开给备份服务：capabilities/dialect 存 JSON 串，
+  /// 与 toMap 的嵌套 Map 结构不同——直接 insert 会报 Invalid argument）
+  static Map<String, Object?> providerRow(ProviderProfile profile,
+          {bool redactKey = false}) =>
+      {
         'id': profile.id,
         'name': profile.name,
         'base_url': profile.baseUrl,
-        'api_key': profile.apiKey,
+        'api_key': redactKey ? '' : profile.apiKey,
         'default_model': profile.defaultModel,
         'capabilities': jsonEncode(profile.capabilities.toMap()),
         'dialect': jsonEncode(profile.dialect.toMap()),
         'is_builtin': profile.isBuiltin ? 1 : 0,
       };
+
+  /// 行 → profile；bridge 在场且 DB 值为空时从安全存储注水（E6）
+  Future<ProviderProfile> _profileFromRowAsync(
+      Map<String, dynamic> row) async {
+    final profile = _profileFromRow(row);
+    if (profile.apiKey.isEmpty) {
+      final resolved = await keyBridge?.resolve(profile.id);
+      if (resolved != null && resolved.isNotEmpty) {
+        return profile.copyWith(apiKey: resolved);
+      }
+    }
+    return profile;
+  }
 
   ProviderProfile _profileFromRow(Map<String, dynamic> row) {
     Map<String, dynamic> decodeJson(Object? raw) {
@@ -533,6 +587,28 @@ class DatabaseService {
       dialect: ProviderDialect.fromMap(decodeJson(row['dialect'])),
       isBuiltin: (row['is_builtin'] as int?) == 1,
     );
+  }
+
+  /// E6 一次性迁移：DB 明文 Key → 安全存储 → DB 置空（幂等）
+  ///
+  /// 顺序保证「先写安全存储成功，再清 DB 明文」——最坏情况（中途崩溃）
+  /// 是两边都有值，下次启动重跑迁移收敛；绝不出现两边都空。
+  Future<int> migrateKeysToBridge() async {
+    final bridge = keyBridge;
+    if (bridge == null) return 0;
+    final db = await database;
+    final rows = await db.query('providers');
+    var migrated = 0;
+    for (final row in rows) {
+      final key = (row['api_key'] as String?) ?? '';
+      if (key.isEmpty) continue; // 已迁移 / 无 Key
+      final id = row['id'] as String;
+      await bridge.store(id, key);
+      await db.update('providers', {'api_key': ''},
+          where: 'id = ?', whereArgs: [id]);
+      migrated++;
+    }
+    return migrated;
   }
 
   Future<void> close() async {
