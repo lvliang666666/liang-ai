@@ -227,6 +227,104 @@ void main() {
     });
   });
 
+  group('置顶（M1 策展台）', () {
+    test('setPinned 置顶与取消，pinned 字段持久化', () async {
+      final m = await service.saveAt('置顶记忆', now: 1);
+      expect(m.pinned, isFalse); // 默认不置顶
+
+      await service.setPinned(m.id, true);
+      expect((await service.getAll()).first.pinned, isTrue);
+
+      await service.setPinned(m.id, false);
+      expect((await service.getAll()).first.pinned, isFalse);
+    });
+
+    test('setPinned 不存在的 id 静默返回', () async {
+      await service.setPinned('不存在', true); // 不抛异常即可
+      expect(await service.count(), 0);
+    });
+
+    test('recentText：置顶排最前带（置顶）标记，不占 limit 名额', () async {
+      await service.saveAt('普通记忆一', now: 1000);
+      await service.saveAt('普通记忆二', now: 2000);
+      final pinned = await service.saveAt('置顶偏好', now: 500); // 最旧
+      await service.setPinned(pinned.id, true);
+
+      final text = await service.recentText(limit: 1);
+      expect(text, '''
+【用户记忆】（长期有效，跨会话）
+- 置顶偏好（置顶）
+- 普通记忆二'''); // limit=1 只取 1 条普通，置顶额外
+    });
+
+    test('recentText：全部置顶时普通段为空仍正常渲染', () async {
+      final m = await service.saveAt('只有置顶', now: 1);
+      await service.setPinned(m.id, true);
+
+      final text = await service.recentText();
+      expect(text, '''
+【用户记忆】（长期有效，跨会话）
+- 只有置顶（置顶）''');
+    });
+
+    test('update 改写内容与标签，updatedAt 刷新', () async {
+      final m = await service.saveAt('原始内容', tag: '旧标签', now: 1000);
+      await service.update(m.id, content: '  改写后  ', tag: '新标签');
+
+      final all = await service.getAll();
+      expect(all.single.content, '改写后');
+      expect(all.single.tag, '新标签');
+      expect(all.single.updatedAt, greaterThan(1000));
+      expect(all.single.createdAt, 1000); // 创建时间保留
+    });
+
+    test('update 只改 tag 时内容保留；空内容不覆盖', () async {
+      final m = await service.saveAt('保留内容', now: 1);
+      await service.update(m.id, tag: '只改标签');
+      expect((await service.getAll()).single.content, '保留内容');
+
+      await service.update(m.id, content: '   ');
+      expect((await service.getAll()).single.content, '保留内容');
+    });
+
+    test('update 不存在的 id 静默返回', () async {
+      await service.update('不存在', content: 'x'); // 不抛异常即可
+      expect(await service.count(), 0);
+    });
+
+    test('置顶条不参与滚动压缩淘汰', () async {
+      // 灌满触发压缩，但把最旧一条置顶保护起来
+      final protected = await service.saveAt('置顶的旧记忆', now: 1);
+      await service.setPinned(protected.id, true);
+      for (var i = 2; i <= MemoryService.maxMemories + 10; i++) {
+        await service.saveAt('记忆$i', now: i);
+      }
+
+      final all = await service.getAll();
+      // 置顶条存活（未被压缩进摘要）
+      expect(anyOfMemoryExists(all, '置顶的旧记忆'), isTrue);
+      final pinnedRow = all.firstWhere((m) => m.content == '置顶的旧记忆');
+      expect(pinnedRow.pinned, isTrue);
+      // 未置顶的最旧 40 条照常压缩
+      expect(anyOfMemoryExists(all, '记忆2'), isFalse);
+      expect(anyOfMemoryExists(all, '记忆41'), isFalse);
+      expect(anyOfMemoryExists(all, '记忆42'), isTrue);
+    });
+
+    test('置顶条不进归档摘要内容', () async {
+      final protected = await service.saveAt('置顶秘密', now: 1);
+      await service.setPinned(protected.id, true);
+      for (var i = 2; i <= MemoryService.maxMemories + 10; i++) {
+        await service.saveAt('记忆$i', now: i);
+      }
+
+      final archives =
+          (await service.getAll()).where((m) => m.isArchived).toList();
+      expect(archives.length, 1);
+      expect(archives.single.content, isNot(contains('置顶秘密')));
+    });
+  });
+
   group('recentText 注入文本', () {
     test('无记忆返回空字符串', () async {
       expect(await service.recentText(), '');

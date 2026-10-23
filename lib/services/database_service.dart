@@ -18,7 +18,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 8;
+  static const int dbVersion = 9;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -94,32 +94,37 @@ class DatabaseService {
   }
 
   /// 版本迁移：老用户数据无损升级
+  ///
+  /// 每步双条件：`oldVersion < N`（库还没到过第 N 版）且
+  /// `newVersion >= N`（本次目标版本包含第 N 版）——测试会用中间
+  /// 版本号打开老库（如 v2→v5），不设上界会把后续步骤也跑一遍，
+  /// 在「老库缺新表」的测试 schema 上炸 duplicate/no such column。
   static Future<void> _onUpgrade(
       Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 2) {
+    if (oldVersion < 2 && newVersion >= 2) {
       // v1 → v2：sessions 加 agent_id 列 + 新建 agents 表
       await db.execute('ALTER TABLE sessions ADD COLUMN agent_id TEXT');
       await _createAgentsTable(db);
     }
-    if (oldVersion < 3) {
+    if (oldVersion < 3 && newVersion >= 3) {
       // v2 → v3：messages 加 attachments 列（JSON 数组，旧消息默认空）
       await db.execute(
           "ALTER TABLE messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'");
     }
-    if (oldVersion < 4) {
+    if (oldVersion < 4 && newVersion >= 4) {
       // v3 → v4：多供应商——sessions 加 provider_id/model 列 + 新建 providers 表
       await db.execute('ALTER TABLE sessions ADD COLUMN provider_id TEXT');
       await db.execute('ALTER TABLE sessions ADD COLUMN model TEXT');
       await _createProvidersTable(db);
     }
-    if (oldVersion < 5) {
+    if (oldVersion < 5 && newVersion >= 5) {
       // v4 → v5：工具调用——messages 加 tool_calls（JSON 数组）与
       // tool_call_id（tool 结果消息关联）列
       await db.execute(
           "ALTER TABLE messages ADD COLUMN tool_calls TEXT NOT NULL DEFAULT '[]'");
       await db.execute('ALTER TABLE messages ADD COLUMN tool_call_id TEXT');
     }
-    if (oldVersion < 6) {
+    if (oldVersion < 6 && newVersion >= 6) {
       // v5 → v6：Skill 取代 Agent——agents 数据平移到 skills 表
       //（tools=NULL=全部工具，保持 v1.6.0 行为），会话绑定 agent_id → skill_id，
       // agent_id 列保留不删但不再使用
@@ -135,16 +140,27 @@ class DatabaseService {
       await db.execute('UPDATE sessions SET skill_id = agent_id');
       await db.execute('DROP TABLE agents');
     }
-    if (oldVersion < 7) {
+    if (oldVersion < 7 && newVersion >= 7) {
       // v6 → v7：记忆系统——新建 memories 表（全局共享记忆池）
       await _createMemoriesTable(db);
     }
-    if (oldVersion < 8) {
+    if (oldVersion < 8 && newVersion >= 8) {
       // v7 → v8：Token 水位仪表盘（F3）——messages 加 prompt/completion
       // token 列（usage 末帧或本地估算；NULL = 老数据/未统计）
       await db.execute('ALTER TABLE messages ADD COLUMN prompt_tokens INTEGER');
       await db.execute(
           'ALTER TABLE messages ADD COLUMN completion_tokens INTEGER');
+    }
+    if (oldVersion < 9 && newVersion >= 9) {
+      // v8 → v9：记忆策展台（M1）——memories 加 pinned 列
+      //（用户置顶 = 永久记忆：注入排最前、不占名额、不参与滚动压缩）
+      // 跨多版本直升（如 v2→v9）时 memories 表由 v7 步新建、已含 pinned，
+      // ALTER 会 duplicate column——先查列存在性再补
+      final cols = await db.rawQuery('PRAGMA table_info(memories)');
+      final hasPinned = cols.any((c) => c['name'] == 'pinned');
+      if (!hasPinned) {
+        await db.execute('ALTER TABLE memories ADD COLUMN pinned INTEGER');
+      }
     }
   }
 
@@ -201,6 +217,7 @@ class DatabaseService {
         content TEXT NOT NULL,
         tag TEXT,
         source_skill TEXT,
+        pinned INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )

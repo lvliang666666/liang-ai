@@ -13,6 +13,7 @@ import '../utils/haptics.dart';
 import 'app_toast.dart';
 import 'attachment_thumbnail.dart';
 import 'code_block_widget.dart';
+import 'swipe_action.dart';
 import 'thinking_block.dart';
 import 'tool_call_block.dart';
 
@@ -46,41 +47,60 @@ class MessageBubble extends StatelessWidget {
       final hasImages = message.attachments.any((a) => a.isImage);
       return Align(
         alignment: Alignment.centerRight,
-        child: Container(
-          margin: const EdgeInsets.only(left: 60, top: 4, bottom: 4),
-          padding: EdgeInsets.fromLTRB(
-              hasImages ? 6 : 14, hasImages ? 6 : 10, hasImages ? 6 : 14,
-              hasImages ? 6 : 10),
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.widthOf(context) * 0.78,
-          ),
-          decoration: BoxDecoration(
-            color: colorScheme.primary,
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // 附件区：图片缩略图 / 文件卡片
-              if (message.hasAttachments)
-                _UserAttachments(message: message),
-              // 正文（有附件但无文字时不渲染空文本）
-              if (message.content.isNotEmpty)
-                Padding(
-                  padding: EdgeInsets.only(
-                      top: message.hasAttachments ? 6 : 0,
-                      left: hasImages ? 8 : 0,
-                      right: hasImages ? 8 : 0),
-                  child: SelectableText(
-                    message.content,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: colorScheme.onPrimary,
-                      height: 1.6,
+        child: SwipeActionContainer(
+          direction: SwipeDirection.leftToRight,
+          icon: Icons.copy_outlined,
+          label: '复制',
+          color: colorScheme.primary,
+          enabled: message.content.isNotEmpty && !isStreaming,
+          onAction: () => _copyMessage(context, message),
+          child: Container(
+            margin: const EdgeInsets.only(left: 60, top: 4, bottom: 4),
+            padding: EdgeInsets.fromLTRB(
+                hasImages ? 6 : 14, hasImages ? 6 : 10, hasImages ? 6 : 14,
+                hasImages ? 6 : 10),
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.widthOf(context) * 0.78,
+            ),
+            decoration: BoxDecoration(
+              color: colorScheme.primary,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            // 长按直接复制（与横滑复制同反馈）。不用 SelectableText——
+            // 其内部 TapAndHorizontalDragGestureRecognizer 会抢赢手势
+            // 竞技场，横滑复制在文字上起手时永远无法触发
+            child: GestureDetector(
+              onLongPress: message.content.isNotEmpty
+                  ? () {
+                      Haptics.medium();
+                      _copyMessage(context, message);
+                    }
+                  : null,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // 附件区：图片缩略图 / 文件卡片
+                  if (message.hasAttachments)
+                    _UserAttachments(message: message),
+                  // 正文（有附件但无文字时不渲染空文本）
+                  if (message.content.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(
+                          top: message.hasAttachments ? 6 : 0,
+                          left: hasImages ? 8 : 0,
+                          right: hasImages ? 8 : 0),
+                      child: Text(
+                        message.content,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: colorScheme.onPrimary,
+                          height: 1.6,
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       );
@@ -90,62 +110,79 @@ class MessageBubble extends StatelessWidget {
     final thinkingStreaming = isStreaming && message.content.isEmpty;
     return Align(
       alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(right: 40, top: 4, bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.widthOf(context) * 0.86,
-        ),
-        decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: GestureDetector(
-          onLongPress: () {
-            if (message.content.isNotEmpty) {
-              Haptics.medium();
-              _showMessageActions(context, message);
-            }
-          },
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // 思考过程块
-              if (message.reasoning.isNotEmpty || thinkingStreaming)
-                ThinkingBlock(
-                  reasoning: message.reasoning,
-                  streaming: thinkingStreaming,
-                  seconds: thinkingSeconds,
-                ),
-              // 工具调用卡片（assistant 发起过调用时显示）
-              if (message.toolCalls.isNotEmpty)
-                ToolCallBlock(
-                  calls: message.toolCalls,
-                  results: toolResults,
-                  executing: toolExecuting,
-                ),
-              // 正文 Markdown
-              if (message.content.isNotEmpty)
-                GptMarkdown(
-                  message.content,
-                  isStreaming: isStreaming,
-                  // 打字机节奏：70 字/秒——长回答不拖沓，短回答仍有打字感
-                  charactersPerSecond: 70,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(height: 1.6),
-                  codeBuilder: (context, name, code, closed) =>
-                      CodeBlockWidget(code: code, language: name),
-                ),
-              // 流式中正文还没来：显示光标动画占位
-              if (isStreaming &&
-                  message.content.isEmpty &&
-                  message.reasoning.isEmpty)
-                const _TypingIndicator(),
-            ],
+      child: SwipeActionContainer(
+        direction: SwipeDirection.rightToLeft,
+        icon: Icons.copy_outlined,
+        label: '复制',
+        color: colorScheme.primary,
+        enabled: message.content.isNotEmpty && !isStreaming,
+        onAction: () => _copyMessage(context, message),
+        child: Container(
+          margin: const EdgeInsets.only(right: 40, top: 4, bottom: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.widthOf(context) * 0.86,
+          ),
+          decoration: BoxDecoration(
+            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: GestureDetector(
+            onLongPress: () {
+              if (message.content.isNotEmpty) {
+                Haptics.medium();
+                _showMessageActions(context, message);
+              }
+            },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 思考过程块
+                if (message.reasoning.isNotEmpty || thinkingStreaming)
+                  ThinkingBlock(
+                    reasoning: message.reasoning,
+                    streaming: thinkingStreaming,
+                    seconds: thinkingSeconds,
+                  ),
+                // 工具调用卡片（assistant 发起过调用时显示）
+                if (message.toolCalls.isNotEmpty)
+                  ToolCallBlock(
+                    calls: message.toolCalls,
+                    results: toolResults,
+                    executing: toolExecuting,
+                  ),
+                // 正文 Markdown
+                if (message.content.isNotEmpty)
+                  GptMarkdown(
+                    message.content,
+                    isStreaming: isStreaming,
+                    // 打字机节奏：70 字/秒——长回答不拖沓，短回答仍有打字感
+                    charactersPerSecond: 70,
+                    style: theme.textTheme.bodyMedium
+                        ?.copyWith(height: 1.6),
+                    codeBuilder: (context, name, code, closed) =>
+                        CodeBlockWidget(code: code, language: name),
+                  ),
+                // 流式中正文还没来：显示光标动画占位
+                if (isStreaming &&
+                    message.content.isEmpty &&
+                    message.reasoning.isEmpty)
+                  const _TypingIndicator(),
+              ],
+            ),
           ),
         ),
       ),
     );
+  }
+
+  /// 横滑复制的统一动作（与长按菜单复制同反馈：medium 震 + Toast）
+  Future<void> _copyMessage(BuildContext context, ChatMessage message) async {
+    await Clipboard.setData(ClipboardData(text: message.content));
+    Haptics.medium();
+    if (context.mounted) {
+      showAppToast(context, '已复制');
+    }
   }
 
   /// 助手消息长按菜单：复制 / 导出为文档
