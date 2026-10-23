@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../utils/haptics.dart';
+import 'directional_drag_recognizer.dart';
 
 /// 消息横滑快捷操作容器（Telegram/iOS Mail 式）
 ///
@@ -10,8 +11,10 @@ import '../utils/haptics.dart';
 /// - [SwipeDirection.leftToRight]：手指向右滑，动作区在气泡左侧
 /// - [SwipeDirection.rightToLeft]：手指向左滑，动作区在气泡右侧
 ///
-/// 方向约定（v2.5.1 用户验收定版）：**双向左滑**——助手消息左滑、
-/// 用户消息也左滑（助手右滑与右滑出会话列表的抽屉手势冲突）。
+/// 方向约定（v2.5.3 方向锁定版）：**双向左滑复制**（v2.5.2 定版不变），
+/// 右滑让位给"右滑出会话列表"抽屉。共存靠 [DirectionalDragGestureRecognizer]
+/// 方向锁：识别器只认领与复制方向一致（向左）的横滑，反方向（右滑）
+/// 弃权让手势落回抽屉——同一块气泡上"右滑开抽屉 + 左滑复制"各归其主。
 ///
 /// 拖拽跟手（DragStartBehavior.down 消除起手死区），回弹 200ms
 /// easeOutCubic。动作区图标随进度淡入 + 轻微位移（克制动效风格）。
@@ -172,15 +175,31 @@ class SwipeActionContainerState extends State<SwipeActionContainer>
             ),
           ),
         ),
-        // 气泡层：跟随手指平移
+        // 气泡层：跟随手指平移。RawGestureDetector 注入方向锁识别器：
+        // 只认领与 [direction] 一致的横滑，反方向弃权（让位抽屉手势）
         Transform.translate(
           offset: Offset(offset, 0),
-          child: GestureDetector(
+          child: RawGestureDetector(
             behavior: HitTestBehavior.translucent,
-            dragStartBehavior: DragStartBehavior.down,
-            onHorizontalDragUpdate: _onHorizontalDragUpdate,
-            onHorizontalDragEnd: _onHorizontalDragEnd,
-            onHorizontalDragCancel: _onHorizontalDragCancel,
+            gestures: {
+              DirectionalDragGestureRecognizer:
+                  GestureRecognizerFactoryWithHandlers<
+                      DirectionalDragGestureRecognizer>(
+                () => DirectionalDragGestureRecognizer(
+                  direction: isLTR
+                      ? DragDirection.rightward
+                      : DragDirection.leftward,
+                  debugOwner: this,
+                ),
+                (instance) {
+                  instance
+                    ..dragStartBehavior = DragStartBehavior.down
+                    ..onUpdate = _onHorizontalDragUpdate
+                    ..onEnd = _onHorizontalDragEnd
+                    ..onCancel = _onHorizontalDragCancel;
+                },
+              ),
+            },
             child: widget.child,
           ),
         ),

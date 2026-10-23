@@ -112,8 +112,8 @@ class MessageBubble extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: SwipeActionContainer(
-        // 助手消息左滑（右滑与右滑出会话列表的抽屉手势冲突——助手气泡
-        // 靠左，抽屉起手区落在气泡上会误触横滑复制）
+        // 助手消息左滑复制（v2.5.3 方向锁：识别器只认领左滑，右滑弃权
+        // 让位抽屉——气泡上右滑恢复"开会话列表"，左滑仍是复制）
         direction: SwipeDirection.rightToLeft,
         icon: Icons.copy_outlined,
         label: '复制',
