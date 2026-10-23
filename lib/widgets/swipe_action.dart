@@ -18,6 +18,11 @@ import 'directional_drag_recognizer.dart';
 ///
 /// 拖拽跟手（DragStartBehavior.down 消除起手死区），回弹 200ms
 /// easeOutCubic。动作区图标随进度淡入 + 轻微位移（克制动效风格）。
+///
+/// 手势参数：识别器显式注入 [MediaQuery.maybeGestureSettingsOf] 的设备
+/// touchSlop（RawGestureDetector 不像 GestureDetector 那样自动注入），
+/// 保证与抽屉等系统手势同 slop 公平竞争；[enabled] 为 false 时干脆
+/// 不注册识别器，横滑完全让位（选择文字模式依赖这一点）。
 class SwipeActionContainer extends StatefulWidget {
   const SwipeActionContainer({
     super.key,
@@ -90,7 +95,6 @@ class SwipeActionContainerState extends State<SwipeActionContainer>
   }
 
   void _onHorizontalDragUpdate(DragUpdateDetails details) {
-    if (!widget.enabled) return;
     final delta = widget.direction == SwipeDirection.leftToRight
         ? details.primaryDelta ?? 0
         : -(details.primaryDelta ?? 0);
@@ -106,7 +110,6 @@ class SwipeActionContainerState extends State<SwipeActionContainer>
   }
 
   void _onHorizontalDragEnd(DragEndDetails details) {
-    if (!widget.enabled) return;
     if (_armed) {
       widget.onAction();
     }
@@ -138,6 +141,13 @@ class SwipeActionContainerState extends State<SwipeActionContainer>
     final isLTR = widget.direction == SwipeDirection.leftToRight;
     final offset = isLTR ? _dragExtent : -_dragExtent;
     final progress = (_dragExtent / _maxExtent).clamp(0.0, 1.0);
+    // 设备手势参数（touchSlop）必须显式注入识别器：RawGestureDetector
+    // 不像 GestureDetector 那样自动读 MediaQuery.gestureSettings，缺省
+    // 会退回 kTouchSlop=18px，而抽屉的 GestureDetector 用真机设备
+    // slop（约 8px）——slop 不对等时抽屉永远先认领，横滑复制在真机
+    // 上失效（模拟器/测试两者同为 18px，测不出来）。注入后双方 slop
+    // 一致，命中派发子先于父，气泡识别器先越 slop 认领，复制恢复。
+    final gestureSettings = MediaQuery.maybeGestureSettingsOf(context);
 
     return Stack(
       children: [
@@ -176,29 +186,33 @@ class SwipeActionContainerState extends State<SwipeActionContainer>
           ),
         ),
         // 气泡层：跟随手指平移。RawGestureDetector 注入方向锁识别器：
-        // 只认领与 [direction] 一致的横滑，反方向弃权（让位抽屉手势）
+        // 只认领与 [direction] 一致的横滑，反方向弃权（让位抽屉手势）。
+        // 禁用态不注册识别器（而非注册后空转）：识别器在场会赢下竞技场
+        // 吞掉横滑——选择文字模式下要整体让位给 SelectionArea 的拖拽选字
         Transform.translate(
           offset: Offset(offset, 0),
           child: RawGestureDetector(
             behavior: HitTestBehavior.translucent,
             gestures: {
-              DirectionalDragGestureRecognizer:
-                  GestureRecognizerFactoryWithHandlers<
-                      DirectionalDragGestureRecognizer>(
-                () => DirectionalDragGestureRecognizer(
-                  direction: isLTR
-                      ? DragDirection.rightward
-                      : DragDirection.leftward,
-                  debugOwner: this,
+              if (widget.enabled)
+                DirectionalDragGestureRecognizer:
+                    GestureRecognizerFactoryWithHandlers<
+                        DirectionalDragGestureRecognizer>(
+                  () => DirectionalDragGestureRecognizer(
+                    direction: isLTR
+                        ? DragDirection.rightward
+                        : DragDirection.leftward,
+                    debugOwner: this,
+                  ),
+                  (instance) {
+                    instance
+                      ..dragStartBehavior = DragStartBehavior.down
+                      ..gestureSettings = gestureSettings
+                      ..onUpdate = _onHorizontalDragUpdate
+                      ..onEnd = _onHorizontalDragEnd
+                      ..onCancel = _onHorizontalDragCancel;
+                  },
                 ),
-                (instance) {
-                  instance
-                    ..dragStartBehavior = DragStartBehavior.down
-                    ..onUpdate = _onHorizontalDragUpdate
-                    ..onEnd = _onHorizontalDragEnd
-                    ..onCancel = _onHorizontalDragCancel;
-                },
-              ),
             },
             child: widget.child,
           ),
