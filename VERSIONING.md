@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.4.0**（2026-10-23 发布）
+**当前版本：v2.5.0**（2026-10-23 发布）
+
+v2.5.0 在 v2.4.0 基础上新增（分支「feat/memory-curation-swipe」合并，新功能批次 → MINOR）：
+
+- M1 记忆策展台（38bfae0 + 77f3ff5）：DB v9 memories 加 pinned 列（迁移链全步骤双条件 `oldVersion < N && newVersion >= N` 加固 + v9 步 PRAGMA table_info 列存在性守卫，跨多版本直升不炸）；MemoryService 置顶保护——注入置前带「（置顶）」标记且不占滚动名额、_enforceCapacity 只压缩未置顶、update 改写（trim/空内容守卫/updatedAt 刷新）；MemoryPanel 升级——tag 筛选 chips（全部 + 动态分类 FilterChip 行）、📌 置顶分组置顶渲染、每条置顶/编辑/删除三操作、_MemoryFormDialog 统一添加/编辑表单（内容 + 分类标签）；_genId 改 Random 6 字符后缀（Windows ~15ms 时钟粒度下批量写入 id 碰撞 → ConflictAlgorithm.replace 静默丢行的真 bug）
+- I2 消息横滑快捷操作（57612e6）：SwipeActionContainer（Telegram/iOS Mail 式横滑容器）——Stack 动作区（Opacity=progress 淡入 + 图标微移）+ Transform.translate 气泡层，越阈 60% 松手即触发 onAction 并 200ms easeOutCubic 回弹，DragStartBehavior.down 消除起手死区，AnimationController 懒创建（规避测试 dispose 阶段 deactivated ancestor 断言）；MessageBubble 集成——用户消息右滑复制 / 助手消息左滑复制（与长按菜单同反馈：medium 震 + Toast），流式中禁用；用户气泡 SelectableText → Text + 长按直接复制——SelectableRegion 的 TapAndHorizontalDragGestureRecognizer（eagerVictoryOnDrag=true）会抢赢手势竞技场，横滑在文字上起手永远无法触发，测试暴露的真机必现产品 bug
+- 467 项测试全绿（新增 25：M1 服务层 9 + DB 迁移 2 + 面板 7 + I2 组件 5 + 集成 3）；flutter analyze 零 error/warning
+
+### v2.4.0（2026-10-23）
 
 v2.4.0 在 v2.3.8 基础上新增（分支「feat/home-split」合并，结构性重构 + 新功能 → MINOR）：
 
