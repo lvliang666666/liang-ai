@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.5.2**（2026-10-23 发布）
+**当前版本：v2.5.3**（2026-10-23 发布）
+
+v2.5.3 在 v2.5.2 基础上修正（main 直接提交，用户验收反馈 → PATCH）：
+
+- 方向锁识别器 DirectionalDragGestureRecognizer：继承 HorizontalDragGestureRecognizer，覆写 hasSufficientGlobalDistanceToAccept——累计位移与配置方向相反时返回 false（识别器保持 possible 态不认领，竞技场让位其他竞争者），同方向按原逻辑判定；SwipeActionContainer 改用 RawGestureDetector 注入方向锁识别器（GestureDetector 不支持自定义识别器）
+- 共存效果：气泡上**右滑恢复"开会话列表"抽屉**（方向锁弃权让位，v2.5.2 起因气泡横滑识别器不分方向抢赢竞技场而失效）、**左滑仍是复制**（双向左滑定版不变）；气泡外区域右滑开抽屉照旧
+- 472 项测试全绿（新增 3：方向锁弃权/同向认领 + 抽屉共存右滑开抽屉/左滑复制）；flutter analyze 零 error/warning
+
+### v2.5.2（2026-10-23）
 
 v2.5.2 在 v2.5.1 基础上修正（分支「fix/swipe-direction-final」，用户验收反馈 → PATCH）：
 
