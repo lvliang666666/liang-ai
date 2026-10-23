@@ -11,7 +11,11 @@ import 'package:ai_chat_app/widgets/home/chat_message_list.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'package:ai_chat_app/services/settings_service.dart';
 
 import 'helpers/test_db.dart';
 
@@ -57,6 +61,7 @@ void main() {
   late MockApiService api;
   late ChatProvider provider;
   late ChatSession session;
+  late SettingsService settings;
 
   setUpAll(() async {
     // sqflite_ffi 的真实异步 IO 在 widget 测试 fakeAsync 区推不动，
@@ -64,6 +69,8 @@ void main() {
     final inMemory = await openTestDb();
     db = DatabaseService.instance;
     await db.initForTest(inMemory);
+    SharedPreferences.setMockInitialValues({});
+    settings = SettingsService(await SharedPreferences.getInstance());
   });
 
   setUp(() async {
@@ -98,7 +105,12 @@ void main() {
     await provider.loadMessages();
   }
 
-  Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
+  Widget wrap(Widget child) => MultiProvider(
+        providers: [
+          Provider<SettingsService>.value(value: settings),
+        ],
+        child: MaterialApp(home: Scaffold(body: child)),
+      );
 
   /// 预置长会话并上屏（默认跟随态）
   Future<void> pumpList(WidgetTester tester, {int messages = 30}) async {

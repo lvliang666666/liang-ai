@@ -3,12 +3,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:gpt_markdown/gpt_markdown.dart';
+import 'package:provider/provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/chat_message.dart';
 import '../models/tool_call.dart';
 import '../services/file_export_service.dart';
+import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import 'app_toast.dart';
 import 'attachment_thumbnail.dart';
@@ -18,7 +20,12 @@ import 'thinking_block.dart';
 import 'tool_call_block.dart';
 
 /// 消息气泡：用户右侧蓝色，助手左侧含思考块 + 工具卡片 + Markdown
-class MessageBubble extends StatelessWidget {
+///
+/// 「选择文字」为原地模式：长按菜单选「选择文字」后，正文在原气泡内
+/// 切换为 SelectableText（顶部浮出「完成」胶囊退出）。选择态是开关式
+/// 而非常驻——SelectableText 的手势识别器会吃掉横滑，常驻会永久
+/// 破坏横滑复制。
+class MessageBubble extends StatefulWidget {
   const MessageBubble({
     super.key,
     required this.message,
@@ -39,21 +46,36 @@ class MessageBubble extends StatelessWidget {
   final bool toolExecuting;
 
   @override
+  State<MessageBubble> createState() => _MessageBubbleState();
+}
+
+class _MessageBubbleState extends State<MessageBubble> {
+  /// 原地选择文字模式（助手气泡正文切换为 SelectableText）
+  bool _selecting = false;
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+    // 「快捷操作」开关（设置页）：开 = 横滑复制可用；关 = 无横滑动作
+    final swipeEnabled =
+        context.watch<SettingsService>().swipeActions;
+    final message = widget.message;
+    final isStreaming = widget.isStreaming;
 
     if (message.isUser) {
       final hasImages = message.attachments.any((a) => a.isImage);
       return Align(
         alignment: Alignment.centerRight,
         child: SwipeActionContainer(
-          // 用户消息左滑（气泡向屏幕中间滑，动作区在右缘露出热区更大）
-          direction: SwipeDirection.rightToLeft,
+          // 用户消息右滑复制（v2.5.0 定版方案，快捷操作开时生效）：
+          // 手指向右滑、气泡向屏幕中间让位，动作区在左缘露出
+          direction: SwipeDirection.leftToRight,
           icon: Icons.copy_outlined,
           label: '复制',
           color: colorScheme.primary,
-          enabled: message.content.isNotEmpty && !isStreaming,
+          enabled:
+              swipeEnabled && message.content.isNotEmpty && !isStreaming,
           onAction: () => _copyMessage(context, message),
           child: Container(
             margin: const EdgeInsets.only(left: 60, top: 4, bottom: 4),
@@ -112,13 +134,15 @@ class MessageBubble extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: SwipeActionContainer(
-        // 助手消息左滑复制（v2.5.3 方向锁：识别器只认领左滑，右滑弃权
-        // 让位抽屉——气泡上右滑恢复"开会话列表"，左滑仍是复制）
+        // 助手消息左滑复制（v2.5.0 定版方案，快捷操作开时生效）。
+        // v2.5.3 方向锁保留：识别器只认领左滑，右滑弃权让位抽屉——
+        // 气泡上右滑仍是"开会话列表"，与复制互不干扰
         direction: SwipeDirection.rightToLeft,
         icon: Icons.copy_outlined,
         label: '复制',
         color: colorScheme.primary,
-        enabled: message.content.isNotEmpty && !isStreaming,
+        enabled:
+            swipeEnabled && message.content.isNotEmpty && !isStreaming,
         onAction: () => _copyMessage(context, message),
         child: Container(
           margin: const EdgeInsets.only(right: 40, top: 4, bottom: 4),
@@ -132,41 +156,88 @@ class MessageBubble extends StatelessWidget {
           ),
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,
-            onLongPressStart: (details) {
-              if (message.content.isNotEmpty) {
-                Haptics.medium();
-                _showMessageActions(context, message, details.globalPosition);
-              }
-            },
+            // 选择模式下长按交给 SelectableText 挑字，不再弹菜单
+            onLongPressStart: _selecting
+                ? null
+                : (details) {
+                    if (message.content.isNotEmpty) {
+                      Haptics.medium();
+                      _showMessageActions(
+                          context, message, details.globalPosition);
+                    }
+                  },
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 选择模式顶栏：提示 + 退出（原地选择，不弹层）
+                if (_selecting) ...[
+                  Row(
+                    children: [
+                      Icon(Icons.highlight_alt,
+                          size: 16, color: colorScheme.primary),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '长按文字挑选片段，用系统工具条复制',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      GestureDetector(
+                        onTap: () => setState(() => _selecting = false),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: colorScheme.primaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            '完成',
+                            style: theme.textTheme.labelMedium?.copyWith(
+                              color: colorScheme.onPrimaryContainer,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 // 思考过程块
                 if (message.reasoning.isNotEmpty || thinkingStreaming)
                   ThinkingBlock(
                     reasoning: message.reasoning,
                     streaming: thinkingStreaming,
-                    seconds: thinkingSeconds,
+                    seconds: widget.thinkingSeconds,
                   ),
                 // 工具调用卡片（assistant 发起过调用时显示）
                 if (message.toolCalls.isNotEmpty)
                   ToolCallBlock(
                     calls: message.toolCalls,
-                    results: toolResults,
-                    executing: toolExecuting,
+                    results: widget.toolResults,
+                    executing: widget.toolExecuting,
                   ),
-                // 正文 Markdown
+                // 正文：选择模式 = 纯文本 SelectableText（Markdown 渲染会
+                // 拆散文字流，选择操作基于纯文本才完整）；常规 = Markdown
                 if (message.content.isNotEmpty)
-                  GptMarkdown(
-                    message.content,
-                    isStreaming: isStreaming,
-                    // 打字机节奏：70 字/秒——长回答不拖沓，短回答仍有打字感
-                    charactersPerSecond: 70,
-                    style: theme.textTheme.bodyMedium
-                        ?.copyWith(height: 1.6),
-                    codeBuilder: (context, name, code, closed) =>
-                        CodeBlockWidget(code: code, language: name),
-                  ),
+                  _selecting
+                      ? SelectableText(
+                          message.content,
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(height: 1.6),
+                        )
+                      : GptMarkdown(
+                          message.content,
+                          isStreaming: isStreaming,
+                          // 打字机节奏：70 字/秒——长回答不拖沓，短回答仍有打字感
+                          charactersPerSecond: 70,
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(height: 1.6),
+                          codeBuilder: (context, name, code, closed) =>
+                              CodeBlockWidget(code: code, language: name),
+                        ),
                 // 流式中正文还没来：显示光标动画占位
                 if (isStreaming &&
                     message.content.isEmpty &&
@@ -261,79 +332,14 @@ class MessageBubble extends StatelessWidget {
     }
 
     if (action == 'select') {
-      if (!context.mounted) return;
-      await _showTextSelector(context, message);
+      // 原地选择：正文在原气泡内切换为 SelectableText（不弹层）
+      if (mounted) setState(() => _selecting = true);
       return;
     }
 
     if (action == 'export') {
       await _pickExportFormat(context, message);
     }
-  }
-
-  /// 选择文字：全屏底部 Sheet 展示纯文本（SelectableText），用户挑选
-  /// 局部文字后用系统选择工具条复制——Markdown 渲染会拆散文字流，
-  /// 选择操作基于纯文本才完整
-  Future<void> _showTextSelector(
-      BuildContext context, ChatMessage message) async {
-    await showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        expand: false,
-        initialChildSize: 0.7,
-        maxChildSize: 0.9,
-        minChildSize: 0.4,
-        builder: (context, controller) => Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text('选择文字',
-                        style: Theme.of(context).textTheme.titleMedium),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => Navigator.pop(context),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  '长按文字挑选片段，用系统工具条复制',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                ),
-              ),
-            ),
-            const Divider(height: 16),
-            Expanded(
-              child: SingleChildScrollView(
-                controller: controller,
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                child: SelectableText(
-                  message.content,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(height: 1.6),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
   }
 
   /// 选择导出格式并落盘

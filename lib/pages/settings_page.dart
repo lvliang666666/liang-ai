@@ -38,7 +38,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'Skill 管理', '记忆管理', 'API 配置', '对话参数', '备份', '说明'];
+  static const _tabs = ['外观', 'Skill 管理', '记忆管理', 'API 配置', '对话参数', '快捷操作', '备份', '说明'];
 
   late final SettingsService _settings;
   late final PageController _pageController;
@@ -134,6 +134,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 const MemoryPanel(),
                 _buildApiTab(theme),
                 _buildParamsTab(theme),
+                _buildGesturesTab(theme),
                 _buildBackupTab(theme),
                 _buildAboutTab(theme),
               ],
@@ -754,7 +755,45 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ===== Tag 5：备份（E1 备份/导出） =====
+  // ===== Tag 6：快捷操作（消息横滑手势开关） =====
+  Widget _buildGesturesTab(ThemeData theme) {
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('消息横滑快捷操作'),
+          subtitle: const Text(
+            '开启后：助手消息左滑复制，用户消息右滑复制；'
+            '关闭后恢复常规样式（长按复制仍可用）',
+          ),
+          value: _settings.swipeActions,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setSwipeActions(v));
+          },
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Text(
+            '· 横滑复制与「右滑出会话列表」抽屉共存：气泡上右滑开抽屉，'
+            '左滑复制\n'
+            '· 流式生成中的消息横滑自动禁用，避免与滚动冲突\n'
+            '· 长按助手气泡可弹出菜单：复制全文 / 选择文字 / 导出并分享',
+            style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ===== Tag 7：备份（E1 备份/导出） =====
   Widget _buildBackupTab(ThemeData theme) {
     return ListView(
       padding: const EdgeInsets.all(16),

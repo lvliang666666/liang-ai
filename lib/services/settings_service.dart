@@ -50,6 +50,13 @@ class SettingsService {
   String? get themeIdRaw => _prefs.getString(_kThemeId);
   Future<void> setThemeId(String v) => _prefs.setString(_kThemeId, v);
 
+  // ===== 快捷操作（消息横滑复制） =====
+  // 开 = 助手左滑复制 + 用户右滑复制（v2.5.0 定版方案）；
+  // 关 = 无横滑动作（长按复制保留）。默认开（升级用户行为不变）
+  static const _kSwipeActions = 'swipe_actions';
+  bool get swipeActions => _prefs.getBool(_kSwipeActions) ?? true;
+  Future<void> setSwipeActions(bool v) => _prefs.setBool(_kSwipeActions, v);
+
   // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续

@@ -8,7 +8,17 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.5.3**（2026-10-23 发布）
+**当前版本：v2.6.0**（2026-10-23 发布）
+
+v2.6.0 在 v2.5.3 基础上新增（main 直接提交，用户验收反馈 → MINOR）：
+
+- 设置页新增「快捷操作」tag（对话参数与备份之间）：SwitchListTile 开关「消息横滑快捷操作」+ 说明卡（共存规则/流式禁用/长按菜单），SettingsService 持久化（key `swipe_actions`，默认开 = 升级用户行为不变）；**开 = 助手左滑复制 + 用户右滑复制**（复用 v2.5.0 定版方案 57612e6 的方向配置），**关 = 无横滑动作**（长按复制保留）——MessageBubble watch SettingsService.swipeActions 接线 SwipeActionContainer.enabled
+- 「选择文字」原地化（用户反馈"不要弹出个界面，没意义"）：删除 _showTextSelector 底部弹层，长按菜单点「选择文字」后正文在原气泡内切换为 SelectableText（顶部提示行 + 「完成」胶囊退出）；选择态是开关式而非常驻——SelectableText 的手势识别器会吃掉横滑，常驻会永久破坏横滑复制；MessageBubble Stateless → Stateful（持有 _selecting 状态）
+- 用户气泡方向 rightToLeft → leftToRight（v2.5.0 方案：右滑复制）；助手气泡保持左滑复制 + v2.5.3 方向锁（右滑让位抽屉）
+- 备份 settings 段新增 swipe_actions 字段（导出/导入往返一致）
+- 473 项测试全绿（新增 1：快捷操作关=横滑禁用长按可用；改 2：用户消息右滑复制 / 选择文字原地模式断言）；flutter analyze 零 error/warning
+
+### v2.5.3（2026-10-23）
 
 v2.5.3 在 v2.5.2 基础上修正（main 直接提交，用户验收反馈 → PATCH）：
 
