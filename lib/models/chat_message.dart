@@ -24,6 +24,13 @@ class ChatMessage {
   /// tool 结果消息关联的调用 ID（仅 role='tool'）
   String? toolCallId;
 
+  /// 本轮输入 token（system+记忆+历史+本轮消息；usage 末帧或本地估算，
+  /// null = 老数据/未统计）
+  int? promptTokens;
+
+  /// 本轮输出 token（reasoning+content；usage 末帧或本地估算）
+  int? completionTokens;
+
   final int createdAt;
 
   ChatMessage({
@@ -35,6 +42,8 @@ class ChatMessage {
     List<MessageAttachment>? attachments,
     List<ToolCall>? toolCalls,
     this.toolCallId,
+    this.promptTokens,
+    this.completionTokens,
     required this.createdAt,
   })  : attachments = attachments ?? const [],
         toolCalls = toolCalls ?? const [];
@@ -54,6 +63,8 @@ class ChatMessage {
         'attachments': MessageAttachment.encodeList(attachments),
         'tool_calls': ToolCall.encodeList(toolCalls),
         'tool_call_id': toolCallId,
+        'prompt_tokens': promptTokens,
+        'completion_tokens': completionTokens,
         'created_at': createdAt,
       };
 
@@ -67,6 +78,8 @@ class ChatMessage {
             MessageAttachment.decodeList(map['attachments'] as String?),
         toolCalls: ToolCall.decodeList(map['tool_calls'] as String?),
         toolCallId: map['tool_call_id'] as String?,
+        promptTokens: map['prompt_tokens'] as int?,
+        completionTokens: map['completion_tokens'] as int?,
         createdAt: map['created_at'] as int,
       );
 

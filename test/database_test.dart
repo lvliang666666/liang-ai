@@ -160,5 +160,77 @@ void main() {
       );
       await fresh.close();
     });
+
+    test('新装库 messages 表含 token 列（v8 schema 完整性）', () async {
+      final fresh = await openTestDb();
+      final cols = await fresh.rawQuery("PRAGMA table_info(messages)");
+      expect(
+        cols.map((c) => c['name']).toList(),
+        containsAll(['prompt_tokens', 'completion_tokens']),
+      );
+      await fresh.close();
+    });
+
+    test('v7 老库迁移到 v8：token 列补齐，老数据保留', () async {
+      // 手写 v7 历史 schema（被测对象是迁移逻辑本身），升级走生产 onUpgrade 本尊
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v7_to_v8_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 7),
+      );
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('messages', {
+        'id': 'm1',
+        'session_id': 's1',
+        'role': 'assistant',
+        'content': '老消息',
+        'created_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // 老数据保留，token 列为 NULL
+      final rows = await upgraded.query('messages');
+      expect(rows.length, 1);
+      expect(rows.first['content'], '老消息');
+      expect(rows.first['prompt_tokens'], isNull);
+      expect(rows.first['completion_tokens'], isNull);
+
+      // 新列可写可读
+      await upgraded.update(
+        'messages',
+        {'prompt_tokens': 120, 'completion_tokens': 45},
+        where: 'id = ?',
+        whereArgs: ['m1'],
+      );
+      final updated = (await upgraded.query('messages')).first;
+      expect(updated['prompt_tokens'], 120);
+      expect(updated['completion_tokens'], 45);
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
   });
 }

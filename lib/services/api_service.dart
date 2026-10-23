@@ -100,6 +100,9 @@ class ApiService {
       'messages': messages,
       'stream': true,
       'temperature': temperature,
+      // 请求末帧 usage 统计（F3 Token 水位仪表盘数据源）；
+      // vLLM/OpenAI 兼容网关标准参数，不支持的服务端会忽略该字段
+      'stream_options': {'include_usage': true},
     };
     if (tools != null && tools.isNotEmpty) {
       body['tools'] = tools;
