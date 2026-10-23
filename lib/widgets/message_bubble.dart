@@ -48,7 +48,8 @@ class MessageBubble extends StatelessWidget {
       return Align(
         alignment: Alignment.centerRight,
         child: SwipeActionContainer(
-          direction: SwipeDirection.leftToRight,
+          // 用户消息左滑（气泡向屏幕中间滑，动作区在右缘露出热区更大）
+          direction: SwipeDirection.rightToLeft,
           icon: Icons.copy_outlined,
           label: '复制',
           color: colorScheme.primary,
@@ -111,7 +112,8 @@ class MessageBubble extends StatelessWidget {
     return Align(
       alignment: Alignment.centerLeft,
       child: SwipeActionContainer(
-        direction: SwipeDirection.rightToLeft,
+        // 助手消息右滑（气泡向屏幕中间滑，动作区在左缘露出热区更大）
+        direction: SwipeDirection.leftToRight,
         icon: Icons.copy_outlined,
         label: '复制',
         color: colorScheme.primary,
@@ -128,10 +130,11 @@ class MessageBubble extends StatelessWidget {
             borderRadius: BorderRadius.circular(20),
           ),
           child: GestureDetector(
-            onLongPress: () {
+            behavior: HitTestBehavior.translucent,
+            onLongPressStart: (details) {
               if (message.content.isNotEmpty) {
                 Haptics.medium();
-                _showMessageActions(context, message);
+                _showMessageActions(context, message, details.globalPosition);
               }
             },
             child: Column(
@@ -185,39 +188,64 @@ class MessageBubble extends StatelessWidget {
     }
   }
 
-  /// 助手消息长按菜单：复制 / 导出为文档
+  /// 助手消息长按菜单：锚点式（微信/桌面右键菜单风格，与长按会话卡片
+  /// 菜单同形态）——复制全文 / 选择文字 / 导出为文档
+  ///
+  /// [pressPosition] = 长按点全局坐标，菜单锚定该处弹出
   Future<void> _showMessageActions(
-      BuildContext context, ChatMessage message) async {
-    final action = await showModalBottomSheet<String>(
+      BuildContext context, ChatMessage message, Offset pressPosition) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final box = overlay.size;
+    // 菜单估算尺寸：3 项（44 高）+ divider ≈ 150 高，宽约 170
+    const menuWidth = 170.0;
+    const menuHeight = 150.0;
+    var left = pressPosition.dx;
+    var top = pressPosition.dy;
+    if (left + menuWidth > box.width) left = box.width - menuWidth - 8;
+    if (top + menuHeight > box.height) top = box.height - menuHeight - 8;
+    final action = await showMenu<String>(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      position: RelativeRect.fromLTRB(
+        left, top, box.width - left - menuWidth, box.height - top - menuHeight,
       ),
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.copy_outlined),
-              title: const Text('复制全文'),
-              onTap: () {
-                Haptics.light();
-                Navigator.pop(context, 'copy');
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.ios_share),
-              title: const Text('导出并分享'),
-              subtitle: const Text('Markdown / HTML / 纯文本，分享到 QQ、微信等'),
-              onTap: () {
-                Haptics.light();
-                Navigator.pop(context, 'export');
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: [
+        const PopupMenuItem(
+          value: 'copy',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.copy_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('复制全文'),
+            ],
+          ),
         ),
-      ),
+        const PopupMenuItem(
+          value: 'select',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.highlight_alt, size: 20),
+              SizedBox(width: 12),
+              Text('选择文字'),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'export',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.ios_share, size: 20),
+              SizedBox(width: 12),
+              Text('导出并分享'),
+            ],
+          ),
+        ),
+      ],
     );
     if (!context.mounted || action == null) return;
 
@@ -231,9 +259,80 @@ class MessageBubble extends StatelessWidget {
       return;
     }
 
+    if (action == 'select') {
+      if (!context.mounted) return;
+      await _showTextSelector(context, message);
+      return;
+    }
+
     if (action == 'export') {
       await _pickExportFormat(context, message);
     }
+  }
+
+  /// 选择文字：全屏底部 Sheet 展示纯文本（SelectableText），用户挑选
+  /// 局部文字后用系统选择工具条复制——Markdown 渲染会拆散文字流，
+  /// 选择操作基于纯文本才完整
+  Future<void> _showTextSelector(
+      BuildContext context, ChatMessage message) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        maxChildSize: 0.9,
+        minChildSize: 0.4,
+        builder: (context, controller) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text('选择文字',
+                        style: Theme.of(context).textTheme.titleMedium),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  '长按文字挑选片段，用系统工具条复制',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                ),
+              ),
+            ),
+            const Divider(height: 16),
+            Expanded(
+              child: SingleChildScrollView(
+                controller: controller,
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+                child: SelectableText(
+                  message.content,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(height: 1.6),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// 选择导出格式并落盘

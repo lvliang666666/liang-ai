@@ -193,7 +193,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
     }
 
-    testWidgets('助手消息左滑越阈：剪贴板收到全文', (tester) async {
+    testWidgets('助手消息右滑越阈：剪贴板收到全文', (tester) async {
       final msg = ChatMessage(
         id: 'm1',
         sessionId: 's1',
@@ -205,7 +205,7 @@ void main() {
       await tester.pump();
 
       await swipeAndRelease(
-          tester, find.text('助手回答内容'), dx: -120);
+          tester, find.text('助手回答内容'), dx: 120);
 
       expect(clipboardText, '助手回答内容');
 
@@ -214,7 +214,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
     });
 
-    testWidgets('用户消息右滑越阈：剪贴板收到全文', (tester) async {
+    testWidgets('用户消息左滑越阈：剪贴板收到全文', (tester) async {
       final msg = ChatMessage(
         id: 'm2',
         sessionId: 's1',
@@ -226,7 +226,7 @@ void main() {
       await tester.pump();
 
       await swipeAndRelease(
-          tester, find.text('用户提问内容'), dx: 120);
+          tester, find.text('用户提问内容'), dx: -120);
 
       expect(clipboardText, '用户提问内容');
 
@@ -248,9 +248,60 @@ void main() {
       )));
       await tester.pump();
 
-      await swipeAndRelease(tester, find.text('流式内容'), dx: -120);
+      await swipeAndRelease(tester, find.text('流式内容'), dx: 120);
 
       expect(clipboardText, isNull);
+    });
+
+    testWidgets('长按助手气泡：锚点菜单三项（复制全文/选择文字/导出）',
+        (tester) async {
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(wrap(MessageBubble(message: msg)));
+      await tester.pump();
+
+      await tester.longPress(find.text('助手回答内容'));
+      await tester.pumpAndSettle();
+
+      // 锚点菜单弹出（非底部弹层）：三项可见
+      expect(find.text('复制全文'), findsOneWidget);
+      expect(find.text('选择文字'), findsOneWidget);
+      expect(find.text('导出并分享'), findsOneWidget);
+
+      // 点「复制全文」→ 剪贴板收到全文
+      await tester.tap(find.text('复制全文'));
+      await tester.pumpAndSettle();
+      expect(clipboardText, '助手回答内容');
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 300));
+    });
+
+    testWidgets('锚点菜单点「选择文字」：Sheet 展示纯文本可选', (tester) async {
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(wrap(MessageBubble(message: msg)));
+      await tester.pump();
+
+      await tester.longPress(find.text('助手回答内容'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('选择文字'));
+      await tester.pumpAndSettle();
+
+      // Sheet 标题 + 提示行 + 纯文本正文（气泡原文 + Sheet 副本共 2 处）
+      expect(find.text('选择文字'), findsOneWidget);
+      expect(find.text('长按文字挑选片段，用系统工具条复制'), findsOneWidget);
+      expect(find.text('助手回答内容'), findsNWidgets(2));
     });
   });
 }
