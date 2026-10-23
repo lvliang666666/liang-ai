@@ -61,6 +61,7 @@ class BackupService {
           'theme_id': settings.themeIdRaw,
           'default_effort': settings.defaultEffortValue,
           'temperature': settings.temperature,
+          'swipe_actions': settings.swipeActions,
         },
       },
     };
