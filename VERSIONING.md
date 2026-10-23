@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.3.8**（2026-10-23 发布）
+**当前版本：v2.4.0**（2026-10-23 发布）
+
+v2.4.0 在 v2.3.8 基础上新增（分支「feat/home-split」合并，结构性重构 + 新功能 → MINOR）：
+
+- E3 home_page 拆分（0053044 + cce012a + 6a074fd + 5b68714 + f5cfb14）：2496 行单文件按「自包含程度从高到低」四步机械搬移到 lib/widgets/home/——①SkillPickerSheet + NewChatPresetSheet（弹窗组）②SessionDrawerPanel（抽屉）③ChatMessageList + MessageTimeLabel（消息列表，State 公开化 + scrollController 公开 getter）④HomeInputBar + HomeAttachmentPreview（输入栏，耦合最深最后拆）；每步全量测试绿后提交；home_page 只剩状态编排 + 布局骨架（875 行），底部 Tab/气泡全宽化等 UI 重构的前置就绪
+- I1 流式智能跟随（9d87fb2）：滚动跟随逻辑从宿主内聚进 ChatMessageList——手指触摸列表即暂停自动跟随（拖拽中流式新内容不再拽回底部），滚离底部右下角浮出「↓ 回到最新（+N）」胶囊（未读条数估算 + 流式中呼吸点提示），点胶囊 300ms 平滑滚回并恢复跟随，手动滚回底部（60px 阈值）同样恢复；位置驱动单一事实源（_onScroll），build 期间不 setState（未读数变化 post-frame 提交）
+- 442 项测试全绿（新增 7 项：I1 跟随态/滚离/触摸暂停/胶囊交互）；flutter analyze 零 error/warning
+
+### v2.3.8（2026-10-23）
 
 v2.3.8 在 v2.3.7 基础上新增（分支「feat/token-lens-backup」合并，新功能批次 → PATCH）：
 
