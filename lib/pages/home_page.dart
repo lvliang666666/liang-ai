@@ -46,9 +46,9 @@ class _HomePageState extends State<HomePage> {
   final _inputController = TextEditingController();
   final _inputFocusNode = FocusNode();
 
-  /// 当前聊天区（滚动跟随用：经 GlobalKey 取 ChatMessageList 自持的控制器）
+  /// 当前聊天区（I1 智能跟随在 ChatMessageList 内部自管理；
+  /// GlobalKey 保留供未来宿主级滚动操作）
   final _chatAreaKey = GlobalKey<ChatMessageListState>();
-  int _lastDisplayCount = 0;
 
   /// 抽屉批量管理模式开关（长按菜单「批量管理」触发）
   final ValueNotifier<bool> _drawerBatchMode = ValueNotifier(false);
@@ -103,28 +103,6 @@ class _HomePageState extends State<HomePage> {
     if (hour < 13) return '中午好';
     if (hour < 18) return '下午好';
     return '晚上好';
-  }
-
-  // ===== 滚动跟随（与原聊天页同逻辑） =====
-  // 滚动控制器由 ChatMessageList 自持（每会话独立，随 State 销毁）；
-  // 宿主通过 GlobalKey 拿当前活跃的控制器做底部锚定
-  void _maybeAutoScroll(int newCount) {
-    final area = _chatAreaKey.currentState;
-    final controller = area?.scrollController;
-    if (controller == null || !controller.hasClients) return;
-    if (newCount != _lastDisplayCount) {
-      final isNewMessage = newCount > _lastDisplayCount;
-      _lastDisplayCount = newCount;
-      if (isNewMessage) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (controller.hasClients) {
-            controller.jumpTo(0);
-          }
-        });
-      }
-    } else if (controller.offset <= 0.5) {
-      controller.jumpTo(0);
-    }
   }
 
   /// 打开即聊：发送首条消息时才创建会话，主页原地进入聊天态
@@ -224,7 +202,6 @@ class _HomePageState extends State<HomePage> {
     old?.dispose();
     setState(() {
       _chat = chat;
-      _lastDisplayCount = 0;
     });
 
     // 恢复目标会话草稿（静默恢复：输入框里看得见，无需弹提示）
@@ -308,7 +285,6 @@ class _HomePageState extends State<HomePage> {
       // 先置空再 dispose：避免 dispose 后 provider 仍被 UI 引用
       setState(() {
         _chat = null;
-        _lastDisplayCount = 0;
       });
       current.dispose();
     }
@@ -673,7 +649,6 @@ class _HomePageState extends State<HomePage> {
                                   key: _chatAreaKey,
                                   chatKey: ValueKey(_chat!.session.id),
                                   chat: _chat!,
-                                  onCountChanged: _maybeAutoScroll,
                                   onDelete: _deleteCurrentChat,
                                 ),
                               ),
