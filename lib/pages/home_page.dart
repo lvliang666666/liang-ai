@@ -1,12 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_session.dart';
@@ -17,29 +12,21 @@ import '../providers/chat_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
-import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
-import '../services/attachment_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import '../utils/transitions.dart';
-import '../widgets/attachment_thumbnail.dart';
 import '../widgets/app_bottom_sheet.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/chat_input_bar.dart';
-import '../widgets/chat_tags_bar.dart';
 import '../widgets/gesture_drawer.dart';
 import '../widgets/home/chat_message_list.dart';
 import '../widgets/home/home_input_bar.dart';
 import '../widgets/home/new_chat_preset_sheet.dart';
 import '../widgets/home/session_drawer_panel.dart';
 import '../widgets/home/skill_picker_sheet.dart';
-import '../widgets/message_bubble.dart';
-import '../widgets/pressable.dart';
-import '../widgets/token_usage_sheet.dart';
-import 'payload_lens_page.dart';
 import 'settings_page.dart';
 
 /// 首页：DeepSeek 风格单页架构——主页即聊天页
