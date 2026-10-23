@@ -139,6 +139,12 @@ void main() {
     });
 
     /// 建一个 v2 结构的库（无 attachments 列），塞入旧数据
+    ///
+    /// 注意：v2 库不含 memories 表（v7 才引入）。重开升级到当前版本时，
+    /// 迁移链 v7 步会新建含 pinned 列的 memories 表，v9 步的 ALTER
+    /// 因 newVersion>=9 且 oldVersion<9 仍会执行 → duplicate column。
+    /// 生产老库升级路径同样如此（v2 直升 v9），所以 v9 步必须容忍
+    /// 「表是新建的、列已存在」——用 PRAGMA 检查列存在性再 ALTER。
     Future<Database> createV2Db() async {
       final db = await databaseFactory.openDatabase(dbPath,
           options: OpenDatabaseOptions(version: 2, onCreate: (d, v) async {
@@ -201,10 +207,11 @@ void main() {
       });
       await v2db.close();
 
-      // 2. 用 DatabaseService 重新打开（触发生产 onUpgrade 本尊 v2→v5 迁移链）
+      // 2. 用 DatabaseService 重新打开（触发生产 onUpgrade 本尊 v2→v5 迁移链；
+      // 目标版本升到当前版——ChatMessage.toMap 现含 v8 token 列，v5 schema 缺列会炸 INSERT）
       final reopened = await databaseFactory.openDatabase(dbPath,
           options: OpenDatabaseOptions(
-            version: 5,
+            version: DatabaseService.dbVersion,
             onUpgrade: DatabaseService.onUpgrade,
           ));
       final svc = DatabaseService.instance;

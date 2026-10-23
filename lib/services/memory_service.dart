@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 
 import '../models/memory.dart';
@@ -106,6 +108,31 @@ class MemoryService {
     _notifyChange();
   }
 
+  /// 置顶/取消置顶（策展台手动操作）
+  Future<void> setPinned(String id, bool pinned) async {
+    final all = await _db.getAllMemories();
+    final target = all.where((m) => m.id == id).firstOrNull;
+    if (target == null) return;
+    await _db.updateMemory(target.copyWith(pinned: pinned));
+    _notifyChange();
+  }
+
+  /// 编辑记忆内容/标签（策展台手动改写；绕过去重——用户明确意图优先）
+  Future<void> update(String id,
+      {String? content, String? tag}) async {
+    final all = await _db.getAllMemories();
+    final target = all.where((m) => m.id == id).firstOrNull;
+    if (target == null) return;
+    final trimmed = content?.trim();
+    await _db.updateMemory(target.copyWith(
+      content:
+          trimmed != null && trimmed.isNotEmpty ? trimmed : target.content,
+      tag: tag,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    ));
+    _notifyChange();
+  }
+
   /// 按关键词删除（content LIKE 匹配），返回删除条数
   ///
   /// 归档摘要行是压缩产物（聚合了多条旧记忆），不随单条关键词删除——
@@ -129,8 +156,9 @@ class MemoryService {
   /// 条数
   Future<int> count() => _db.memoryCount();
 
-  /// 拼接注入 system prompt 的记忆文本（最近 [injectLimit] 条活跃记忆）
+  /// 拼接注入 system prompt 的记忆文本（置顶条 + 最近 [injectLimit] 条活跃记忆）
   ///
+  /// 置顶条（pinned）排最前且不占 [injectLimit] 名额（永久记忆语义）；
   /// 归档摘要行置尾单独成段（低优先级参考，不占活跃条数名额）。
   /// 无记忆返回空字符串（调用方据此跳过注入段）。
   Future<String> recentText({int limit = injectLimit}) async {
@@ -139,9 +167,13 @@ class MemoryService {
     final active = all.where((m) => !m.isArchived).toList();
     final archived = all.where((m) => m.isArchived).toList();
     if (active.isEmpty && archived.isEmpty) return '';
-    final picked = active.take(limit).toList();
+    final pinned = active.where((m) => m.pinned).toList();
+    final unpinned = active.where((m) => !m.pinned).toList();
+    final picked = unpinned.take(limit).toList();
+    if (pinned.isEmpty && picked.isEmpty && archived.isEmpty) return '';
     return [
       '【用户记忆】（长期有效，跨会话）',
+      for (final m in pinned) '- ${m.content}（置顶）',
       for (final m in picked) '- ${m.content}',
       if (archived.isNotEmpty) ...[
         '【历史归档】（早期记忆的压缩摘要，仅供参考）',
@@ -209,15 +241,20 @@ class MemoryService {
   /// 把最旧 [compressBatch] 条活跃记忆（按 updated_at 升序取尾部）合并为
   /// 一条归档摘要行（tag=[Memory.archiveTag]，updatedAt=[now] 使其沉底），
   /// 原条目删除。归档行永不二次压缩——摘要失真不随轮次累积。
+  /// 置顶条（pinned）不参与压缩淘汰（永久记忆语义）。
   Future<void> _enforceCapacity({required int now}) async {
     final all = await _db.getAllMemories(); // 已按 updated_at 倒序
     if (all.length <= maxMemories) return;
     final active = all.where((m) => !m.isArchived).toList();
     if (active.length <= maxMemories) return;
-    // 尾部 = 最旧的 compressBatch 条活跃记忆
-    final oldest = active.length > compressBatch
-        ? active.sublist(active.length - compressBatch)
-        : List<Memory>.of(active);
+    // 可压缩池 = 非置顶活跃记忆；置顶条永不进摘要
+    final compressible =
+        active.where((m) => !m.pinned).toList();
+    if (compressible.length <= maxMemories) return;
+    // 尾部 = 最旧的 compressBatch 条可压缩记忆
+    final oldest = compressible.length > compressBatch
+        ? compressible.sublist(compressible.length - compressBatch)
+        : List<Memory>.of(compressible);
     final summary = [
       '早期记忆摘要：',
       for (final m in oldest.reversed) '· ${m.content}',
@@ -237,14 +274,20 @@ class MemoryService {
   }
 
   /// id 生成：时间戳 36 进制 + 随机后缀（同毫秒多条防碰撞）
+  ///
+  /// 后缀用 [Random] 而非时钟微秒——Windows 时钟粒度粗（~15ms），
+  /// 批量写入时连续取到相同微秒值，4 位后缀全同 → id 碰撞 →
+  /// ConflictAlgorithm.replace 静默覆盖丢数据（实测 210 条循环必现）。
   static String _genId(int now) {
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    final rng = DateTime.now().microsecondsSinceEpoch;
     final suffix = [
-      for (var i = 0; i < 4; i++) chars[(rng >> (i * 5)) % chars.length],
+      for (var i = 0; i < 6; i++) chars[_idRandom.nextInt(chars.length)],
     ].join();
     return '${now.toRadixString(36)}_$suffix';
   }
+
+  /// id 随机源（static final：与实例生命周期解耦）
+  static final Random _idRandom = Random();
 
   /// 触发变更信号（写库成功后调用）
   static void _notifyChange() => changeSignal.value++;
