@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.6.0**（2026-10-23 发布）
+**当前版本：v2.6.1**（2026-10-23 发布）
+
+v2.6.1 在 v2.6.0 基础上修正（main 直接提交，真机验收反馈 → PATCH）：
+
+- **横滑复制真机失效修复**（用户反馈"快捷操作开启之后，没效果"）：根因是手势竞技场 touchSlop 不对等——SwipeActionContainer 用 RawGestureDetector 注入方向锁识别器，而 RawGestureDetector 不像 GestureDetector 那样自动读 MediaQuery.gestureSettings，识别器退回 kTouchSlop=18px 判定；抽屉的 GestureDetector 用真机设备 slop（约 8px），slop 不对等时抽屉永远先认领竞技场，横滑复制在真机上死掉（模拟器/测试两者同为 18px，测不出来）。修复：识别器显式注入 `MediaQuery.maybeGestureSettingsOf(context)`，双方同 slop 公平竞争 + 命中派发子先于父 → 气泡识别器先越 slop 认领
+- **「选择文字」豆包式重做**（用户反馈"不是变成纯文本，而是像豆包一样正常自然的直接截取文字"）：删除 SelectableText 切换 + 提示行方案，改为正文包 SelectionArea——GptMarkdown 渲染原样保留（段落是 Text/RichText，自动注册到 SelectionContainer），长按选中词、拖手柄扩选、系统工具条复制，与原生文本体验一致；顶栏只留「完成」退出胶囊；选择期间 SwipeActionContainer.enabled=false 且识别器干脆不注册（enabled=false 不再注册识别器，横滑完全让位）
+- 475 项测试全绿（新增 2：选择模式 SelectionArea 断言 + 选择模式横滑退场/退出恢复；新增 1 真机回归：设备 slop 8px 下容器先认领抽屉不动；改 1：选择文字原地模式断言重写）；flutter analyze 零 error/warning
+
+### v2.6.0（2026-10-23）
 
 v2.6.0 在 v2.5.3 基础上新增（main 直接提交，用户验收反馈 → MINOR）：
 
@@ -333,6 +341,11 @@ Tag 命名：`v<版本号>`（如 `v1.0.0`、`v1.1.0`），打在 release 提交
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v2.6.1 | 2026-10-23 | 真机反馈修复：横滑复制真机失效（RawGestureDetector 注入设备 gestureSettings，slop 对等后气泡先认领）+ 选择文字豆包式重做（SelectionArea 包 GptMarkdown，渲染保留 + 系统工具条） |
+| v2.6.0 | 2026-10-23 | 快捷操作开关（设置页 tag，开=双向横滑复制/关=无横滑）+ 选择文字原地化（SelectableText，v2.6.1 已重做）+ 用户右滑复制定版 |
+| v2.5.3 | 2026-10-23 | 方向锁识别器：反方向弃权让位抽屉，气泡上右滑开抽屉 + 左滑复制共存 |
+| v2.5.2 | 2026-10-23 | 横滑复制双向定版（助手左滑 + 用户右滑）+ 长按菜单锚点式 |
+| v2.5.0 | 2026-10-23 | 横滑快捷操作：SwipeActionContainer 动作区 + 越阈触发 + 回弹 |
 | v2.3.6 | 2026-10-22 | 快赢批次：E2 schema 测试根治（共享 fixture 跑生产迁移链）+ I11 触觉三档（heavy 档 + 调用点校准）+ I6 会话独立草稿（切回静默恢复） |
 | v2.3.5 | 2026-10-21 | 抽屉滑出卡顿溯源修复：隔离高频重绘源（光标闪烁/流式打字机包 RepaintBoundary）+ 主页两层 Transform 合并单 Matrix4 + 拖拽宽度缓存 |
 | v2.3.4 | 2026-10-21 | 抽屉右滑跟手修复：拖拽增量累加（primaryDelta 逐帧增量语义修正）+ DragStartBehavior.down 消除起手死区 + 5 项手势回归测试 |

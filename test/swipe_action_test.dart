@@ -382,7 +382,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
     });
 
-    testWidgets('锚点菜单点「选择文字」：原地切换为可选文本（不弹层）',
+    testWidgets('锚点菜单点「选择文字」：正文包 SelectionArea（Markdown 保留）',
         (tester) async {
       final msg = ChatMessage(
         id: 'm1',
@@ -399,17 +399,50 @@ void main() {
       await tester.tap(find.text('选择文字'));
       await tester.pumpAndSettle();
 
-      // 原地选择模式：提示行 + 完成按钮出现在气泡内，正文变 SelectableText
-      expect(find.text('长按文字挑选片段，用系统工具条复制'), findsOneWidget);
+      // 豆包式选择模式：SelectionArea 包住正文，Markdown 渲染不变，
+      // 顶栏只有「完成」退出入口（无提示文案）
+      expect(find.byType(SelectionArea), findsOneWidget);
       expect(find.text('完成'), findsOneWidget);
-      expect(find.byType(SelectableText), findsOneWidget);
       expect(find.text('助手回答内容'), findsOneWidget);
+      expect(find.text('长按文字挑选片段，用系统工具条复制'), findsNothing);
 
-      // 点「完成」退出选择模式：正文回 Markdown（SelectableText 消失）
+      // 点「完成」退出选择模式：SelectionArea 消失，正文回裸 Markdown
       await tester.tap(find.text('完成'));
       await tester.pumpAndSettle();
-      expect(find.byType(SelectableText), findsNothing);
-      expect(find.text('长按文字挑选片段，用系统工具条复制'), findsNothing);
+      expect(find.byType(SelectionArea), findsNothing);
+      expect(find.text('助手回答内容'), findsOneWidget);
+    });
+
+    testWidgets('选择模式中横滑复制退场（SelectionArea 接管拖拽）',
+        (tester) async {
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(wrapWithSettings(MessageBubble(message: msg)));
+      await tester.pump();
+
+      // 进入选择模式
+      await tester.longPress(find.text('助手回答内容'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('选择文字'));
+      await tester.pumpAndSettle();
+
+      // 选择模式下左滑：横滑识别器已退场，不应触发复制
+      await swipeAndRelease(tester, find.text('助手回答内容'), dx: -120);
+      expect(clipboardText, isNull);
+
+      // 退出选择模式后横滑复制恢复
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+      await swipeAndRelease(tester, find.text('助手回答内容'), dx: -120);
+      expect(clipboardText, '助手回答内容');
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 300));
     });
   });
 
@@ -431,7 +464,6 @@ void main() {
 
     testWidgets('助手气泡上右滑：开抽屉（方向锁让位，不触发复制）',
         (tester) async {
-      final drawerKey = GlobalKey<GestureDrawerState>();
       final msg = ChatMessage(
         id: 'm1',
         sessionId: 's1',
@@ -440,7 +472,6 @@ void main() {
         createdAt: 1000,
       );
       await tester.pumpWidget(drawerWrap(MessageBubble(message: msg)));
-      // 重新拿 drawerKey：drawerWrap 里没挂 key，改用 type 查找
       final state = tester.state<GestureDrawerState>(
           find.byType(GestureDrawer));
       await tester.pump();
@@ -490,6 +521,60 @@ void main() {
 
       expect(state.progress, 0.0,
           reason: '左滑复制时抽屉不应被误开');
+    });
+
+    testWidgets('设备 slop 小于 kTouchSlop 时容器仍先认领（真机回归）',
+        (tester) async {
+      // 真机根因回归：Android 设备 touchSlop ≈ 8px（kTouchSlop=18px）。
+      // v2.6.0 的 RawGestureDetector 不注入 gestureSettings，识别器用
+      // 18px 判定，而抽屉的 GestureDetector 用设备 8px——抽屉永远先
+      // 认领，横滑复制在真机上失效（模拟器/测试两者同为 18px 测不出）。
+      // 修复后容器识别器注入同一设备 slop，命中派发子先于父 → 气泡赢。
+      final msg = ChatMessage(
+        id: 'm3',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            Provider<SettingsService>.value(value: settings),
+          ],
+          child: MediaQuery(
+            // 模拟真机：设备 slop 8px（抽屉的 GestureDetector 会读到它）
+            data: MediaQueryData(gestureSettings:
+                const DeviceGestureSettings(touchSlop: 8)),
+            child: MaterialApp(
+              home: GestureDrawer(
+                drawer: const SizedBox.expand(),
+                child: Scaffold(
+                  body: ListView(children: [MessageBubble(message: msg)]),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final state = tester.state<GestureDrawerState>(
+          find.byType(GestureDrawer));
+      await tester.pump();
+
+      // 左滑 24px（> 设备 slop 8px，< 旧 kTouchSlop 18px 的两步累计）：
+      // 容器识别器应先越 slop 认领，抽屉不动
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.text('助手回答内容')));
+      await gesture.moveBy(const Offset(-12, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(-12, 0));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(state.progress, 0.0,
+          reason: '设备 slop 下气泡识别器应先认领（抽屉不动）');
+      expect(find.byType(SwipeActionContainer), findsOneWidget);
     });
   });
 }
