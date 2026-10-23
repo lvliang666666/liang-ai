@@ -8,7 +8,16 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.5.0**（2026-10-23 发布）
+**当前版本：v2.6.0**（2026-10-23 发布）
+
+v2.6.0 在 v2.5.0 基础上优化（分支「feat/swipe-improvements」合并，I2 验收反馈改进 → PATCH）：
+
+- 横滑方向反转（36e781f，用户验收反馈）：助手消息右滑 / 用户消息左滑——气泡向屏幕中间滑、动作区在屏幕边缘侧露出，热区更大更顺手
+- 长按助手气泡菜单改锚点式（36e781f）：showModalBottomSheet → showMenu（复用长按会话卡片菜单形态：锚定长按点 + 圆角 12 + 44 高项 + 边界内收），onLongPress → onLongPressStart 拿 globalPosition
+- 菜单新增「选择文字」（36e781f）：底部 Sheet（DraggableScrollableSheet 0.4~0.9）展示纯文本 SelectableText，长按挑选局部片段用系统工具条复制——Markdown 渲染会拆散文字流，选择操作基于纯文本才完整
+- 469 项测试全绿（新增 2：锚点菜单三项 / 选择文字 Sheet）；flutter analyze 零 error/warning
+
+### v2.5.0（2026-10-23）
 
 v2.5.0 在 v2.4.0 基础上新增（分支「feat/memory-curation-swipe」合并，新功能批次 → MINOR）：
 
