@@ -8,7 +8,17 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.3.7**（2026-10-22 发布）
+**当前版本：v2.3.8**（2026-10-23 发布）
+
+v2.3.8 在 v2.3.7 基础上新增（分支「feat/token-lens-backup」合并，新功能批次 → PATCH）：
+
+- F3 Token 水位仪表盘（87411e7）：SseParser 新增 SseUsage 事件（usage 末帧解析，choices 空不再丢弃）+ 请求加 stream_options.include_usage（vLLM 标准参数）+ ChatMessage 加 prompt/completion token 列（DB v8 迁移，老数据 NULL 兼容）+ ChatProvider 捕获真实 usage、无 usage 时本地估算兜底（CJK ≈1 token/字，其他 ≈1/4 字符，图片定额 800）；工具轮 scheduleMicrotask 修复——vLLM 在 finish_reason=tool_calls 后同批发 usage 末帧，同步 complete 会让 loop 在 usage 投递前取消订阅（真实用量丢失）；输入栏 tags 行新增 token 标签（聊天态，格式化 1.2k）+ 用量详情 Sheet（统计卡累计/输入/输出 + 上下文水位条 vs 名义 32k + 按消息明细，流式中数字实时跳动）
+- F5 上下文透视镜（87411e7）：ChatProvider.buildPayloadPreview() 复用 _buildApiMessages（Skill system prompt + 记忆注入 + 全部历史同源）；PayloadLensPage 整页（slideUpRoute）——头部元信息胶囊（模型/档位/温度/工具数/消息数/估算输入）+ 消息卡片列表（system/user/assistant/tool 角色徽章 + 内容预览，点开全文 Sheet，多模态显示 [图片] 占位）；入口在 Token 用量 Sheet 底部「查看完整请求 payload」
+- E6 API Key 加固（87411e7）：flutter_secure_storage 11.x（9.x 与 share_plus 13 的 win32 依赖冲突，升 11 解决）；SecureKeyBridge 抽象 + SecureKeyStore 生产实现（单键 JSON map + 内存 cache）；DB providers.api_key 只存空串，Key 进系统安全存储（Android Keystore 加密）；migrateKeysToBridge 幂等迁移（先写安全存储成功再清 DB 明文，崩溃重跑收敛）；bridge 未注入时行为与 v2.3.7 完全一致（测试兼容）
+- E1 备份/导出（87411e7）：BackupService——buildBackup（sessions+messages+skills+memories+providers+settings，schema:1）/ shareBackup（temp JSON + 系统分享面板）/ restore（schema 校验 + 事务内清空重灌 + 统计返回）；**API Key 永不进备份**（导出强制置空 + 导入双保险置空）；设置页新增「备份」tab：导出分享 + 导入确认覆盖 + 主题应用 + 四 Provider 全量刷新
+- 435 项测试全绿（新增 48：SSE usage 6 + DB v8 3 + ChatProvider F3 6 + Token Sheet/PayloadLens 12 + E6 12 + E1 10）；flutter analyze 零 error/warning
+
+### v2.3.7（2026-10-22）
 
 v2.3.7 在 v2.3.6 基础上优化（分支「UI批次1」合并，UI 体验改进 → PATCH）：
 
