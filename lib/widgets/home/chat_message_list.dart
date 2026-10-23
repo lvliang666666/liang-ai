@@ -117,9 +117,8 @@ class ChatMessageListState extends State<ChatMessageList> {
     if (!_scrollController.hasClients) return;
     final total = widget.chat.displayMessages.length;
     if (total == 0) return;
-    // reverse 列表：offset = 距底部滚出的像素。用视口高度估算可见条数，
-    // 每条按 72px 粗估（气泡+间距），只用于胶囊提示，不要求精确
-    final viewport = _scrollController.position.viewportDimension;
+    // reverse 列表：offset = 距底部滚出的像素。每条按 72px 粗估
+    //（气泡+间距），只用于胶囊提示，不要求精确
     final hiddenPx = _scrollController.offset;
     const avgItem = 72.0;
     final hidden = (hiddenPx / avgItem).round();

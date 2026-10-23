@@ -1,5 +1,6 @@
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
+import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -193,6 +194,17 @@ void main() {
           created_at INTEGER NOT NULL
         )
       ''');
+      // v7 库已有 memories 表（v7 引入），迁移链 v9 步会 ALTER 它
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
       await old.insert('messages', {
         'id': 'm1',
         'session_id': 's1',
@@ -205,7 +217,7 @@ void main() {
       final upgraded = await databaseFactory.openDatabase(
         dbPath,
         options: OpenDatabaseOptions(
-          version: DatabaseService.dbVersion,
+          version: 8,
           onCreate: DatabaseService.onCreate,
           onUpgrade: DatabaseService.onUpgrade,
         ),
@@ -228,6 +240,63 @@ void main() {
       final updated = (await upgraded.query('messages')).first;
       expect(updated['prompt_tokens'], 120);
       expect(updated['completion_tokens'], 45);
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
+
+    test('v8 老库迁移到 v9：memories 补 pinned 列，老数据保留', () async {
+      // 手写 v8 历史 schema（v8 时 memories 表还没有 pinned 列）
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v8_to_v9_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 8),
+      );
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('memories', {
+        'id': 'm1',
+        'content': '老记忆',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // 老数据保留，pinned 为 NULL（fromMap 容错为 false）
+      final rows = await upgraded.query('memories');
+      expect(rows.length, 1);
+      expect(rows.first['content'], '老记忆');
+      expect(rows.first['pinned'], isNull);
+      expect(Memory.fromMap(rows.first).pinned, isFalse);
+
+      // 新列可写可读
+      await upgraded.update(
+        'memories',
+        {'pinned': 1},
+        where: 'id = ?',
+        whereArgs: ['m1'],
+      );
+      final updated = (await upgraded.query('memories')).first;
+      expect(Memory.fromMap(updated).pinned, isTrue);
 
       await upgraded.close();
       await databaseFactory.deleteDatabase(dbPath);
