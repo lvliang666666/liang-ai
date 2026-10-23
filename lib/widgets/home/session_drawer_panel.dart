@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
 import '../../models/chat_session.dart';
-import '../../providers/sessions_provider.dart';
 import '../../providers/skill_provider.dart';
 import '../../utils/haptics.dart';
-import '../gesture_drawer.dart';
 import '../pressable.dart';
 
 /// 侧滑抽屉：完整会话列表按时间分组（今天 / 7 天内 / 更早）+ 搜索 + 批量管理
