@@ -193,7 +193,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 300));
     }
 
-    testWidgets('助手消息右滑越阈：剪贴板收到全文', (tester) async {
+    testWidgets('助手消息左滑越阈：剪贴板收到全文', (tester) async {
       final msg = ChatMessage(
         id: 'm1',
         sessionId: 's1',
@@ -205,7 +205,7 @@ void main() {
       await tester.pump();
 
       await swipeAndRelease(
-          tester, find.text('助手回答内容'), dx: 120);
+          tester, find.text('助手回答内容'), dx: -120);
 
       expect(clipboardText, '助手回答内容');
 
@@ -248,7 +248,7 @@ void main() {
       )));
       await tester.pump();
 
-      await swipeAndRelease(tester, find.text('流式内容'), dx: 120);
+      await swipeAndRelease(tester, find.text('流式内容'), dx: -120);
 
       expect(clipboardText, isNull);
     });
