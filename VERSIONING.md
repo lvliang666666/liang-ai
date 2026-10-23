@@ -8,9 +8,9 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.6.0**（2026-10-23 发布）
+**当前版本：v2.5.1**（2026-10-23 发布）
 
-v2.6.0 在 v2.5.0 基础上优化（分支「feat/swipe-improvements」合并，I2 验收反馈改进 → PATCH）：
+v2.5.1 在 v2.5.0 基础上优化（分支「feat/swipe-improvements」合并，I2 验收反馈改进 → PATCH）：
 
 - 横滑方向反转（36e781f，用户验收反馈）：助手消息右滑 / 用户消息左滑——气泡向屏幕中间滑、动作区在屏幕边缘侧露出，热区更大更顺手
 - 长按助手气泡菜单改锚点式（36e781f）：showModalBottomSheet → showMenu（复用长按会话卡片菜单形态：锚定长按点 + 圆角 12 + 44 高项 + 边界内收），onLongPress → onLongPressStart 拿 globalPosition
