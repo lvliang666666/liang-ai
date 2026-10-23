@@ -236,4 +236,75 @@ void main() {
       expect(events[1], isA<SseToolCallDelta>());
     });
   });
+
+  group('SseParser usage 帧（F3 Token 水位）', () {
+    test('usage-only 末帧（choices 空数组）发出 SseUsage', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":45}}\n',
+      );
+      expect(events.length, 1);
+      final usage = events[0] as SseUsage;
+      expect(usage.promptTokens, 120);
+      expect(usage.completionTokens, 45);
+      expect(parser.isDone, isFalse); // usage 帧本身不结束流，等 [DONE]
+    });
+
+    test('usage 帧后跟 [DONE]：两事件顺序输出', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2}}\n'
+        'data: [DONE]\n',
+      );
+      expect(events.length, 2);
+      expect(events[0], isA<SseUsage>());
+      expect(events[1], isA<SseDone>());
+      expect(parser.isDone, isTrue);
+    });
+
+    test('usage 与 choices 同帧共存：usage + delta 事件都发出', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}],'
+        '"usage":{"prompt_tokens":7,"completion_tokens":3}}\n',
+      );
+      expect(events.whereType<SseUsage>(), hasLength(1));
+      expect(events.whereType<SseDeltaContent>(), hasLength(1));
+      expect(events.whereType<SseDone>(), hasLength(1));
+    });
+
+    test('无 usage 字段：行为与旧版一致（不产生 SseUsage）', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[{"delta":{"content":"hi"}}]}\n',
+      );
+      expect(events.whereType<SseUsage>(), isEmpty);
+      expect(events.whereType<SseDeltaContent>(), hasLength(1));
+    });
+
+    test('usage 字段类型异常（非 int）：静默跳过不崩溃', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[],"usage":{"prompt_tokens":"abc"}}\n',
+      );
+      expect(events, isEmpty);
+    });
+
+    test('完整流：content → usage → [DONE]（vLLM 真实时序）', () {
+      final parser = SseParser();
+      final events = parser.addChunk(
+        'data: {"choices":[{"delta":{"content":"你"}}]}\n'
+        'data: {"choices":[{"delta":{"content":"好"}}]}\n'
+        'data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":2}}\n'
+        'data: [DONE]\n',
+      );
+      expect(events.length, 4);
+      expect((events[0] as SseDeltaContent).text, '你');
+      expect((events[1] as SseDeltaContent).text, '好');
+      final usage = events[2] as SseUsage;
+      expect(usage.promptTokens, 12);
+      expect(usage.completionTokens, 2);
+      expect(events[3], isA<SseDone>());
+    });
+  });
 }

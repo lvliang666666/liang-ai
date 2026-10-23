@@ -48,6 +48,21 @@ class SseDone extends SseEvent {
   const SseDone();
 }
 
+/// Token 用量统计（OpenAI stream_options.include_usage 的末帧）
+///
+/// vLLM/OpenAI 兼容网关在流末尾发一帧 `choices: []` + `usage: {...}`，
+/// 上层（ChatProvider）用它落库每轮真实 token 消耗（F3 Token 水位仪表盘）。
+/// 网关不透传 usage 时上层走本地估算兜底。
+class SseUsage extends SseEvent {
+  const SseUsage({required this.promptTokens, required this.completionTokens});
+
+  /// 输入 token（system + 记忆 + 全部历史 + 本轮消息）
+  final int promptTokens;
+
+  /// 输出 token（本轮生成的 reasoning + content）
+  final int completionTokens;
+}
+
 /// 流错误（服务端返回错误 JSON）
 class SseError extends SseEvent {
   const SseError(this.message);
@@ -151,16 +166,29 @@ class SseParser {
       return [SseError(msg)];
     }
 
+    // usage 统计（stream_options.include_usage 的末帧，通常 choices 为空）：
+    // 必须在 choices 检查前解析——该帧 choices 为空，走 choices 分支会被丢弃。
+    // 有的实现把 usage 附在最后一个带 choices 的帧上，所以解析后继续走
+    // choices 分支，不提前 return。
+    final events = <SseEvent>[];
+    final usage = json['usage'];
+    if (usage is Map<String, dynamic>) {
+      final prompt = usage['prompt_tokens'];
+      final completion = usage['completion_tokens'];
+      if (prompt is int && completion is int) {
+        events.add(SseUsage(promptTokens: prompt, completionTokens: completion));
+      }
+    }
+
     final choices = json['choices'];
-    if (choices is! List || choices.isEmpty) return const [];
+    if (choices is! List || choices.isEmpty) return events;
     final choice = choices[0];
-    if (choice is! Map<String, dynamic>) return const [];
+    if (choice is! Map<String, dynamic>) return events;
 
     // finish_reason 非空也视为结束（有些实现不发 [DONE]）
     final finish = choice['finish_reason'];
 
     final delta = choice['delta'];
-    final events = <SseEvent>[];
     if (delta is Map<String, dynamic>) {
       // 思考流：按方言字段名解析（兼容 DeepSeek 系 reasoning_content）
       final field = reasoningField;

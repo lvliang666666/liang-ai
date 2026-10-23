@@ -61,6 +61,9 @@ dependencies:
   battery_plus: ^7.0.1
   # 内置工具：哈希计算（hash_text）
   crypto: ^3.0.6
+  # E6 API Key 加固：Key 存系统安全存储（Android Keystore 加密的
+  # EncryptedSharedPreferences），DB 只存空串
+  flutter_secure_storage: ^11.2.0
 
 # 锁定 Android 侧插件版本（v2.3.6 白屏事故修复，2026-10-22）
 # shared_preferences_android 2.5.x 改走 JNI native interop 路径，release
