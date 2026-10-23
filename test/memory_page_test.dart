@@ -13,11 +13,14 @@ class _FakeMemoryProvider extends MemoryProvider {
   _FakeMemoryProvider()
       : super(service: MemoryService(database: DatabaseService.instance));
 
-  final List<Memory> _store = [];
+  List<Memory> _store = [];
   bool _loaded = false;
 
   final List<String> added = [];
+  final List<String> addedTags = [];
   final List<String> deletedIds = [];
+  final List<(String, bool)> pinCalls = [];
+  final List<(String, String?, String?)> updateCalls = [];
   int deletedAllCount = 0;
 
   @override
@@ -35,6 +38,7 @@ class _FakeMemoryProvider extends MemoryProvider {
   @override
   Future<Memory> add(String content, {String? tag}) async {
     added.add(content);
+    addedTags.add(tag ?? '');
     final m = Memory(
         id: 'fake-${added.length}',
         content: content,
@@ -54,6 +58,29 @@ class _FakeMemoryProvider extends MemoryProvider {
   }
 
   @override
+  Future<void> setPinned(String id, bool pinned) async {
+    _store = [
+      for (final m in _store)
+        if (m.id == id) m.copyWith(pinned: pinned) else m
+    ];
+    pinCalls.add((id, pinned));
+    notifyListeners();
+  }
+
+  @override
+  Future<void> update(String id, {String? content, String? tag}) async {
+    updateCalls.add((id, content, tag));
+    _store = [
+      for (final m in _store)
+        if (m.id == id)
+          m.copyWith(content: content ?? m.content, tag: tag ?? m.tag)
+        else
+          m
+    ];
+    notifyListeners();
+  }
+
+  @override
   Future<void> deleteAll() async {
     deletedAllCount++;
     _store.clear();
@@ -67,10 +94,12 @@ class _FakeMemoryProvider extends MemoryProvider {
   }
 }
 
-Memory memory(String id, String content, {String? tag}) => Memory(
+Memory memory(String id, String content, {String? tag, bool pinned = false}) =>
+    Memory(
       id: id,
       content: content,
       tag: tag,
+      pinned: pinned,
       createdAt: 1000,
       updatedAt: 1000,
     );
@@ -112,7 +141,8 @@ void main() {
 
       expect(find.text('用户喜欢简洁回答'), findsOneWidget);
       expect(find.text('用户在上海工作'), findsOneWidget);
-      expect(find.text('偏好'), findsOneWidget);
+      // 「偏好」同时出现在 chip 与卡片副标题（M1 策展台新增 chips 行）
+      expect(find.text('偏好'), findsNWidgets(2));
     });
 
     testWidgets('搜索过滤：关键词命中与清空', (tester) async {
@@ -204,6 +234,140 @@ void main() {
 
       expect(provider.deletedAllCount, 0);
       expect(find.text('a'), findsOneWidget);
+    });
+  });
+
+  group('M1 策展台', () {
+    testWidgets('tag 筛选 chips：动态 tag 渲染 + 点选过滤 + 再点取消', (tester) async {
+      provider.seed([
+        memory('m1', '喜欢简洁', tag: '偏好'),
+        memory('m2', '在上海工作', tag: '背景'),
+        memory('m3', '无标签记忆'),
+      ]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      // chips 行出现：全部 + 偏好 + 背景（「偏好」chip + 卡片副标题 = 2 处）
+      expect(find.text('全部'), findsOneWidget);
+      expect(find.text('偏好'), findsNWidgets(2));
+      expect(find.text('背景'), findsNWidgets(2));
+
+      // 点「偏好」chip（第一个匹配）→ 只剩该 tag 的记忆
+      await tester.tap(find.text('偏好').first);
+      await tester.pump();
+      expect(find.text('喜欢简洁'), findsOneWidget);
+      expect(find.text('在上海工作'), findsNothing);
+      expect(find.text('无标签记忆'), findsNothing);
+
+      // 再点「偏好」chip → 取消筛选恢复全部
+      await tester.tap(find.text('偏好').first);
+      await tester.pump();
+      expect(find.text('在上海工作'), findsOneWidget);
+      expect(find.text('无标签记忆'), findsOneWidget);
+    });
+
+    testWidgets('置顶分组：置顶条显示在置顶组最前', (tester) async {
+      provider.seed([
+        memory('m1', '普通记忆'),
+        memory('m2', '置顶记忆', pinned: true),
+      ]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      expect(find.textContaining('置顶（永久记忆'), findsOneWidget);
+      expect(find.text('置顶记忆'), findsOneWidget);
+      expect(find.text('普通记忆'), findsOneWidget);
+
+      // 置顶组在普通组之前
+      final pinnedY = tester.getTopLeft(find.text('置顶记忆')).dy;
+      final normalY = tester.getTopLeft(find.text('普通记忆')).dy;
+      expect(pinnedY, lessThan(normalY));
+    });
+
+    testWidgets('点置顶按钮：调用 setPinned(true)，再点取消', (tester) async {
+      provider.seed([memory('m1', '待置顶')]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.push_pin_outlined));
+      await tester.pump();
+      expect(provider.pinCalls, [('m1', true)]);
+
+      // 状态已变（fake provider 同步更新）→ 图标变实心，再点取消
+      await tester.tap(find.byIcon(Icons.push_pin));
+      await tester.pump();
+      expect(provider.pinCalls, [('m1', true), ('m1', false)]);
+    });
+
+    testWidgets('编辑：弹窗预填原内容，保存调用 update', (tester) async {
+      provider.seed([memory('m1', '原始内容', tag: '旧标签')]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+
+      // 弹窗预填（「原始内容」同时出现在卡片与弹窗输入框 = 2 处）
+      expect(find.text('编辑记忆'), findsOneWidget);
+      expect(find.text('原始内容'), findsNWidgets(2));
+
+      // 改内容与标签
+      await tester.enterText(
+          find.widgetWithText(TextField, '例如：用户喜欢简洁回答'), '改写内容');
+      await tester.enterText(
+          find.widgetWithText(TextField, '偏好 / 背景 / 习惯 / 其他'), '新标签');
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      expect(provider.updateCalls, [('m1', '改写内容', '新标签')]);
+      expect(find.text('改写内容'), findsOneWidget);
+    });
+
+    testWidgets('编辑：清空内容保存不调用 update', (tester) async {
+      provider.seed([memory('m1', '原始内容')]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      await tester.tap(find.byIcon(Icons.edit_outlined));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.widgetWithText(TextField, '例如：用户喜欢简洁回答'), '   ');
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      expect(provider.updateCalls, isEmpty);
+    });
+
+    testWidgets('归档摘要行：无编辑按钮，有置顶/删除', (tester) async {
+      provider.seed([
+        memory('m1', '归档摘要内容', tag: Memory.archiveTag),
+      ]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      expect(find.text('归档摘要内容'), findsOneWidget);
+      expect(find.byIcon(Icons.edit_outlined), findsNothing);
+      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
+      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+    });
+
+    testWidgets('手动添加：带标签保存 → add 收到 tag', (tester) async {
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      await tester.tap(find.text('添加'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(
+          find.widgetWithText(TextField, '例如：用户喜欢简洁回答'), '带标签记忆');
+      await tester.enterText(
+          find.widgetWithText(TextField, '偏好 / 背景 / 习惯 / 其他'), '偏好');
+      await tester.tap(find.text('保存'));
+      await tester.pumpAndSettle();
+
+      expect(provider.added, ['带标签记忆']);
+      expect(provider.addedTags, ['偏好']);
     });
   });
 }
