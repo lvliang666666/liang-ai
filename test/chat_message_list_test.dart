@@ -107,7 +107,7 @@ void main() {
 
   Widget wrap(Widget child) => MultiProvider(
         providers: [
-          Provider<SettingsService>.value(value: settings),
+          ChangeNotifierProvider<SettingsService>.value(value: settings),
         ],
         child: MaterialApp(home: Scaffold(body: child)),
       );
