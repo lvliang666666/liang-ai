@@ -1,7 +1,12 @@
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// 应用设置（shared_preferences KV 存储）
-class SettingsService {
+///
+/// 继承 [ChangeNotifier]：UI 直接 watch 本类（如 MessageBubble 的
+/// 快捷操作开关），setter 落盘后 notifyListeners 即时生效——
+/// v2.6.1 前无通知，开关切换要杀进程重启才生效。
+class SettingsService extends ChangeNotifier {
   SettingsService(this._prefs);
 
   final SharedPreferences _prefs;
@@ -55,7 +60,11 @@ class SettingsService {
   // 关 = 无横滑动作（长按复制保留）。默认开（升级用户行为不变）
   static const _kSwipeActions = 'swipe_actions';
   bool get swipeActions => _prefs.getBool(_kSwipeActions) ?? true;
-  Future<void> setSwipeActions(bool v) => _prefs.setBool(_kSwipeActions, v);
+  Future<void> setSwipeActions(bool v) async {
+    if (v == swipeActions) return;
+    await _prefs.setBool(_kSwipeActions, v);
+    notifyListeners();
+  }
 
   // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
