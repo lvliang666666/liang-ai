@@ -148,7 +148,7 @@ void main() {
 
     Widget wrap(Widget child) => MultiProvider(
           providers: [
-            Provider<SettingsService>.value(
+            ChangeNotifierProvider<SettingsService>.value(
                 value: SettingsService(prefs)),
             ChangeNotifierProvider<ThemeProvider>(
               create: (_) => ThemeProvider(settings: SettingsService(prefs)),

@@ -66,7 +66,9 @@ class AiChatApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        Provider<SettingsService>.value(value: settings),
+        // ChangeNotifierProvider：SettingsService 现在是 ChangeNotifier
+        //（快捷操作开关等 setter 会 notifyListeners，watch 它的组件即时重建）
+        ChangeNotifierProvider<SettingsService>.value(value: settings),
         ChangeNotifierProvider(
           create: (_) => SessionsProvider(database: DatabaseService.instance),
         ),
