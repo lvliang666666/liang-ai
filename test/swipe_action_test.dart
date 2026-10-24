@@ -243,10 +243,12 @@ void main() {
           ),
         );
 
-    /// 带 SettingsService Provider 的包装（MessageBubble watch 开关）
+    /// 带 SettingsService Provider 的包装（MessageBubble watch 开关）。
+    /// SettingsService 是 ChangeNotifier，必须用 ChangeNotifierProvider
+    ///（Provider 的 debug 检查拒绝 Listenable 子类型）
     Widget wrapWithSettings(Widget child) => MultiProvider(
           providers: [
-            Provider<SettingsService>.value(value: settings),
+            ChangeNotifierProvider<SettingsService>.value(value: settings),
           ],
           child: wrap(child),
         );
@@ -444,13 +446,65 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
       await tester.pump(const Duration(milliseconds: 300));
     });
+
+    testWidgets('快捷操作开关切换即时生效（无需重建 Provider 树）',
+        (tester) async {
+      // v2.6.1 缺陷回归：SettingsService 原来不是 ChangeNotifier，
+      // setSwipeActions 后 watch 它的 MessageBubble 收不到通知，
+      // 开关切换要杀进程重启才生效。现在 setter 会 notifyListeners。
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(wrapWithSettings(MessageBubble(message: msg)));
+      await tester.pump();
+
+      // 开关开（默认）：左滑复制生效
+      await swipeAndRelease(tester, find.text('助手回答内容'), dx: -120);
+      expect(clipboardText, '助手回答内容');
+      clipboardText = null;
+
+      // 不重建树，直接切开关 → 立即禁用
+      await settings.setSwipeActions(false);
+      await tester.pump();
+      await swipeAndRelease(tester, find.text('助手回答内容'), dx: -120);
+      expect(clipboardText, isNull, reason: '关开关后横滑应立即失效');
+
+      // 再切回开 → 立即恢复
+      await settings.setSwipeActions(true);
+      await tester.pump();
+      await swipeAndRelease(tester, find.text('助手回答内容'), dx: -120);
+      expect(clipboardText, '助手回答内容', reason: '重开开关后横滑应立即恢复');
+
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 300));
+    });
+
+    testWidgets('SettingsService.setSwipeActions 触发 notifyListeners',
+        (tester) async {
+      var notified = 0;
+      void listener() => notified++;
+      settings.addListener(listener);
+      addTearDown(() => settings.removeListener(listener));
+
+      await settings.setSwipeActions(false);
+      expect(notified, 1);
+      // 同值重复设置不通知（幂等守卫）
+      await settings.setSwipeActions(false);
+      expect(notified, 1);
+      await settings.setSwipeActions(true);
+      expect(notified, 2);
+    });
   });
 
   group('SwipeActionContainer × GestureDrawer 共存（v2.5.3 方向锁）', () {
     /// 共存测试包装：GestureDrawer + SettingsService Provider
     Widget drawerWrap(Widget child) => MultiProvider(
           providers: [
-            Provider<SettingsService>.value(value: settings),
+            ChangeNotifierProvider<SettingsService>.value(value: settings),
           ],
           child: MaterialApp(
             home: GestureDrawer(
@@ -540,7 +594,7 @@ void main() {
       await tester.pumpWidget(
         MultiProvider(
           providers: [
-            Provider<SettingsService>.value(value: settings),
+            ChangeNotifierProvider<SettingsService>.value(value: settings),
           ],
           child: MediaQuery(
             // 模拟真机：设备 slop 8px（抽屉的 GestureDetector 会读到它）

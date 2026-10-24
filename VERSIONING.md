@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.6.1**（2026-10-23 发布）
+**当前版本：v2.6.2**（2026-10-24 发布）
+
+v2.6.2 在 v2.6.1 基础上修正（fix/toggle-live-select-toolbar 分支，真机验收反馈 → PATCH）：
+
+- **快捷操作开关即时生效**（用户反馈"开启状态切换后没有立马生效，杀掉重启才生效"）：根因是 SettingsService 不是 ChangeNotifier——setSwipeActions 写完偏好后没有任何通知，MessageBubble 的 context.watch 收不到重建信号。修复：SettingsService 继承 ChangeNotifier，setSwipeActions 落盘后 notifyListeners（同值幂等不通知）；main.dart 注册改 ChangeNotifierProvider
+- **选择工具条跟手「完成」+ 批量复制**（用户反馈"完成按钮跟手，截取哪段就跟着在哪显示；或 copy 后自动关闭"）：SelectionArea 定制 contextMenuBuilder——默认项（复制/分享/全选）+「完成」内联进系统工具条，工具条锚定选区 = 天然跟手；复制项覆盖默认行为，**保留选区**支持连续多段批量复制（复制后 Toast 提示可继续选取）；顶部固定胶囊降级为未选中时的兜底退出。选中文本经 onSelectionChanged 回调实时记录（SelectableRegionState 无公开 getSelectedContent，回调是官方取值路径）
+- 477 项测试全绿（新增 2：开关即时生效回归——切关立即失效/切开立即恢复 + notifyListeners 幂等断言；3 个测试文件 Provider → ChangeNotifierProvider——SettingsService 现为 Listenable，Provider debug 检查拒绝裸 Provider）；flutter analyze 零 error/warning
+
+### v2.6.1（2026-10-23）
 
 v2.6.1 在 v2.6.0 基础上修正（main 直接提交，真机验收反馈 → PATCH）：
 
@@ -341,6 +349,7 @@ Tag 命名：`v<版本号>`（如 `v1.0.0`、`v1.1.0`），打在 release 提交
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v2.6.2 | 2026-10-24 | 快捷操作开关即时生效（SettingsService 继承 ChangeNotifier + notifyListeners）+ 选择工具条跟手「完成」+ 批量复制（contextMenuBuilder 定制，复制保留选区） |
 | v2.6.1 | 2026-10-23 | 真机反馈修复：横滑复制真机失效（RawGestureDetector 注入设备 gestureSettings，slop 对等后气泡先认领）+ 选择文字豆包式重做（SelectionArea 包 GptMarkdown，渲染保留 + 系统工具条） |
 | v2.6.0 | 2026-10-23 | 快捷操作开关（设置页 tag，开=双向横滑复制/关=无横滑）+ 选择文字原地化（SelectableText，v2.6.1 已重做）+ 用户右滑复制定版 |
 | v2.5.3 | 2026-10-23 | 方向锁识别器：反方向弃权让位抽屉，气泡上右滑开抽屉 + 左滑复制共存 |

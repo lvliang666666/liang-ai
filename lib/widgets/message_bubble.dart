@@ -24,9 +24,15 @@ import 'tool_call_block.dart';
 ///
 /// 「选择文字」为豆包式自然截取：长按菜单选「选择文字」后，正文在
 /// 原气泡内包一层 [SelectionArea]——Markdown 渲染原样保留，长按即
-/// 选中词、拖手柄扩选、系统工具条复制，与原生文本体验一致。选择态
-/// 是开关式而非常驻：SelectionArea 的拖拽选字会与横滑复制抢手势，
-/// 选择期间横滑识别器整体退场（[SwipeActionContainer.enabled]）。
+/// 选中词、拖手柄扩选，与原生文本体验一致。选择态是开关式而非常驻：
+/// SelectionArea 的拖拽选字会与横滑复制抢手势，选择期间横滑识别器
+/// 整体退场（[SwipeActionContainer.enabled]）。
+///
+/// 选择工具条（v2.6.2 定制，contextMenuBuilder）：
+/// - **复制**：只复制不清选区（覆盖 Android 默认的复制即清选），
+///   支持连续挑多段批量复制；复制后 Toast 反馈
+/// - **完成**：内联在工具条里（工具条锚定选区 = 跟手），点按退出
+///   选择模式；顶部固定胶囊仅作未选中时的兜底退出入口
 class MessageBubble extends StatefulWidget {
   const MessageBubble({
     super.key,
@@ -59,10 +65,53 @@ class _MessageBubbleState extends State<MessageBubble> {
   final SelectionListenerNotifier _selectionNotifier =
       SelectionListenerNotifier();
 
+  /// 当前选中的文本（onSelectionChanged 实时回传；复制按钮取用。
+  /// SelectableRegionState 无公开 getSelectedContent，走回调是官方路）
+  String? _selectedText;
+
   @override
   void dispose() {
     _selectionNotifier.dispose();
     super.dispose();
+  }
+
+  /// 选择工具条：默认项（复制/分享/全选）+「完成」，锚定选区跟手。
+  /// 复制项覆盖默认行为——保留选区支持连续多段批量复制。
+  Widget _buildSelectionToolbar(
+      BuildContext context, SelectableRegionState selectableRegion) {
+    final buttonItems = selectableRegion.contextMenuButtonItems
+        .map((item) => item.type == ContextMenuButtonType.copy
+            ? ContextMenuButtonItem(
+                type: ContextMenuButtonType.copy,
+                onPressed: _copySelection,
+              )
+            : item)
+        .toList();
+    buttonItems.add(ContextMenuButtonItem(
+      label: '完成',
+      onPressed: _exitSelecting,
+    ));
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: selectableRegion.contextMenuAnchors,
+      buttonItems: buttonItems,
+    );
+  }
+
+  /// 复制当前选区（不清选区，可连续多段批量复制）
+  Future<void> _copySelection() async {
+    final text = _selectedText;
+    if (text == null || text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    Haptics.medium();
+    if (mounted) {
+      showAppToast(context, '已复制，可继续选取其他片段');
+    }
+  }
+
+  /// 退出选择模式（清选区 + 恢复横滑）
+  void _exitSelecting() {
+    if (!mounted) return;
+    setState(() => _selecting = false);
   }
 
   @override
@@ -184,13 +233,13 @@ class _MessageBubbleState extends State<MessageBubble> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 选择模式顶栏：仅一个「完成」退出入口（豆包式——
-                // 选中/复制全走系统工具条，App 不再额外提示）
+                // 选择模式顶栏：「完成」兜底退出入口（主要退出路径在
+                // 跟手工具条里；未选中内容时工具条不出现，靠这里退出）
                 if (_selecting)
                   Align(
                     alignment: Alignment.centerRight,
                     child: GestureDetector(
-                      onTap: () => setState(() => _selecting = false),
+                      onTap: _exitSelecting,
                       child: Container(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 12, vertical: 4),
@@ -231,9 +280,11 @@ class _MessageBubbleState extends State<MessageBubble> {
                       ? SelectionListener(
                           selectionNotifier: _selectionNotifier,
                           child: SelectionArea(
-                            onSelectionChanged: (_) {
-                              // 有选中内容才亮出「完成」（无选中时顶栏
-                              // 不占位，视觉与常规态一致）
+                            onSelectionChanged: (content) {
+                              // 实时记录选中文本（复制按钮取用）+
+                              // 有选中内容才亮出顶部「完成」兜底入口
+                              //（选中后主要退出路径在跟手工具条里）
+                              _selectedText = content?.plainText;
                               if (mounted &&
                                   _selectionNotifier.registered &&
                                   _selectionNotifier.selection.status !=
@@ -241,6 +292,9 @@ class _MessageBubbleState extends State<MessageBubble> {
                                 setState(() {});
                               }
                             },
+                            // 定制工具条：复制保留选区（批量复制）+
+                            // 「完成」内联跟手（锚定选区，非固定顶部）
+                            contextMenuBuilder: _buildSelectionToolbar,
                             child: GptMarkdown(
                               message.content,
                               isStreaming: isStreaming,
