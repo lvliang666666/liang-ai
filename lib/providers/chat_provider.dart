@@ -6,11 +6,13 @@ import 'package:flutter/foundation.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/context_summary.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart';
 import '../models/tool_call.dart';
 import '../services/api_service.dart';
+import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_service.dart';
 import '../services/sse_parser.dart';
@@ -31,6 +33,7 @@ class ChatProvider extends ChangeNotifier {
     Skill? skill,
     List<ToolHandler> toolCatalog = builtinTools,
     MemoryService? memory,
+    ContextSummaryService? summaryService,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -39,6 +42,8 @@ class ChatProvider extends ChangeNotifier {
         _skill = skill,
         _toolCatalog = toolCatalog,
         _memory = memory,
+        _summaryService = summaryService ??
+            ContextSummaryService(api: api, database: database),
         _tools = _buildRegistry(skill, toolCatalog);
 
   final DatabaseService _db;
@@ -49,6 +54,12 @@ class ChatProvider extends ChangeNotifier {
 
   /// 用户长期记忆服务（null = 不启用记忆注入，兼容现有测试）
   MemoryService? _memory;
+
+  /// F2 上下文压缩服务（水位检查 + 摘要生成）
+  final ContextSummaryService _summaryService;
+
+  /// 当前会话的前情摘要（null = 未压缩过；loadMessages 时从 DB 读）
+  ContextSummary? _contextSummary;
 
   /// 当前会话绑定的 Skill（null = 默认助手，无 system prompt + 全部工具）
   Skill? _skill;
@@ -176,6 +187,9 @@ class ChatProvider extends ChangeNotifier {
     return null;
   }
 
+  /// 当前会话的前情摘要（F2 压缩产物；null = 未压缩过，UI 摘要卡片用）
+  ContextSummary? get contextSummary => _contextSummary;
+
   /// 生效的推理档位（UI 展示用，与请求实际发送值一致）
   String get effectiveEffort => _effectiveEffort;
 
@@ -211,6 +225,7 @@ class ChatProvider extends ChangeNotifier {
   /// 加载历史消息
   Future<void> loadMessages() async {
     _messages = await _db.getMessages(_session.id);
+    _contextSummary = await _db.getContextSummary(_session.id);
     _notify();
   }
 
@@ -248,15 +263,57 @@ class ChatProvider extends ChangeNotifier {
     }
     await _db.touchSession(_session.id);
 
-    // 2. 预取第一轮记忆注入文本（在 loop 启动前完成——loop 从启动到
+    // 2. 水位检查：超线则先把早期历史压缩成前情摘要（F2）。
+    // 压缩失败静默跳过——不影响本轮正常发送，下轮再试。
+    await _maybeCompressContext();
+
+    // 3. 预取第一轮记忆注入文本（在 loop 启动前完成——loop 从启动到
     // 建立流订阅之间不能有 await，否则测试/调用方在 sendMessage 返回后
     // 立即 emit 的事件会因订阅未建立而丢失）
     await _refreshMemoryText();
 
-    // 3. 启动 agentic loop（fire-and-forget：sendMessage 立即返回，
+    // 4. 启动 agentic loop（fire-and-forget：sendMessage 立即返回，
     // loop 在后台推进，与旧版「启动流即返回」语义一致）
     _toolResults = [];
     unawaited(_runLoop());
+  }
+
+  /// F2 分层上下文压缩：水位检查 → 触发摘要生成 → 更新注入状态
+  ///
+  /// 触发条件：最近一轮 prompt token ≥ 水位线（名义 32k 的 75%）且
+  /// 保留窗口之外有足够可压缩轮。压缩请求走 low 档低温，失败静默。
+  /// 钉住消息所在轮豁免压缩（isPinned 谓词透传给轮切分）。
+  Future<void> _maybeCompressContext() async {
+    bool isPinned(ChatMessage m) => m.pinned;
+    if (!ContextSummaryService.shouldCompress(
+      _messages,
+      lastPromptTokens: lastPromptTokens,
+      isPinned: isPinned,
+    )) {
+      return;
+    }
+    final summary = await _summaryService.compressIfNeeded(
+      messages: _messages,
+      profile: _profile,
+      model: _model,
+      sessionId: _session.id,
+      existing: _contextSummary,
+      isPinned: isPinned,
+    );
+    if (summary != null) {
+      _contextSummary = summary;
+      _notify();
+    }
+  }
+
+  /// 设置消息钉住状态（F2：钉住消息所在轮永不压缩进前情摘要）
+  ///
+  /// DB 落盘 + 内存同步 + 通知 UI（气泡显示图钉标记）。
+  Future<void> setMessagePinned(ChatMessage message, bool pinned) async {
+    if (message.pinned == pinned) return;
+    message.pinned = pinned;
+    await _db.setMessagePinned(message.id, pinned);
+    _notify();
   }
 
   /// agentic loop：请求 → 流式收包 →（工具调用？执行 → 再请求）→ 收尾
@@ -549,19 +606,47 @@ class ChatProvider extends ChangeNotifier {
     return memory.recentText().then((text) => _memoryText = text);
   }
 
-  /// 组装 API 请求消息：Skill system prompt 在头部 + 记忆注入 + 全部历史
+  /// 组装 API 请求消息：Skill system prompt 在头部 + 记忆注入 + 前情摘要 + 历史
   ///
   /// [forceSummary] 为 true 时（loop 轮数耗尽）追加系统提示强制模型总结。
   /// 记忆注入：Skill prompt 之后追加一条 system 消息（最近 20 条，
   /// 无记忆或未启用记忆服务时不注入）。
+  /// F2 压缩：存在前情摘要时，摘要以 system 消息注入，历史只发送
+  /// 摘要边界（firstKeptId）之后的原文——早期历史已被压缩进摘要；
+  /// 钉住轮（pinnedIds 清单）在边界之前但原文保留，按原顺序捞回。
   List<Map<String, Object?>> _buildApiMessages({bool forceSummary = false}) {
     final prompt = _skill?.prompt;
+    final summary = _contextSummary;
+    // 摘要边界之后的历史（边界消息被删时按时间兜底）
+    final history = summary == null
+        ? _messages
+        : _messages
+            .skipWhile((m) =>
+                m.id != summary.firstKeptId && m.createdAt < summary.firstKeptAt)
+            .toList();
+    // 钉住轮原文：边界之前的消息按 pinnedIds 清单捞回（保持原顺序）
+    final pinnedKept = summary == null || summary.pinnedIds.isEmpty
+        ? const <ChatMessage>[]
+        : [
+            for (final m in _messages)
+              if (summary.pinnedIds.contains(m.id) &&
+                  m.id != summary.firstKeptId &&
+                  m.createdAt < summary.firstKeptAt)
+                m,
+          ];
     return [
       if (prompt != null && prompt.isNotEmpty)
         {'role': 'system', 'content': prompt},
       if (_memoryText != null && _memoryText!.isNotEmpty)
         {'role': 'system', 'content': _memoryText!},
-      ..._messages.map((m) => m.toApiMessage()),
+      if (summary != null && summary.summary.isNotEmpty)
+        {
+          'role': 'system',
+          'content': '【前情摘要】\n以下是本会话早期历史的压缩摘要，'
+              '原文已省略。请结合摘要与后续对话继续：\n\n${summary.summary}',
+        },
+      ...pinnedKept.map((m) => m.toApiMessage()),
+      ...history.map((m) => m.toApiMessage()),
       if (forceSummary)
         const {
           'role': 'system',

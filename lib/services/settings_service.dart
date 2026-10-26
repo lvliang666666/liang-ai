@@ -77,6 +77,18 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 上下文自动压缩（F2：token 超水位线自动生成前情摘要） =====
+  // 开 = 发送前检查水位，超线把早期历史压缩成四段式摘要（钉住消息豁免）；
+  // 关 = 永不压缩（超长会话可能被网关拒绝）。默认开
+  static const _kContextCompression = 'context_compression';
+  bool get contextCompression =>
+      _prefs.getBool(_kContextCompression) ?? true;
+  Future<void> setContextCompression(bool v) async {
+    if (v == contextCompression) return;
+    await _prefs.setBool(_kContextCompression, v);
+    notifyListeners();
+  }
+
   // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续

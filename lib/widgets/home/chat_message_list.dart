@@ -263,6 +263,9 @@ class ChatMessageListState extends State<ChatMessageList> {
                                     msg.id == widget.chat.lastToolCallMessageId &&
                                         widget.chat.status ==
                                             ChatStatus.toolCalling,
+                                // F2 钉住：钉住消息所在轮永不压缩进前情摘要
+                                onTogglePin: (pinned) =>
+                                    widget.chat.setMessagePinned(msg, pinned),
                               ),
                             ],
                           );
