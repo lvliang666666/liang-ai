@@ -5,12 +5,14 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart';
 import 'secure_key_store.dart';
 
-/// 本地数据库服务：sessions / messages / skills / providers / memories 五表
+/// 本地数据库服务：sessions / messages / skills / providers / memories /
+/// http_tools 六表
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
@@ -18,7 +20,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 9;
+  static const int dbVersion = 10;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -91,6 +93,7 @@ class DatabaseService {
     await _createSkillsTable(db);
     await _createProvidersTable(db);
     await _createMemoriesTable(db);
+    await _createHttpToolsTable(db);
   }
 
   /// 版本迁移：老用户数据无损升级
@@ -162,6 +165,10 @@ class DatabaseService {
         await db.execute('ALTER TABLE memories ADD COLUMN pinned INTEGER');
       }
     }
+    if (oldVersion < 10 && newVersion >= 10) {
+      // v9 → v10：自定义 HTTP 工具（T1）——新建 http_tools 表
+      await _createHttpToolsTable(db);
+    }
   }
 
   static Future<void> _createAgentsTable(Database db) async {
@@ -218,6 +225,26 @@ class DatabaseService {
         tag TEXT,
         source_skill TEXT,
         pinned INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+  }
+
+  static Future<void> _createHttpToolsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS http_tools (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        url_template TEXT NOT NULL DEFAULT '',
+        method TEXT NOT NULL DEFAULT 'GET',
+        headers_json TEXT NOT NULL DEFAULT '',
+        body_template TEXT NOT NULL DEFAULT '',
+        parameters_json TEXT NOT NULL DEFAULT '',
+        response_path TEXT NOT NULL DEFAULT '',
+        max_response_chars INTEGER NOT NULL DEFAULT 4000,
+        enabled INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )
@@ -499,6 +526,39 @@ class DatabaseService {
     final db = await database;
     final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM memories');
     return (rows.first['c'] as int?) ?? 0;
+  }
+
+  // ===== HttpTools（T1 自定义 HTTP 工具）=====
+
+  Future<void> insertHttpTool(HttpTool tool) async {
+    final db = await database;
+    await db.insert('http_tools', tool.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 全部 HTTP 工具（按创建时间正序，与配置顺序一致）
+  Future<List<HttpTool>> getAllHttpTools() async {
+    final db = await database;
+    final rows = await db.query('http_tools', orderBy: 'created_at ASC');
+    return rows.map(HttpTool.fromMap).toList();
+  }
+
+  Future<HttpTool?> getHttpTool(String id) async {
+    final db = await database;
+    final rows =
+        await db.query('http_tools', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : HttpTool.fromMap(rows.first);
+  }
+
+  Future<void> updateHttpTool(HttpTool tool) async {
+    final db = await database;
+    await db.update('http_tools', tool.toMap(),
+        where: 'id = ?', whereArgs: [tool.id]);
+  }
+
+  Future<void> deleteHttpTool(String id) async {
+    final db = await database;
+    await db.delete('http_tools', where: 'id = ?', whereArgs: [id]);
   }
 
   /// 内置供应商能力升级（幂等，随版本演进）
