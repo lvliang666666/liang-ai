@@ -8,7 +8,17 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.7.0**（2026-10-26 发布）
+**当前版本：v2.8.0**（2026-10-26 发布）
+
+v2.8.0 在 v2.7.0 基础上新增（feat/custom-http-tools 分支，roadmap T1 → MINOR）：
+
+- **T1 自定义 HTTP 工具**（差异化之王）：设置 → HTTP 工具里配置 URL/方法/请求头/参数模板/响应截取规则，把任意 HTTP API 注册为 Agent 工具被 loop 调用——公司内部接口、家里 NAS、路由器、自建服务，App 从「聊天工具」升维成「个人自动化中枢」
+- **执行器**：{param} 占位符模板替换（URL 与请求体都支持，缺失参数原样保留让模型自查）→ dio 请求（15s 超时，非 2xx 转文本不炸 loop）→ responsePath 点路径截取（data.items.0.name，数组用数字下标）→ 响应截断（默认 4000 字符防撑爆上下文）
+- **Skill 白名单统一纳管**：Skill 编辑器「可用工具」分组展示内置 + 自定义 HTTP 工具，toolNames 子集语义不变；启用开关（禁用 = 不进工具目录）
+- **备份同步**：http_tools section 随备份导出/导入（老备份缺 section 不动当前数据）
+- 548 项测试全绿（新增 42：模型 9 + DB 3 + 执行器 14 + 目录合并 4 + UI 11 + 备份 1）；flutter analyze 零 error/warning
+
+### v2.7.0（2026-10-26）
 
 v2.7.0 在 v2.6.3 基础上新增（feat/auto-memory 分支，roadmap M2 → MINOR）：
 
