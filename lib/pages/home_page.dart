@@ -10,6 +10,7 @@ import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart' as skill_model;
 import '../providers/chat_provider.dart';
+import '../providers/http_tool_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
@@ -18,6 +19,8 @@ import '../services/database_service.dart';
 import '../services/memory_extraction_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
+import '../services/tools/builtin_tools.dart';
+import '../services/tools/http_tool_handler.dart';
 import '../utils/haptics.dart';
 import '../utils/transitions.dart';
 import '../widgets/app_bottom_sheet.dart';
@@ -216,6 +219,8 @@ class _HomePageState extends State<HomePage> {
     }
 
     final skill = context.read<SkillProvider>().byId(s.skillId);
+    // T1：内置工具 + 用户自定义 HTTP 工具合并进目录（Skill 白名单统一纳管）
+    final httpTools = context.read<HttpToolProvider>().enabledTools;
     final chat = ChatProvider(
       database: db,
       api: ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey),
@@ -224,6 +229,10 @@ class _HomePageState extends State<HomePage> {
       model: s.model?.isNotEmpty == true ? s.model! : profile.defaultModel,
       skill: skill,
       memory: MemoryService(database: db),
+      toolCatalog: [
+        ...builtinTools,
+        for (final t in httpTools) HttpToolHandler(t),
+      ],
     );
     // 消息先加载完再进聊天态：避免 setState 后首帧渲染空列表
     // （转圈）→ 消息到达 → 整列表重建，两帧重活叠一起掉帧
