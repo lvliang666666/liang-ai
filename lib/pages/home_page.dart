@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
@@ -14,6 +15,7 @@ import '../providers/sessions_provider.dart';
 import '../providers/skill_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
+import '../services/memory_extraction_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
@@ -93,6 +95,38 @@ class _HomePageState extends State<HomePage> {
   /// 导航前收起键盘，避免返回主页时自动弹键盘
   void _unfocus() {
     FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  /// M2 自动记忆沉淀：会话结束（切走/退出聊天态）时后台提取记忆
+  ///
+  /// fire-and-forget：不阻塞切换动画；开关关闭/正在流式/无 user+assistant
+  /// 交换时跳过。提取服务自建 ApiService（会话 provider 的 Key 从 DB 注水），
+  /// 与 ChatProvider 的连接池互不影响；失败静默（后台任务不打扰）。
+  void _extractMemoryInBackground(ChatProvider chat) {
+    final settings = context.read<SettingsService>();
+    if (!settings.autoMemory || chat.isStreaming) return;
+    final messages = List<ChatMessage>.of(chat.messages);
+    final profile = chat.profile;
+    final model = chat.model;
+    final skillName = chat.skill?.name;
+    final sessionTitle = chat.session.title;
+    unawaited(() async {
+      final api = ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
+      try {
+        await MemoryExtractionService(
+          api: api,
+          memory: MemoryService(database: DatabaseService.instance),
+        ).extractAndSave(
+          messages: messages,
+          profile: profile,
+          model: model,
+          sourceSkill: skillName,
+          sessionTitle: sessionTitle,
+        );
+      } finally {
+        api.dispose();
+      }
+    }());
   }
 
   /// 按时段问候语
@@ -203,6 +237,10 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _chat = chat;
     });
+    // M2 自动记忆沉淀：旧会话结束，后台提取记忆（fire-and-forget）
+    if (old != null) {
+      _extractMemoryInBackground(old);
+    }
 
     // 恢复目标会话草稿（静默恢复：输入框里看得见，无需弹提示）
     final draft = context.read<SettingsService>().getDraft(session.id);
@@ -286,6 +324,8 @@ class _HomePageState extends State<HomePage> {
       setState(() {
         _chat = null;
       });
+      // M2 自动记忆沉淀：退出聊天态，后台提取记忆（fire-and-forget）
+      _extractMemoryInBackground(current);
       current.dispose();
     }
     // 空闲态恢复新对话草稿（上次在主页打了字没发出去的场景）

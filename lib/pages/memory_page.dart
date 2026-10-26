@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/memory.dart';
 import '../providers/memory_provider.dart';
+import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import '../widgets/app_toast.dart';
 
@@ -135,6 +136,20 @@ class _MemoryPanelState extends State<MemoryPanel> {
               ),
             ],
           ),
+        ),
+        // M2 自动记忆沉淀开关（会话结束自动提取记忆入库）
+        SwitchListTile(
+          contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          title: const Text('自动记忆沉淀'),
+          subtitle: const Text(
+            '会话结束后自动提取值得记住的信息入库（静默进行，'
+            '可在此删除）；关闭后仅手动「记住xxx」生效',
+          ),
+          value: context.watch<SettingsService>().autoMemory,
+          onChanged: (v) {
+            Haptics.selection();
+            context.read<SettingsService>().setAutoMemory(v);
+          },
         ),
         // tag 筛选 chips（横向滚动；无 tag 时隐藏）
         if (tags.isNotEmpty)
