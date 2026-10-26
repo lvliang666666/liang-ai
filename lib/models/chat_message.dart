@@ -31,6 +31,9 @@ class ChatMessage {
   /// 本轮输出 token（reasoning+content；usage 末帧或本地估算）
   int? completionTokens;
 
+  /// 用户钉住（F2：钉住消息所在轮永不压缩进前情摘要）
+  bool pinned;
+
   final int createdAt;
 
   ChatMessage({
@@ -44,6 +47,7 @@ class ChatMessage {
     this.toolCallId,
     this.promptTokens,
     this.completionTokens,
+    this.pinned = false,
     required this.createdAt,
   })  : attachments = attachments ?? const [],
         toolCalls = toolCalls ?? const [];
@@ -65,6 +69,7 @@ class ChatMessage {
         'tool_call_id': toolCallId,
         'prompt_tokens': promptTokens,
         'completion_tokens': completionTokens,
+        'pinned': pinned ? 1 : 0,
         'created_at': createdAt,
       };
 
@@ -80,6 +85,7 @@ class ChatMessage {
         toolCallId: map['tool_call_id'] as String?,
         promptTokens: map['prompt_tokens'] as int?,
         completionTokens: map['completion_tokens'] as int?,
+        pinned: ((map['pinned'] as int?) ?? 0) != 0,
         createdAt: map['created_at'] as int,
       );
 
