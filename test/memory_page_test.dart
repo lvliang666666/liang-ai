@@ -3,9 +3,11 @@ import 'package:ai_chat_app/pages/memory_page.dart';
 import 'package:ai_chat_app/providers/memory_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:ai_chat_app/services/memory_service.dart';
+import 'package:ai_chat_app/services/settings_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 假 MemoryProvider：不碰真实 DB（sqflite_ffi 异步 IO 在 widget 测试
 /// fake async 环境推不动），CRUD 同步完成并记录调用参数供断言。
@@ -106,9 +108,12 @@ Memory memory(String id, String content, {String? tag, bool pinned = false}) =>
 
 void main() {
   late _FakeMemoryProvider provider;
+  late SettingsService settings;
 
-  setUp(() {
+  setUp(() async {
     provider = _FakeMemoryProvider();
+    SharedPreferences.setMockInitialValues({});
+    settings = SettingsService(await SharedPreferences.getInstance());
   });
 
   tearDown(() {
@@ -118,6 +123,7 @@ void main() {
   Widget wrap(Widget child) => MultiProvider(
         providers: [
           ChangeNotifierProvider<MemoryProvider>.value(value: provider),
+          ChangeNotifierProvider<SettingsService>.value(value: settings),
         ],
         child: MaterialApp(home: Scaffold(body: child)),
       );
@@ -129,6 +135,22 @@ void main() {
 
       expect(
           find.textContaining('AI 还没有记住任何东西'), findsOneWidget);
+    });
+
+    testWidgets('M2 自动记忆沉淀开关：默认开，关闭后状态切换', (tester) async {
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      expect(find.text('自动记忆沉淀'), findsOneWidget);
+      expect(settings.autoMemory, isTrue);
+
+      await tester.tap(find.text('自动记忆沉淀'));
+      await tester.pump();
+      expect(settings.autoMemory, isFalse);
+
+      await tester.tap(find.text('自动记忆沉淀'));
+      await tester.pump();
+      expect(settings.autoMemory, isTrue);
     });
 
     testWidgets('列表渲染：内容 + 标签副标题', (tester) async {

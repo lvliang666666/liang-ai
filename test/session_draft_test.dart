@@ -78,4 +78,34 @@ void main() {
       expect(settings.getDraft('s1'), '草稿1更新');
     });
   });
+
+  group('自动记忆沉淀开关（M2）', () {
+    late SettingsService settings;
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({});
+      final prefs = await SharedPreferences.getInstance();
+      settings = SettingsService(prefs);
+    });
+
+    test('默认开（升级用户行为不变）', () {
+      expect(settings.autoMemory, isTrue);
+    });
+
+    test('关闭后可读回，再开恢复', () async {
+      await settings.setAutoMemory(false);
+      expect(settings.autoMemory, isFalse);
+      await settings.setAutoMemory(true);
+      expect(settings.autoMemory, isTrue);
+    });
+
+    test('同值写入幂等（不触发通知）', () async {
+      var notified = 0;
+      settings.addListener(() => notified++);
+      await settings.setAutoMemory(settings.autoMemory);
+      expect(notified, 0);
+      await settings.setAutoMemory(false);
+      expect(notified, 1);
+    });
+  });
 }

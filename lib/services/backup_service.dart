@@ -62,6 +62,7 @@ class BackupService {
           'default_effort': settings.defaultEffortValue,
           'temperature': settings.temperature,
           'swipe_actions': settings.swipeActions,
+          'auto_memory': settings.autoMemory,
         },
       },
     };
