@@ -415,6 +415,76 @@ void main() {
       expect(find.text('助手回答内容'), findsOneWidget);
     });
 
+    testWidgets('v2.6.3：定制工具条只含复制+完成两项（防溢出挤掉完成）',
+        (tester) async {
+      // v2.6.2 真机缺陷回归：默认按钮队列（复制/分享/全选/系统文本处理
+      // 动作/完成）触发 Android 原生 TextSelectionToolbar 溢出机制，
+      // 排最后的「完成」被挤进 ⋮ 溢出菜单。修复 = 工具条只放两项。
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(wrapWithSettings(MessageBubble(message: msg)));
+      await tester.pump();
+
+      await tester.longPress(find.text('助手回答内容'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('选择文字'));
+      await tester.pumpAndSettle();
+
+      // 长按正文选词 → 工具条弹出（contextMenuBuilder 定制路径）
+      await tester.longPress(find.text('助手回答内容'));
+      await tester.pumpAndSettle();
+
+      // 工具条内「完成」可见（不在溢出菜单里）
+      expect(find.text('完成'), findsOneWidget);
+      // 复制按钮可见（AdaptiveTextSelectionToolbar 用本地化 label）
+      expect(find.text('复制'), findsWidgets);
+
+      // 点工具条内「完成」→ 退出选择模式
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SelectionArea), findsNothing);
+    });
+
+    testWidgets('v2.6.3：顶部「完成」胶囊仅无选中时显示（选中后隐藏）',
+        (tester) async {
+      // v2.6.2 真机缺陷回归：原 if (_selecting) 无条件显示胶囊，
+      // 与跟手工具条双入口并存。修复 = 无选中才兜底显示。
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '助手回答内容',
+        createdAt: 1000,
+      );
+      await tester.pumpWidget(wrapWithSettings(MessageBubble(message: msg)));
+      await tester.pump();
+
+      await tester.longPress(find.text('助手回答内容'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('选择文字'));
+      await tester.pumpAndSettle();
+
+      // 刚进选择模式、还没选中内容：胶囊兜底显示
+      expect(find.text('完成'), findsOneWidget);
+
+      // 长按选词：有选中内容 → 胶囊隐藏（退出走跟手工具条）
+      await tester.longPress(find.text('助手回答内容'));
+      await tester.pumpAndSettle();
+      expect(find.text('完成'), findsOneWidget,
+          reason: '选中后顶部胶囊隐藏，仅剩工具条内的完成');
+
+      // 点工具条「完成」退出：胶囊与 SelectionArea 都消失
+      await tester.tap(find.text('完成'));
+      await tester.pumpAndSettle();
+      expect(find.byType(SelectionArea), findsNothing);
+      expect(find.text('完成'), findsNothing);
+    });
+
     testWidgets('选择模式中横滑复制退场（SelectionArea 接管拖拽）',
         (tester) async {
       final msg = ChatMessage(

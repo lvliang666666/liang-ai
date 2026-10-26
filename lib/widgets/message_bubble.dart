@@ -28,11 +28,15 @@ import 'tool_call_block.dart';
 /// SelectionArea 的拖拽选字会与横滑复制抢手势，选择期间横滑识别器
 /// 整体退场（[SwipeActionContainer.enabled]）。
 ///
-/// 选择工具条（v2.6.2 定制，contextMenuBuilder）：
+/// 选择工具条（v2.6.3 定制，contextMenuBuilder）：
 /// - **复制**：只复制不清选区（覆盖 Android 默认的复制即清选），
 ///   支持连续挑多段批量复制；复制后 Toast 反馈
 /// - **完成**：内联在工具条里（工具条锚定选区 = 跟手），点按退出
-///   选择模式；顶部固定胶囊仅作未选中时的兜底退出入口
+///   选择模式。工具条只放这两项——默认的分享/全选/系统文本处理
+///   动作会触发 Android 原生工具条溢出机制，把排最后的完成挤进
+///   ⋮ 溢出菜单（v2.6.2 真机「完成不出现」的根因）
+/// - 顶部胶囊：仅无选中内容时显示的兜底退出入口（选中后隐藏，
+///   避免与工具条双入口并存）
 class MessageBubble extends StatefulWidget {
   const MessageBubble({
     super.key,
@@ -61,7 +65,7 @@ class _MessageBubbleState extends State<MessageBubble> {
   /// 豆包式选择文字模式（正文包 SelectionArea，Markdown 渲染不变）
   bool _selecting = false;
 
-  /// 选择区状态：用于「完成」按钮的显隐（有选中内容才需要退出入口）
+  /// 选择区状态：SelectionListener 桥（选中几何变化通知）
   final SelectionListenerNotifier _selectionNotifier =
       SelectionListenerNotifier();
 
@@ -69,28 +73,36 @@ class _MessageBubbleState extends State<MessageBubble> {
   /// SelectableRegionState 无公开 getSelectedContent，走回调是官方路）
   String? _selectedText;
 
+  /// 是否有生效选区（顶部「完成」胶囊显隐依据：无选中才显示兜底）
+  bool get _hasActiveSelection =>
+      _selectedText != null && _selectedText!.isNotEmpty;
+
   @override
   void dispose() {
     _selectionNotifier.dispose();
     super.dispose();
   }
 
-  /// 选择工具条：默认项（复制/分享/全选）+「完成」，锚定选区跟手。
+  /// 选择工具条：只放「复制」「完成」两项，锚定选区跟手。
+  ///
+  /// v2.6.3 修复「工具条内完成不出现」：Android 原生 TextSelectionToolbar
+  /// 有溢出机制——按钮总宽超屏时放不下的收进 ⋮ 溢出菜单。默认队列是
+  /// 复制/分享/全选 + 系统文本处理动作（国产 ROM 注入翻译等）+ 完成，
+  /// 完成排最后 = 第一个被挤出去。精简为两项后任何屏幕都放得下；
+  /// 分享/全选与横滑复制、长按菜单功能重复，砍掉无损失。
   /// 复制项覆盖默认行为——保留选区支持连续多段批量复制。
   Widget _buildSelectionToolbar(
       BuildContext context, SelectableRegionState selectableRegion) {
-    final buttonItems = selectableRegion.contextMenuButtonItems
-        .map((item) => item.type == ContextMenuButtonType.copy
-            ? ContextMenuButtonItem(
-                type: ContextMenuButtonType.copy,
-                onPressed: _copySelection,
-              )
-            : item)
-        .toList();
-    buttonItems.add(ContextMenuButtonItem(
-      label: '完成',
-      onPressed: _exitSelecting,
-    ));
+    final buttonItems = [
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.copy,
+        onPressed: _copySelection,
+      ),
+      ContextMenuButtonItem(
+        label: '完成',
+        onPressed: _exitSelecting,
+      ),
+    ];
     return AdaptiveTextSelectionToolbar.buttonItems(
       anchors: selectableRegion.contextMenuAnchors,
       buttonItems: buttonItems,
@@ -108,10 +120,13 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
   }
 
-  /// 退出选择模式（清选区 + 恢复横滑）
+  /// 退出选择模式（清选区状态 + 恢复横滑）
   void _exitSelecting() {
     if (!mounted) return;
-    setState(() => _selecting = false);
+    setState(() {
+      _selecting = false;
+      _selectedText = null;
+    });
   }
 
   @override
@@ -233,9 +248,12 @@ class _MessageBubbleState extends State<MessageBubble> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 选择模式顶栏：「完成」兜底退出入口（主要退出路径在
-                // 跟手工具条里；未选中内容时工具条不出现，靠这里退出）
-                if (_selecting)
+                // 选择模式顶栏：「完成」兜底退出入口。仅无选中内容时
+                // 显示——选中后工具条（跟手）成为主要退出路径，胶囊
+                // 隐藏避免双入口；清除选区后胶囊复现兜底（v2.6.3 修复
+                // 「完成按钮常驻气泡顶部」：原来 if (_selecting) 无条件
+                // 显示，与工具条双入口并存）
+                if (_selecting && !_hasActiveSelection)
                   Align(
                     alignment: Alignment.centerRight,
                     child: GestureDetector(
@@ -256,7 +274,8 @@ class _MessageBubbleState extends State<MessageBubble> {
                       ),
                     ),
                   ),
-                if (_selecting) const SizedBox(height: 8),
+                if (_selecting && !_hasActiveSelection)
+                  const SizedBox(height: 8),
                 // 思考过程块
                 if (message.reasoning.isNotEmpty || thinkingStreaming)
                   ThinkingBlock(
@@ -281,14 +300,18 @@ class _MessageBubbleState extends State<MessageBubble> {
                           selectionNotifier: _selectionNotifier,
                           child: SelectionArea(
                             onSelectionChanged: (content) {
-                              // 实时记录选中文本（复制按钮取用）+
-                              // 有选中内容才亮出顶部「完成」兜底入口
-                              //（选中后主要退出路径在跟手工具条里）
+                              // 实时记录选中文本（复制按钮取用）。选中态
+                              // 变化（含清除）都要 setState：顶部「完成」
+                              // 胶囊按 _hasActiveSelection 显隐——无选中
+                              // 时兜底显示，选中后隐藏（退出走跟手工具条）
+                              final hadSelection = _hasActiveSelection;
                               _selectedText = content?.plainText;
                               if (mounted &&
-                                  _selectionNotifier.registered &&
-                                  _selectionNotifier.selection.status !=
-                                      SelectionStatus.none) {
+                                  (hadSelection != _hasActiveSelection ||
+                                      (_selectionNotifier.registered &&
+                                          _selectionNotifier.selection
+                                              .status !=
+                                              SelectionStatus.none))) {
                                 setState(() {});
                               }
                             },
