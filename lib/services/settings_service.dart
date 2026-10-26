@@ -66,6 +66,17 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 自动记忆沉淀（M2：会话结束自动提取记忆入库） =====
+  // 开 = 会话切走/退出聊天态时后台跑一次记忆提取（静默入库，记忆管理
+  // 页可删）；关 = 只保留手动「记住xxx」与 memory_save 工具。默认开
+  static const _kAutoMemory = 'auto_memory';
+  bool get autoMemory => _prefs.getBool(_kAutoMemory) ?? true;
+  Future<void> setAutoMemory(bool v) async {
+    if (v == autoMemory) return;
+    await _prefs.setBool(_kAutoMemory, v);
+    notifyListeners();
+  }
+
   // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续

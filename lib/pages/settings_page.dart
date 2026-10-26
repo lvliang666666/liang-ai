@@ -918,6 +918,11 @@ class _SettingsPageState extends State<SettingsPage> {
           }
         }
       }
+      // M2：自动记忆沉淀开关随备份迁移（缺字段 = 老备份，不动当前值）
+      final autoMemory = data?['settings']?['auto_memory'];
+      if (autoMemory is bool && mounted) {
+        await _settings.setAutoMemory(autoMemory);
+      }
       if (!mounted) return;
       await context.read<SessionsProvider>().refresh();
       await context.read<SkillProvider>().load();

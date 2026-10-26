@@ -81,6 +81,7 @@ void main() {
     await settings.setThemeId('deepseek');
     await settings.setDefaultEffort('high');
     await settings.setTemperature(0.9);
+    await settings.setAutoMemory(false);
   }
 
   group('buildBackup：导出结构', () {
@@ -112,7 +113,7 @@ void main() {
       }
     });
 
-    test('settings 段含主题/档位/温度', () async {
+    test('settings 段含主题/档位/温度/自动记忆开关', () async {
       await seedAll();
       final data =
           (await service.buildBackup())['data'] as Map<String, dynamic>;
@@ -120,6 +121,7 @@ void main() {
       expect(s['theme_id'], 'deepseek');
       expect(s['default_effort'], 'high');
       expect(s['temperature'], 0.9);
+      expect(s['auto_memory'], isFalse);
     });
   });
 
