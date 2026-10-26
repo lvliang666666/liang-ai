@@ -1,5 +1,6 @@
 import 'package:ai_chat_app/models/skill.dart';
 import 'package:ai_chat_app/pages/skill_editor_page.dart';
+import 'package:ai_chat_app/providers/http_tool_provider.dart';
 import 'package:ai_chat_app/providers/skill_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:ai_chat_app/services/skill_service.dart';
@@ -63,6 +64,11 @@ void main() {
   Widget wrap(Widget child) => MultiProvider(
         providers: [
           ChangeNotifierProvider<SkillProvider>.value(value: provider),
+          // T1：编辑器工具列表会读 HttpToolProvider（测试无自定义工具）
+          ChangeNotifierProvider<HttpToolProvider>(
+            create: (_) => HttpToolProvider(
+                database: DatabaseService.instance),
+          ),
         ],
         child: MaterialApp(home: child),
       );
