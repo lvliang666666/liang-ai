@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
+import 'package:ai_chat_app/models/http_tool.dart';
 import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/models/skill.dart';
@@ -78,6 +79,16 @@ void main() {
       baseUrl: 'https://x/v1',
       apiKey: 'sk-custom',
     ));
+    await db.insertHttpTool(HttpTool(
+      id: 'ht1',
+      name: 'query_weather',
+      description: '查询天气',
+      urlTemplate: 'https://api.example.com/w?city={city}',
+      method: 'GET',
+      parametersJson: '{"city": {"type": "string"}}',
+      createdAt: 1,
+      updatedAt: 1,
+    ));
     await settings.setThemeId('deepseek');
     await settings.setDefaultEffort('high');
     await settings.setTemperature(0.9);
@@ -97,6 +108,18 @@ void main() {
       expect((data['skills'] as List).length, 1);
       expect((data['memories'] as List).length, 1);
       expect((data['providers'] as List).length, 2);
+      expect((data['http_tools'] as List).length, 1);
+    });
+
+    test('http_tools 段：字段完整往返', () async {
+      await seedAll();
+      final data =
+          (await service.buildBackup())['data'] as Map<String, dynamic>;
+      final t = (data['http_tools'] as List).single as Map<String, dynamic>;
+      expect(t['name'], 'query_weather');
+      expect(t['url_template'], 'https://api.example.com/w?city={city}');
+      expect(t['method'], 'GET');
+      expect(t['enabled'], 1);
     });
 
     test('E1 硬性要求：导出不含任何 api_key 值', () async {
@@ -143,6 +166,7 @@ void main() {
       expect(stats.skills, 1);
       expect(stats.memories, 1);
       expect(stats.providers, 2);
+      expect(stats.httpTools, 1);
 
       // 数据完整
       final sessions = await db.getAllSessions();
@@ -154,6 +178,9 @@ void main() {
       expect(skill!.prompt, '你是架构师');
       final mem = await db.getAllMemories();
       expect(mem.first.content, '用户喜欢简洁');
+      final tools = await db.getAllHttpTools();
+      expect(tools.single.name, 'query_weather');
+      expect(tools.single.urlTemplate, 'https://api.example.com/w?city={city}');
     });
 
     test('E1 双保险：导入的 provider Key 强制为空', () async {

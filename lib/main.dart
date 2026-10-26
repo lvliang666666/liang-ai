@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/provider_profile.dart';
 import 'pages/home_page.dart';
+import 'providers/http_tool_provider.dart';
 import 'providers/memory_provider.dart';
 import 'providers/provider_provider.dart';
 import 'providers/sessions_provider.dart';
@@ -88,6 +89,11 @@ class AiChatApp extends StatelessWidget {
         ChangeNotifierProvider(
           create: (_) => MemoryProvider(
             service: MemoryService(database: DatabaseService.instance),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => HttpToolProvider(
+            database: DatabaseService.instance,
           ),
         ),
       ],

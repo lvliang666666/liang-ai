@@ -129,15 +129,16 @@ void main() {
       // v1 基线建库 → 生产 onUpgrade 链升到当前版本
       final migrated = await openTestDbFromVersion(1);
 
-      // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/memories）
+      // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/memories/http_tools）
       final tables = await migrated.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
       );
       expect(
         tables.map((r) => r['name']).toList(),
-        containsAll(['sessions', 'messages', 'skills', 'providers', 'memories']),
+        containsAll(
+            ['sessions', 'messages', 'skills', 'providers', 'memories', 'http_tools']),
       );
-      expect(tables.length, 5); // agents 表应已在 v6 迁移中删除
+      expect(tables.length, 6); // agents 表应已在 v6 迁移中删除
 
       // 迁移后可正常写入读出（走一遍核心链路）
       await migrated.insert('sessions', {

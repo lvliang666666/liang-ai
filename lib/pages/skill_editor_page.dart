@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/skill.dart';
+import '../providers/http_tool_provider.dart';
 import '../providers/skill_provider.dart';
 import '../services/tools/builtin_tools.dart';
 import '../utils/haptics.dart';
@@ -49,11 +50,15 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
     _descCtrl = TextEditingController(text: skill?.description ?? '');
     _promptCtrl = TextEditingController(text: skill?.prompt ?? '');
     _effort = skill?.effort;
-    // 工具勾选初始值：null（全部）展开为全部工具名
+    // 工具勾选初始值：null（全部）展开为全部工具名（内置 + 自定义 HTTP 工具）
     final declaredTools = skill?.toolNames;
+    final allNames = [
+      ...builtinTools.map((t) => t.name),
+      ...context.read<HttpToolProvider>().enabledTools.map((t) => t.name),
+    ];
     _toolChecked = {
-      for (final t in builtinTools)
-        t.name: declaredTools == null || declaredTools.contains(t.name),
+      for (final name in allNames)
+        name: declaredTools == null || declaredTools.contains(name),
     };
     _pageController = PageController();
   }
@@ -97,12 +102,16 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
     }
 
     // 勾选结果转 toolNames：全勾 = null（全部，语义等价且便于后续加新工具）
+    final allNames = [
+      ...builtinTools.map((t) => t.name),
+      ...context.read<HttpToolProvider>().enabledTools.map((t) => t.name),
+    ];
     final checkedNames = [
-      for (final t in builtinTools)
-        if (_toolChecked[t.name] == true) t.name,
+      for (final name in allNames)
+        if (_toolChecked[name] == true) name,
     ];
     final toolNames =
-        checkedNames.length == builtinTools.length ? null : checkedNames;
+        checkedNames.length == allNames.length ? null : checkedNames;
 
     final provider = context.read<SkillProvider>();
     final original = widget.skill;
@@ -265,6 +274,7 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
 
   // ===== Tag 3：可用工具 =====
   Widget _buildToolsTab(ThemeData theme) {
+    final httpTools = context.watch<HttpToolProvider>().enabledTools;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       children: [
@@ -293,6 +303,35 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
               style: theme.textTheme.bodySmall,
             ),
           ),
+        // T1：自定义 HTTP 工具（设置页配置，白名单同样纳管）
+        if (httpTools.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Text('自定义 HTTP 工具', style: theme.textTheme.titleSmall),
+          Text(
+            '在设置 → HTTP 工具中配置（URL/方法/参数模板）',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 4),
+          for (final t in httpTools)
+            CheckboxListTile(
+              value: _toolChecked[t.name],
+              onChanged: _isBuiltin
+                  ? null
+                  : (v) => setState(() => _toolChecked[t.name] = v ?? false),
+              controlAffinity: ListTileControlAffinity.leading,
+              dense: true,
+              title: Text(t.name,
+                  style: const TextStyle(
+                      fontSize: 13, fontFamily: 'Monocraft')),
+              subtitle: Text(
+                t.description.isEmpty ? t.urlTemplate : t.description,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall,
+              ),
+            ),
+        ],
       ],
     );
   }
