@@ -754,6 +754,22 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ],
         ),
+        const SizedBox(height: 16),
+        Text('上下文管理', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('上下文自动压缩'),
+          subtitle: const Text(
+            '会话 token 超水位线时，自动把早期历史压缩成「前情摘要」，'
+            '只保留最近几轮原文；长按消息可钉住，钉住消息永不压缩',
+          ),
+          value: _settings.contextCompression,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setContextCompression(v));
+          },
+        ),
       ],
     );
   }
@@ -925,6 +941,11 @@ class _SettingsPageState extends State<SettingsPage> {
       final autoMemory = data?['settings']?['auto_memory'];
       if (autoMemory is bool && mounted) {
         await _settings.setAutoMemory(autoMemory);
+      }
+      // F2：上下文自动压缩开关随备份迁移（缺字段 = 老备份，不动当前值）
+      final contextCompression = data?['settings']?['context_compression'];
+      if (contextCompression is bool && mounted) {
+        await _settings.setContextCompression(contextCompression);
       }
       if (!mounted) return;
       await context.read<SessionsProvider>().refresh();
