@@ -45,6 +45,7 @@ class MessageBubble extends StatefulWidget {
     this.thinkingSeconds = 0,
     this.toolResults = const [],
     this.toolExecuting = false,
+    this.onTogglePin,
   });
 
   final ChatMessage message;
@@ -56,6 +57,10 @@ class MessageBubble extends StatefulWidget {
 
   /// 工具是否正在执行（toolCalling 状态）
   final bool toolExecuting;
+
+  /// 切换钉住状态（F2：钉住消息所在轮永不压缩进前情摘要）。
+  /// null = 无钉住能力（纯展示场景）
+  final ValueChanged<bool>? onTogglePin;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -179,6 +184,25 @@ class _MessageBubbleState extends State<MessageBubble> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  // 钉住标记（F2）：钉住消息所在轮永不压缩进前情摘要
+                  if (message.pinned)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.push_pin,
+                              size: 12, color: colorScheme.onPrimary),
+                          const SizedBox(width: 3),
+                          Text(
+                            '已钉住',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colorScheme.onPrimary.withValues(alpha: 0.85),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   // 附件区：图片缩略图 / 文件卡片
                   if (message.hasAttachments)
                     _UserAttachments(message: message),
@@ -248,6 +272,25 @@ class _MessageBubbleState extends State<MessageBubble> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // 钉住标记（F2）：钉住消息所在轮永不压缩进前情摘要
+                if (message.pinned)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.push_pin,
+                            size: 12, color: colorScheme.primary),
+                        const SizedBox(width: 3),
+                        Text(
+                          '已钉住',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 // 选择模式顶栏：「完成」兜底退出入口。仅无选中内容时
                 // 显示——选中后工具条（跟手）成为主要退出路径，胶囊
                 // 隐藏避免双入口；清除选区后胶囊复现兜底（v2.6.3 修复
@@ -363,7 +406,7 @@ class _MessageBubbleState extends State<MessageBubble> {
   }
 
   /// 助手消息长按菜单：锚点式（微信/桌面右键菜单风格，与长按会话卡片
-  /// 菜单同形态）——复制全文 / 选择文字 / 导出为文档
+  /// 菜单同形态）——复制全文 / 选择文字 / 钉住 / 导出为文档
   ///
   /// [pressPosition] = 长按点全局坐标，菜单锚定该处弹出
   Future<void> _showMessageActions(
@@ -371,13 +414,14 @@ class _MessageBubbleState extends State<MessageBubble> {
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
     final box = overlay.size;
-    // 菜单估算尺寸：3 项（44 高）+ divider ≈ 150 高，宽约 170
+    // 菜单估算尺寸：4 项（44 高）+ divider ≈ 194 高，宽约 170
     const menuWidth = 170.0;
-    const menuHeight = 150.0;
+    const menuHeight = 194.0;
     var left = pressPosition.dx;
     var top = pressPosition.dy;
     if (left + menuWidth > box.width) left = box.width - menuWidth - 8;
     if (top + menuHeight > box.height) top = box.height - menuHeight - 8;
+    final canPin = widget.onTogglePin != null;
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -407,6 +451,26 @@ class _MessageBubbleState extends State<MessageBubble> {
             ],
           ),
         ),
+        if (canPin)
+          PopupMenuItem(
+            value: 'pin',
+            height: 44,
+            child: Row(
+              children: [
+                Icon(
+                  message.pinned
+                      ? Icons.push_pin_outlined
+                      : Icons.push_pin,
+                  size: 20,
+                  color: message.pinned
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                Text(message.pinned ? '取消钉住' : '钉住'),
+              ],
+            ),
+          ),
         const PopupMenuDivider(),
         const PopupMenuItem(
           value: 'export',
@@ -436,6 +500,15 @@ class _MessageBubbleState extends State<MessageBubble> {
     if (action == 'select') {
       // 豆包式选择：正文包 SelectionArea（Markdown 渲染不变，不弹层）
       if (mounted) setState(() => _selecting = true);
+      return;
+    }
+
+    if (action == 'pin') {
+      final target = !message.pinned;
+      widget.onTogglePin?.call(target);
+      if (context.mounted) {
+        showAppToast(context, target ? '已钉住，所在轮不参与压缩' : '已取消钉住');
+      }
       return;
     }
 

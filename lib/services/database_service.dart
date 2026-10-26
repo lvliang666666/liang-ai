@@ -5,6 +5,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/context_summary.dart';
 import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
@@ -12,7 +13,7 @@ import '../models/skill.dart';
 import 'secure_key_store.dart';
 
 /// 本地数据库服务：sessions / messages / skills / providers / memories /
-/// http_tools 六表
+/// http_tools / context_summaries 七表
 class DatabaseService {
   DatabaseService._();
   static final DatabaseService instance = DatabaseService._();
@@ -20,7 +21,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 10;
+  static const int dbVersion = 11;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -84,6 +85,7 @@ class DatabaseService {
         tool_call_id TEXT,
         prompt_tokens INTEGER,
         completion_tokens INTEGER,
+        pinned INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
       )
     ''');
@@ -94,6 +96,7 @@ class DatabaseService {
     await _createProvidersTable(db);
     await _createMemoriesTable(db);
     await _createHttpToolsTable(db);
+    await _createContextSummariesTable(db);
   }
 
   /// 版本迁移：老用户数据无损升级
@@ -168,6 +171,14 @@ class DatabaseService {
     if (oldVersion < 10 && newVersion >= 10) {
       // v9 → v10：自定义 HTTP 工具（T1）——新建 http_tools 表
       await _createHttpToolsTable(db);
+    }
+    if (oldVersion < 11 && newVersion >= 11) {
+      // v10 → v11：分层上下文压缩（F2）——新建 context_summaries 表
+      //（每会话一条前情摘要；派生数据，不进备份）+ messages 加 pinned 列
+      //（钉住消息所在轮永不压缩）
+      await _createContextSummariesTable(db);
+      await db.execute(
+          'ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
     }
   }
 
@@ -251,6 +262,24 @@ class DatabaseService {
     ''');
   }
 
+  static Future<void> _createContextSummariesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS context_summaries (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        first_kept_id TEXT NOT NULL,
+        first_kept_at INTEGER NOT NULL,
+        pinned_ids TEXT NOT NULL DEFAULT '[]',
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_context_summaries_session '
+      'ON context_summaries(session_id, created_at)',
+    );
+  }
+
   // ===== Sessions =====
 
   Future<void> insertSession(ChatSession session) async {
@@ -327,6 +356,8 @@ class DatabaseService {
     final db = await database;
     await db.transaction((txn) async {
       await txn.delete('messages', where: 'session_id = ?', whereArgs: [id]);
+      await txn.delete('context_summaries',
+          where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('sessions', where: 'id = ?', whereArgs: [id]);
     });
   }
@@ -364,6 +395,17 @@ class DatabaseService {
   Future<void> deleteMessage(String id) async {
     final db = await database;
     await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 设置消息钉住状态（F2：钉住消息所在轮永不压缩）
+  Future<void> setMessagePinned(String id, bool pinned) async {
+    final db = await database;
+    await db.update(
+      'messages',
+      {'pinned': pinned ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   // ===== Skills =====
@@ -559,6 +601,47 @@ class DatabaseService {
   Future<void> deleteHttpTool(String id) async {
     final db = await database;
     await db.delete('http_tools', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ===== ContextSummaries（F2 分层上下文压缩）=====
+
+  /// 保存会话前情摘要（每会话仅保留最新一条：先删旧再插新）
+  Future<void> saveContextSummary(ContextSummary summary) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.delete('context_summaries',
+          where: 'session_id = ?', whereArgs: [summary.sessionId]);
+      await txn.insert('context_summaries', {
+        ...summary.toMap(),
+        // List 字段序列化为 JSON 文本（sqflite 无原生数组列）
+        'pinned_ids': const JsonEncoder().convert(summary.pinnedIds),
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    });
+  }
+
+  /// 会话当前前情摘要（无则 null）
+  Future<ContextSummary?> getContextSummary(String sessionId) async {
+    final db = await database;
+    final rows = await db.query('context_summaries',
+        where: 'session_id = ?',
+        whereArgs: [sessionId],
+        orderBy: 'created_at DESC',
+        limit: 1);
+    if (rows.isEmpty) return null;
+    final row = Map<String, dynamic>.from(rows.first);
+    // pinned_ids 存的是 JSON 文本，反序列化后交给 fromMap
+    final raw = row.remove('pinned_ids') as String?;
+    final pinnedIds = raw == null || raw.isEmpty
+        ? const <String>[]
+        : (jsonDecode(raw) as List<Object?>).whereType<String>().toList();
+    return ContextSummary.fromMap({...row, 'pinned_ids': pinnedIds});
+  }
+
+  /// 删除会话前情摘要（会话删除/消息重置时调用）
+  Future<void> deleteContextSummary(String sessionId) async {
+    final db = await database;
+    await db.delete('context_summaries',
+        where: 'session_id = ?', whereArgs: [sessionId]);
   }
 
   /// 内置供应商能力升级（幂等，随版本演进）

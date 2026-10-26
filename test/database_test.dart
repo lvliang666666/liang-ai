@@ -122,6 +122,33 @@ void main() {
       await db.deleteMessage('m1');
       expect(await db.getMessages('s1'), isEmpty);
     });
+
+    test('钉住状态落库与读回（F2）', () async {
+      await db.insertSession(session('s1'));
+      await db.insertMessage(message('m1', 's1', 'user', content: '关键约束'));
+
+      // 默认不钉
+      expect((await db.getMessages('s1')).first.pinned, isFalse);
+
+      // 钉住 → 落库 → 读回
+      await db.setMessagePinned('m1', true);
+      final pinned = (await db.getMessages('s1')).first;
+      expect(pinned.pinned, isTrue);
+
+      // 取消钉住
+      await db.setMessagePinned('m1', false);
+      expect((await db.getMessages('s1')).first.pinned, isFalse);
+    });
+
+    test('钉住状态随消息序列化往返（toMap/fromMap）', () async {
+      await db.insertSession(session('s1'));
+      await db.insertMessage(message('m1', 's1', 'user', content: '钉住我'));
+
+      await db.setMessagePinned('m1', true);
+      final m = (await db.getMessages('s1')).first;
+      expect(m.toMap()['pinned'], 1);
+      expect(ChatMessage.fromMap(m.toMap()).pinned, isTrue);
+    });
   });
 
   group('schema 同源与迁移链（E2 根治验证）', () {
@@ -129,16 +156,24 @@ void main() {
       // v1 基线建库 → 生产 onUpgrade 链升到当前版本
       final migrated = await openTestDbFromVersion(1);
 
-      // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/memories/http_tools）
+      // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/
+      // memories/http_tools/context_summaries）
       final tables = await migrated.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
       );
       expect(
         tables.map((r) => r['name']).toList(),
-        containsAll(
-            ['sessions', 'messages', 'skills', 'providers', 'memories', 'http_tools']),
+        containsAll([
+          'sessions',
+          'messages',
+          'skills',
+          'providers',
+          'memories',
+          'http_tools',
+          'context_summaries',
+        ]),
       );
-      expect(tables.length, 6); // agents 表应已在 v6 迁移中删除
+      expect(tables.length, 7); // agents 表应已在 v6 迁移中删除
 
       // 迁移后可正常写入读出（走一遍核心链路）
       await migrated.insert('sessions', {
@@ -247,7 +282,8 @@ void main() {
     });
 
     test('v8 老库迁移到 v9：memories 补 pinned 列，老数据保留', () async {
-      // 手写 v8 历史 schema（v8 时 memories 表还没有 pinned 列）
+      // 手写 v8 历史 schema（v8 时 memories 表还没有 pinned 列）。
+      // messages 表 v1 就存在，必须带上——后续 v11 迁移步会 ALTER 它
       final dir = await databaseFactory.getDatabasesPath();
       final dbPath = '$dir/v8_to_v9_test.db';
       await databaseFactory.deleteDatabase(dbPath);
@@ -255,6 +291,21 @@ void main() {
         dbPath,
         options: OpenDatabaseOptions(version: 8),
       );
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          created_at INTEGER NOT NULL
+        )
+      ''');
       await old.execute('''
         CREATE TABLE memories (
           id TEXT PRIMARY KEY,
@@ -298,6 +349,79 @@ void main() {
       );
       final updated = (await upgraded.query('memories')).first;
       expect(Memory.fromMap(updated).pinned, isTrue);
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
+
+    test('v10 老库迁移到 v11：context_summaries 表建立，老数据不受影响', () async {
+      // 手写 v10 历史 schema（被测对象是迁移逻辑本身），升级走生产 onUpgrade 本尊。
+      // messages 表 v1 就存在（v8 时已带 token 列），v11 迁移步会 ALTER 它
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v10_to_v11_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 10),
+      );
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          pinned INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('memories', {
+        'id': 'm1',
+        'content': '老记忆',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // 老数据保留
+      final mems = await upgraded.query('memories');
+      expect(mems.single['content'], '老记忆');
+
+      // context_summaries 表已建且可写入
+      await upgraded.insert('context_summaries', {
+        'id': 'c1',
+        'session_id': 's1',
+        'summary': '迁移后摘要',
+        'first_kept_id': 'm1',
+        'first_kept_at': 1,
+        'created_at': 1,
+      });
+      final rows = await upgraded.query('context_summaries');
+      expect(rows.single['summary'], '迁移后摘要');
 
       await upgraded.close();
       await databaseFactory.deleteDatabase(dbPath);
