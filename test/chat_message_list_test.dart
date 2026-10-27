@@ -163,7 +163,7 @@ void main() {
   });
 
   group('I1 智能跟随：滚离底部', () {
-    testWidgets('上滑滚离底部：胶囊浮出并显示未读数', (tester) async {
+    testWidgets('上滑滚离底部：胶囊浮出', (tester) async {
       await pumpList(tester);
       final state = tester.state<ChatMessageListState>(
           find.byType(ChatMessageList));
