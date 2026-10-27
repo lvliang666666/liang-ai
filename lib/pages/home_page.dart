@@ -71,6 +71,12 @@ class _HomePageState extends State<HomePage> {
   // 空闲态预选推理档位（effort tag 空闲态也显示）
   String _selectedEffort = 'max';
 
+  // I4 编辑态：正在编辑重发的 user 消息（null = 非编辑态）
+  ChatMessage? _editingMessage;
+
+  // I5 引用态：被引用的 assistant 消息（null = 无引用）
+  ChatMessage? _quotedMessage;
+
   @override
   void initState() {
     super.initState();
@@ -399,6 +405,42 @@ class _HomePageState extends State<HomePage> {
     chat.dispose();
   }
 
+  // ===== I4 编辑重发 / I5 引用追问 =====
+
+  /// 进入编辑态：输入框预填原文并聚焦（光标在末尾）
+  void _enterEditMode(ChatMessage message) {
+    Haptics.light();
+    _exitQuoteMode(); // 编辑与引用互斥
+    setState(() {
+      _editingMessage = message;
+      _inputController.text = message.content;
+      _inputController.selection =
+          TextSelection.collapsed(offset: message.content.length);
+    });
+    _inputFocusNode.requestFocus();
+  }
+
+  /// 退出编辑态：清空输入框恢复原状
+  void _exitEditMode() {
+    setState(() {
+      _editingMessage = null;
+      _inputController.clear();
+    });
+  }
+
+  /// 进入引用态：输入框上方显示引用条
+  void _enterQuoteMode(ChatMessage message) {
+    Haptics.light();
+    setState(() => _quotedMessage = message);
+    _inputFocusNode.requestFocus();
+  }
+
+  /// 退出引用态
+  void _exitQuoteMode() {
+    if (_quotedMessage == null) return;
+    setState(() => _quotedMessage = null);
+  }
+
 
   Future<void> _renameSession(BuildContext context, String id, String current) async {
     final controller = TextEditingController(text: current);
@@ -482,18 +524,20 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => _removingSessionIds.remove(id));
   }
 
-  /// 长按会话卡片：锚点菜单栏（重命名/删除/批量管理）
+  /// 长按会话卡片：锚点菜单栏（置顶/重命名/删除/批量管理）
   ///
   /// [pressPosition] = 长按点的全局坐标，菜单锚定在该处弹出（微信/桌面右键菜单风格）
   Future<void> _showSessionActions(
       BuildContext context, String id, String title, Offset pressPosition) async {
     Haptics.medium();
+    final pinned =
+        context.read<SessionsProvider>().sessions.firstWhere((s) => s.id == id).pinned;
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
     final box = overlay.size;
-    // 菜单估算尺寸：3 项（44 高）+ divider ≈ 145 高，宽约 160
+    // 菜单估算尺寸：4 项（44 高）+ divider ≈ 190 高，宽约 160
     const menuWidth = 160.0;
-    const menuHeight = 145.0;
+    const menuHeight = 190.0;
     // 锚定长按点，超出屏幕右/下边界时向内收
     var left = pressPosition.dx;
     var top = pressPosition.dy;
@@ -506,6 +550,21 @@ class _HomePageState extends State<HomePage> {
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       items: [
+        PopupMenuItem(
+          value: 'pin',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(
+                pinned ? Icons.push_pin_outlined : Icons.push_pin,
+                size: 20,
+                color: pinned ? Theme.of(context).colorScheme.primary : null,
+              ),
+              const SizedBox(width: 12),
+              Text(pinned ? '取消置顶' : '置顶'),
+            ],
+          ),
+        ),
         const PopupMenuItem(
           value: 'rename',
           height: 44,
@@ -543,7 +602,13 @@ class _HomePageState extends State<HomePage> {
       ],
     );
     if (!context.mounted || action == null) return;
-    if (action == 'rename') {
+    if (action == 'pin') {
+      Haptics.light();
+      await context.read<SessionsProvider>().setSessionPinned(id, !pinned);
+      if (context.mounted) {
+        showAppToast(context, pinned ? '已取消置顶' : '已置顶，会话将保持在列表顶部');
+      }
+    } else if (action == 'rename') {
       _renameSession(context, id, title);
     } else if (action == 'delete') {
       _deleteSession(context, id);
@@ -699,6 +764,9 @@ class _HomePageState extends State<HomePage> {
                                   chatKey: ValueKey(_chat!.session.id),
                                   chat: _chat!,
                                   onDelete: _deleteCurrentChat,
+                                  // I4 编辑重发 / I5 引用追问入口
+                                  onEditMessage: _enterEditMode,
+                                  onQuoteMessage: _enterQuoteMode,
                                 ),
                               ),
                       ),
@@ -719,6 +787,11 @@ class _HomePageState extends State<HomePage> {
                         onPickSkill: _pickSkillForHome,
                         onPickModel: _pickModelForHome,
                         onPickEffort: _pickEffortForHome,
+                        // I4 编辑态 / I5 引用态
+                        editingMessage: _editingMessage,
+                        onCancelEdit: _exitEditMode,
+                        quotedMessage: _quotedMessage,
+                        onCancelQuote: _exitQuoteMode,
                       ),
                     ),
                   ],

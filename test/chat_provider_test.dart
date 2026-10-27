@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
+import 'package:ai_chat_app/models/context_summary.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
@@ -286,6 +287,159 @@ void main() {
 
       expect(provider.totalTokens, 0);
       expect(provider.lastPromptTokens, isNull);
+    });
+  });
+
+  group('I4 编辑重发', () {
+    /// 预置两轮对话并加载（u1/a1/u2/a2），返回第一条 user 消息
+    Future<ChatMessage> seedTwoRounds() async {
+      await db.insertMessage(ChatMessage(
+        id: 'u1', sessionId: 's1', role: 'user', content: '第一问', createdAt: 1000));
+      await db.insertMessage(ChatMessage(
+        id: 'a1', sessionId: 's1', role: 'assistant', content: '第一答', createdAt: 2000));
+      await db.insertMessage(ChatMessage(
+        id: 'u2', sessionId: 's1', role: 'user', content: '第二问', createdAt: 3000));
+      await db.insertMessage(ChatMessage(
+        id: 'a2', sessionId: 's1', role: 'assistant', content: '第二答', createdAt: 4000));
+      await provider.loadMessages();
+      return provider.messages.first;
+    }
+
+    test('编辑第一条 user 消息：其后全部截断，新文本重新发送', () async {
+      final u1 = await seedTwoRounds();
+
+      await provider.editAndResend(u1, '改后的第一问');
+      api.emit(const SseDeltaContent('新回答'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      // DB：u1/a1/u2/a2 全删，新 user + 新 assistant
+      final msgs = await db.getMessages('s1');
+      expect(msgs.length, 2);
+      expect(msgs[0].role, 'user');
+      expect(msgs[0].content, '改后的第一问');
+      expect(msgs[1].content, '新回答');
+
+      // 内存同步
+      expect(provider.messages.length, 2);
+      expect(provider.messages.first.content, '改后的第一问');
+    });
+
+    test('编辑中间 user 消息：只截断该消息及其后，早期轮保留', () async {
+      await db.insertMessage(ChatMessage(
+        id: 'u1', sessionId: 's1', role: 'user', content: '第一问', createdAt: 1000));
+      await db.insertMessage(ChatMessage(
+        id: 'a1', sessionId: 's1', role: 'assistant', content: '第一答', createdAt: 2000));
+      await db.insertMessage(ChatMessage(
+        id: 'u2', sessionId: 's1', role: 'user', content: '第二问', createdAt: 3000));
+      await db.insertMessage(ChatMessage(
+        id: 'a2', sessionId: 's1', role: 'assistant', content: '第二答', createdAt: 4000));
+      await db.insertMessage(ChatMessage(
+        id: 'u3', sessionId: 's1', role: 'user', content: '第三问', createdAt: 5000));
+      await db.insertMessage(ChatMessage(
+        id: 'a3', sessionId: 's1', role: 'assistant', content: '第三答', createdAt: 6000));
+      await provider.loadMessages();
+
+      final u2 = provider.messages.firstWhere((m) => m.id == 'u2');
+      await provider.editAndResend(u2, '第二问改');
+      api.emit(const SseDeltaContent('新二答'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      final msgs = await db.getMessages('s1');
+      // u1/a1 保留 + 新 u2' + 新 assistant
+      expect(msgs.map((m) => m.content).toList(),
+          ['第一问', '第一答', '第二问改', '新二答']);
+    });
+
+    test('编辑后请求只含截断后的历史（API payload 验证）', () async {
+      final u1 = await seedTwoRounds();
+
+      await provider.editAndResend(u1, '改后的问题');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      // 请求 messages：截断后只剩新 user 一条（无 system prompt 场景）
+      final sent = api.lastMessages!;
+      expect(sent.length, 1);
+      expect(sent.single['role'], 'user');
+      expect(sent.single['content'], '改后的问题');
+    });
+
+    test('流式中编辑被拒绝', () async {
+      final u1 = await seedTwoRounds();
+      await provider.sendMessage('新问题');
+      expect(provider.isStreaming, isTrue);
+
+      await provider.editAndResend(u1, '流式中改');
+      // 无变化：消息数不变（4 条 + 新问题 user = 5）
+      expect(provider.messages.length, 5);
+      expect(provider.messages.first.content, '第一问');
+
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+    });
+
+    test('非 user 消息编辑被拒绝', () async {
+      await seedTwoRounds();
+      final a1 = provider.messages.firstWhere((m) => m.id == 'a1');
+
+      await provider.editAndResend(a1, '改助手消息');
+      // 无变化
+      expect(provider.messages.length, 4);
+      expect(provider.messages.first.content, '第一问');
+    });
+
+    test('空文本编辑被拒绝', () async {
+      final u1 = await seedTwoRounds();
+
+      await provider.editAndResend(u1, '   ');
+      expect(provider.messages.length, 4);
+    });
+
+    test('前情摘要边界被删时摘要作废', () async {
+      await seedTwoRounds();
+      // 预置摘要：边界锚定 u2（编辑 u2 时边界消息被删 → 摘要作废）
+      await db.saveContextSummary(ContextSummary(
+        id: 'ctx-1',
+        sessionId: 's1',
+        summary: '【关键事实】\n旧摘要',
+        firstKeptId: 'u2',
+        firstKeptAt: 3000,
+        createdAt: 1000,
+      ));
+      await provider.loadMessages();
+      expect(provider.contextSummary, isNotNull);
+
+      final u2 = provider.messages.firstWhere((m) => m.id == 'u2');
+      await provider.editAndResend(u2, '第二问改');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      expect(provider.contextSummary, isNull);
+      expect(await db.getContextSummary('s1'), isNull);
+    });
+
+    test('前情摘要边界未受影响时摘要保留', () async {
+      await seedTwoRounds();
+      // 边界锚定 u1（编辑 u2 不影响 u1 → 摘要保留）
+      await db.saveContextSummary(ContextSummary(
+        id: 'ctx-1',
+        sessionId: 's1',
+        summary: '【关键事实】\n旧摘要',
+        firstKeptId: 'u1',
+        firstKeptAt: 1000,
+        createdAt: 1000,
+      ));
+      await provider.loadMessages();
+
+      final u2 = provider.messages.firstWhere((m) => m.id == 'u2');
+      await provider.editAndResend(u2, '第二问改');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      expect(provider.contextSummary, isNotNull);
+      expect(provider.contextSummary!.summary, contains('旧摘要'));
     });
   });
 }

@@ -316,6 +316,39 @@ class ChatProvider extends ChangeNotifier {
     _notify();
   }
 
+  /// 编辑重发（I4）：截断该消息及其后全部消息，以新文本重新发送
+  ///
+  /// ChatGPT 式「说错了改一句重来」：只允许编辑自己的 user 消息，
+  /// 流式中禁止。截断 = DB 删除 + 内存列表同步；若前情摘要边界指向
+  /// 被删消息，摘要一并作废（早期历史已不在，摘要失去锚点）。
+  /// 截断后走 [sendMessage] 正常管线（水位检查/记忆注入/loop 全复用）。
+  Future<void> editAndResend(ChatMessage message, String newText) async {
+    if (!message.isUser || isStreaming) return;
+    final content = newText.trim();
+    if (content.isEmpty) return;
+
+    // 1. 截断：DB 删除该消息及其后全部消息，内存列表同步
+    await _db.deleteMessagesFrom(message.id, message.createdAt);
+    final idx = _messages.indexWhere((m) => m.id == message.id);
+    if (idx >= 0) {
+      _messages = _messages.sublist(0, idx);
+    }
+
+    // 2. 前情摘要失效检查：边界消息被删则摘要作废（DB + 内存）
+    final summary = _contextSummary;
+    if (summary != null) {
+      final boundaryGone = _messages.every((m) =>
+          m.id != summary.firstKeptId && m.createdAt < summary.firstKeptAt);
+      if (boundaryGone) {
+        await _db.deleteContextSummary(_session.id);
+        _contextSummary = null;
+      }
+    }
+
+    // 3. 以新文本重新发送（sendMessage 落库新 user 消息 + 启动 loop）
+    await sendMessage(content);
+  }
+
   /// agentic loop：请求 → 流式收包 →（工具调用？执行 → 再请求）→ 收尾
   ///
   /// 每轮创建新的流式 assistant 消息；工具轮结束后 assistant 消息
