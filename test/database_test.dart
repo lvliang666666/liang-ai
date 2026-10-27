@@ -70,6 +70,37 @@ void main() {
       expect(s!.effort, 'low');
     });
 
+    test('置顶状态落库与读回（I7）', () async {
+      await db.insertSession(session('s1'));
+
+      // 默认不置顶
+      expect((await db.getSession('s1'))!.pinned, isFalse);
+
+      // 置顶 → 落库 → 读回
+      await db.setSessionPinned('s1', true);
+      expect((await db.getSession('s1'))!.pinned, isTrue);
+
+      // 取消置顶
+      await db.setSessionPinned('s1', false);
+      expect((await db.getSession('s1'))!.pinned, isFalse);
+    });
+
+    test('会话列表排序：置顶在前，组内按更新时间倒序（I7）', () async {
+      await db.insertSession(session('s1', at: 1000));
+      await db.insertSession(session('s2', at: 2000));
+      await db.insertSession(session('s3', at: 3000));
+
+      // 置顶最旧的 s1：应排到最前（其余仍按时间倒序）
+      await db.setSessionPinned('s1', true);
+      final list = await db.getAllSessions();
+      expect(list.map((e) => e.id).toList(), ['s1', 's3', 's2']);
+
+      // 再置顶 s2（比 s1 新）：两个置顶组内按时间倒序
+      await db.setSessionPinned('s2', true);
+      final list2 = await db.getAllSessions();
+      expect(list2.map((e) => e.id).toList(), ['s2', 's1', 's3']);
+    });
+
     test('删除会话级联删除消息', () async {
       await db.insertSession(session('s1'));
       await db.insertMessage(message('m1', 's1', 'user', content: '你好'));
@@ -149,6 +180,35 @@ void main() {
       expect(m.toMap()['pinned'], 1);
       expect(ChatMessage.fromMap(m.toMap()).pinned, isTrue);
     });
+
+    test('截断删除：删除目标消息及其后全部消息（I4）', () async {
+      await db.insertSession(session('s1'));
+      await db.insertMessage(message('m1', 's1', 'user', content: '第一问', at: 1000));
+      await db.insertMessage(message('m2', 's1', 'assistant', content: '第一答', at: 2000));
+      await db.insertMessage(message('m3', 's1', 'user', content: '第二问', at: 3000));
+      await db.insertMessage(message('m4', 's1', 'assistant', content: '第二答', at: 4000));
+
+      // 从 m3 截断：m3/m4 删除，m1/m2 保留
+      await db.deleteMessagesFrom('m3', 3000);
+      final left = await db.getMessages('s1');
+      expect(left.map((m) => m.id).toList(), ['m1', 'm2']);
+
+      // 从 m1 截断：全删
+      await db.deleteMessagesFrom('m1', 1000);
+      expect(await db.getMessages('s1'), isEmpty);
+    });
+
+    test('截断删除：其他会话消息不受影响（I4）', () async {
+      await db.insertSession(session('s1'));
+      await db.insertSession(session('s2'));
+      await db.insertMessage(message('m1', 's1', 'user', at: 1000));
+      await db.insertMessage(message('m2', 's1', 'assistant', at: 2000));
+      await db.insertMessage(message('n1', 's2', 'user', at: 3000));
+
+      await db.deleteMessagesFrom('m1', 1000);
+      expect(await db.getMessages('s1'), isEmpty);
+      expect((await db.getMessages('s2')).length, 1);
+    });
   });
 
   group('schema 同源与迁移链（E2 根治验证）', () {
@@ -209,7 +269,8 @@ void main() {
     });
 
     test('v7 老库迁移到 v8：token 列补齐，老数据保留', () async {
-      // 手写 v7 历史 schema（被测对象是迁移逻辑本身），升级走生产 onUpgrade 本尊
+      // 手写 v7 历史 schema（被测对象是迁移逻辑本身），升级走生产 onUpgrade 本尊。
+      // sessions 表 v1 就存在，v12 迁移步会 ALTER 它
       final dir = await databaseFactory.getDatabasesPath();
       final dbPath = '$dir/v7_to_v8_test.db';
       await databaseFactory.deleteDatabase(dbPath);
@@ -217,6 +278,19 @@ void main() {
         dbPath,
         options: OpenDatabaseOptions(version: 7),
       );
+      await old.execute('''
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          effort TEXT NOT NULL DEFAULT 'max',
+          agent_id TEXT,
+          skill_id TEXT,
+          provider_id TEXT,
+          model TEXT
+        )
+      ''');
       await old.execute('''
         CREATE TABLE messages (
           id TEXT PRIMARY KEY,
@@ -283,7 +357,8 @@ void main() {
 
     test('v8 老库迁移到 v9：memories 补 pinned 列，老数据保留', () async {
       // 手写 v8 历史 schema（v8 时 memories 表还没有 pinned 列）。
-      // messages 表 v1 就存在，必须带上——后续 v11 迁移步会 ALTER 它
+      // messages 表 v1 就存在（v8 已带 token 列），v11 迁移步会 ALTER 它；
+      // sessions 表 v1 就存在，v12 迁移步会 ALTER 它
       final dir = await databaseFactory.getDatabasesPath();
       final dbPath = '$dir/v8_to_v9_test.db';
       await databaseFactory.deleteDatabase(dbPath);
@@ -291,6 +366,19 @@ void main() {
         dbPath,
         options: OpenDatabaseOptions(version: 8),
       );
+      await old.execute('''
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          effort TEXT NOT NULL DEFAULT 'max',
+          agent_id TEXT,
+          skill_id TEXT,
+          provider_id TEXT,
+          model TEXT
+        )
+      ''');
       await old.execute('''
         CREATE TABLE messages (
           id TEXT PRIMARY KEY,
@@ -356,7 +444,8 @@ void main() {
 
     test('v10 老库迁移到 v11：context_summaries 表建立，老数据不受影响', () async {
       // 手写 v10 历史 schema（被测对象是迁移逻辑本身），升级走生产 onUpgrade 本尊。
-      // messages 表 v1 就存在（v8 时已带 token 列），v11 迁移步会 ALTER 它
+      // messages 表 v1 就存在（v8 时已带 token 列），v11 迁移步会 ALTER 它；
+      // sessions 表 v1 就存在，v12 迁移步会 ALTER 它
       final dir = await databaseFactory.getDatabasesPath();
       final dbPath = '$dir/v10_to_v11_test.db';
       await databaseFactory.deleteDatabase(dbPath);
@@ -364,6 +453,19 @@ void main() {
         dbPath,
         options: OpenDatabaseOptions(version: 10),
       );
+      await old.execute('''
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          effort TEXT NOT NULL DEFAULT 'max',
+          agent_id TEXT,
+          skill_id TEXT,
+          provider_id TEXT,
+          model TEXT
+        )
+      ''');
       await old.execute('''
         CREATE TABLE messages (
           id TEXT PRIMARY KEY,
@@ -422,6 +524,93 @@ void main() {
       });
       final rows = await upgraded.query('context_summaries');
       expect(rows.single['summary'], '迁移后摘要');
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
+
+    test('v11 老库迁移到 v12：sessions 补 pinned 列，老数据保留', () async {
+      // 手写 v11 历史 schema（被测对象是迁移逻辑本身），升级走生产 onUpgrade 本尊。
+      // messages 表 v1 就存在（v8 时已带 token 列），v11 迁移步会 ALTER 它
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v11_to_v12_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 11),
+      );
+      await old.execute('''
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          effort TEXT NOT NULL DEFAULT 'max',
+          agent_id TEXT,
+          skill_id TEXT,
+          provider_id TEXT,
+          model TEXT
+        )
+      ''');
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          pinned INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('sessions', {
+        'id': 's1',
+        'title': '老会话',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // 老数据保留，pinned 由 ALTER DEFAULT 0 回填
+      final rows = await upgraded.query('sessions');
+      expect(rows.single['title'], '老会话');
+      expect(rows.single['pinned'], 0);
+      expect(ChatSession.fromMap(rows.single).pinned, isFalse);
+
+      // 新列可写可读
+      await upgraded.update(
+        'sessions',
+        {'pinned': 1},
+        where: 'id = ?',
+        whereArgs: ['s1'],
+      );
+      final updated = (await upgraded.query('sessions')).first;
+      expect(ChatSession.fromMap(updated).pinned, isTrue);
 
       await upgraded.close();
       await databaseFactory.deleteDatabase(dbPath);
