@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../models/chat_message.dart';
 import '../../providers/chat_provider.dart';
 import '../../utils/haptics.dart';
 import '../message_bubble.dart';
@@ -23,6 +24,8 @@ class ChatMessageList extends StatefulWidget {
     required this.chatKey,
     required this.chat,
     required this.onDelete,
+    this.onEditMessage,
+    this.onQuoteMessage,
   });
 
   /// 会话身份 key：AnimatedSwitcher 据此判断是否播过渡
@@ -30,6 +33,12 @@ class ChatMessageList extends StatefulWidget {
   final Key chatKey;
   final ChatProvider chat;
   final VoidCallback onDelete;
+
+  /// 编辑重发（I4：user 消息长按菜单「编辑重发」入口；null = 无编辑能力）
+  final ValueChanged<ChatMessage>? onEditMessage;
+
+  /// 引用追问（I5：assistant 消息长按菜单「引用」入口；null = 无引用能力）
+  final ValueChanged<ChatMessage>? onQuoteMessage;
 
   @override
   State<ChatMessageList> createState() => ChatMessageListState();
@@ -266,6 +275,14 @@ class ChatMessageListState extends State<ChatMessageList> {
                                 // F2 钉住：钉住消息所在轮永不压缩进前情摘要
                                 onTogglePin: (pinned) =>
                                     widget.chat.setMessagePinned(msg, pinned),
+                                // I4 编辑重发：仅 user 消息且宿主有编辑能力
+                                onEdit: msg.isUser && widget.onEditMessage != null
+                                    ? () => widget.onEditMessage!(msg)
+                                    : null,
+                                // I5 引用追问：仅 assistant 消息且宿主有引用能力
+                                onQuote: !msg.isUser && widget.onQuoteMessage != null
+                                    ? () => widget.onQuoteMessage!(msg)
+                                    : null,
                               ),
                             ],
                           );

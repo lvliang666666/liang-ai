@@ -56,6 +56,22 @@ class SessionsProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 设置会话置顶（I7）：落库 + 内存同步 + 重排（置顶组恒在前）
+  Future<void> setSessionPinned(String id, bool pinned) async {
+    await _db.setSessionPinned(id, pinned);
+    _sessions = [
+      for (final s in _sessions)
+        if (s.id == id) s..pinned = pinned else s
+    ]..sort(_sessionOrder);
+    notifyListeners();
+  }
+
+  /// 会话排序：置顶在前，组内按更新时间倒序（与 DB 查询同规则）
+  static int _sessionOrder(ChatSession a, ChatSession b) {
+    if (a.pinned != b.pinned) return a.pinned ? -1 : 1;
+    return b.updatedAt.compareTo(a.updatedAt);
+  }
+
   Future<void> deleteSession(String id) async {
     await _db.deleteSession(id);
     _sessions = _sessions.where((s) => s.id != id).toList();

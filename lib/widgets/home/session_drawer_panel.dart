@@ -154,19 +154,23 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
         .toList();
   }
 
-  /// 按时间分组：今天 / 7 天内 / 更早
+  /// 分组展示：置顶组恒在时间分组之上（I7），其余按时间分组
+  /// （今天 / 7 天内 / 更早）。置顶会话不再进时间分组。
   Map<String, List<ChatSession>> get _grouped {
     final now = DateTime.now();
     final startOfToday =
         DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
     final sevenDaysAgo = startOfToday - 7 * 24 * 3600 * 1000;
     final groups = <String, List<ChatSession>>{
+      '置顶': [],
       '今天': [],
       '7 天内': [],
       '更早': [],
     };
     for (final s in _filtered) {
-      if (s.updatedAt >= startOfToday) {
+      if (s.pinned) {
+        groups['置顶']!.add(s);
+      } else if (s.updatedAt >= startOfToday) {
         groups['今天']!.add(s);
       } else if (s.updatedAt >= sevenDaysAgo) {
         groups['7 天内']!.add(s);
@@ -423,6 +427,15 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
                                             overflow: TextOverflow.ellipsis,
                                             style: theme.textTheme.bodyMedium,
                                           ),
+                                          // 置顶标记（I7）：图钉小图标
+                                          trailing: s.pinned
+                                              ? Icon(
+                                                  Icons.push_pin,
+                                                  size: 14,
+                                                  color: theme
+                                                      .colorScheme.primary,
+                                                )
+                                              : null,
                                           onTap: () {
                                             if (_batchMode) {
                                               Haptics.selection();

@@ -113,12 +113,19 @@ void main() {
       );
 
   /// 预置长会话并上屏（默认跟随态）
-  Future<void> pumpList(WidgetTester tester, {int messages = 30}) async {
+  Future<void> pumpList(
+    WidgetTester tester, {
+    int messages = 30,
+    ValueChanged<ChatMessage>? onEditMessage,
+    ValueChanged<ChatMessage>? onQuoteMessage,
+  }) async {
     await tester.runAsync(() => seedMessages(messages));
     await tester.pumpWidget(wrap(ChatMessageList(
       chatKey: const ValueKey('s1'),
       chat: provider,
       onDelete: () {},
+      onEditMessage: onEditMessage,
+      onQuoteMessage: onQuoteMessage,
     )));
     await tester.pump();
   }
@@ -264,6 +271,61 @@ void main() {
         api.emit(const SseDone());
         await Future<void>.delayed(const Duration(milliseconds: 200));
       });
+      await tester.pumpAndSettle();
+    });
+  });
+
+  group('I4 编辑重发 / I5 引用追问：气泡菜单回调', () {
+    testWidgets('user 气泡长按菜单含「编辑重发」，点击触发 onEditMessage',
+        (tester) async {
+      ChatMessage? edited;
+      await pumpList(tester, messages: 2, onEditMessage: (m) => edited = m);
+
+      // 长按第一条 user 气泡（列表 reverse：index 0 是最后一条）
+      final userBubble = find.text('消息内容 0');
+      await tester.longPress(userBubble);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('编辑重发'));
+      await tester.pumpAndSettle();
+
+      expect(edited, isNotNull);
+      expect(edited!.id, 'm0');
+    });
+
+    testWidgets('assistant 气泡长按菜单含「引用」，点击触发 onQuoteMessage',
+        (tester) async {
+      ChatMessage? quoted;
+      await pumpList(tester, messages: 2, onQuoteMessage: (m) => quoted = m);
+
+      final assistantBubble = find.text('消息内容 1');
+      await tester.longPress(assistantBubble);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('引用'));
+      await tester.pumpAndSettle();
+
+      expect(quoted, isNotNull);
+      expect(quoted!.id, 'm1');
+    });
+
+    testWidgets('回调为 null 时菜单不显示对应项', (tester) async {
+      await pumpList(tester, messages: 2);
+
+      // user 气泡：无 onEditMessage → 无「编辑重发」（菜单仍弹出，含钉住项）
+      await tester.longPress(find.text('消息内容 0'));
+      await tester.pumpAndSettle();
+      expect(find.text('编辑重发'), findsNothing);
+      expect(find.text('钉住'), findsOneWidget);
+      await tester.tap(find.text('钉住'));
+      await tester.pumpAndSettle();
+
+      // assistant 气泡：无 onQuoteMessage → 无「引用」（菜单仍弹出）
+      await tester.longPress(find.text('消息内容 1'));
+      await tester.pumpAndSettle();
+      expect(find.text('引用'), findsNothing);
+      expect(find.text('选择文字'), findsOneWidget);
+      await tester.tap(find.text('选择文字'));
       await tester.pumpAndSettle();
     });
   });

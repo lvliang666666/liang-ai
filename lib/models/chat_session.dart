@@ -9,12 +9,16 @@ class ChatSession {
     this.skillId,
     this.providerId,
     this.model,
+    this.pinned = false,
   });
 
   final String id;
   String title;
   final int createdAt;
   int updatedAt;
+
+  /// 用户置顶（I7：置顶会话在抽屉置顶组恒置顶，不随时间分组沉底）
+  bool pinned;
 
   /// 该会话的推理档位：max / high / low
   String effort;
@@ -37,6 +41,7 @@ class ChatSession {
         'skill_id': skillId,
         'provider_id': providerId,
         'model': model,
+        'pinned': pinned ? 1 : 0,
       };
 
   factory ChatSession.fromMap(Map<String, dynamic> map) => ChatSession(
@@ -48,5 +53,6 @@ class ChatSession {
         skillId: map['skill_id'] as String?,
         providerId: map['provider_id'] as String?,
         model: map['model'] as String?,
+        pinned: ((map['pinned'] as int?) ?? 0) != 0,
       );
 }

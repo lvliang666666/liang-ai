@@ -21,7 +21,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 11;
+  static const int dbVersion = 12;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -70,7 +70,8 @@ class DatabaseService {
         agent_id TEXT,
         skill_id TEXT,
         provider_id TEXT,
-        model TEXT
+        model TEXT,
+        pinned INTEGER NOT NULL DEFAULT 0
       )
     ''');
     await db.execute('''
@@ -180,6 +181,12 @@ class DatabaseService {
       await db.execute(
           'ALTER TABLE messages ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
     }
+    if (oldVersion < 12 && newVersion >= 12) {
+      // v11 → v12：会话置顶（I7）——sessions 加 pinned 列
+      //（置顶会话在抽屉置顶组恒置顶，不随时间分组沉底）
+      await db.execute(
+          'ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
+    }
   }
 
   static Future<void> _createAgentsTable(Database db) async {
@@ -288,10 +295,11 @@ class DatabaseService {
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// 按更新时间倒序的会话列表
+  /// 会话列表：置顶在前（组内按更新时间倒序），其余按更新时间倒序（I7）
   Future<List<ChatSession>> getAllSessions() async {
     final db = await database;
-    final rows = await db.query('sessions', orderBy: 'updated_at DESC');
+    final rows = await db
+        .query('sessions', orderBy: 'pinned DESC, updated_at DESC');
     return rows.map(ChatSession.fromMap).toList();
   }
 
@@ -316,6 +324,17 @@ class DatabaseService {
     final db = await database;
     await db
         .update('sessions', {'effort': effort}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 设置会话置顶状态（I7：置顶会话在抽屉置顶组恒置顶）
+  Future<void> setSessionPinned(String id, bool pinned) async {
+    final db = await database;
+    await db.update(
+      'sessions',
+      {'pinned': pinned ? 1 : 0},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
   }
 
   /// 更新会话绑定的 Skill（null = 解绑，回到默认助手）
@@ -395,6 +414,20 @@ class DatabaseService {
   Future<void> deleteMessage(String id) async {
     final db = await database;
     await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 截断删除：删除 [messageId] 及其后全部消息（I4 编辑重发）
+  ///
+  /// 按 created_at 比较，同毫秒消息用 id 兜底（>= 含自身）。
+  /// 编辑重发 = 删掉原 user 消息及其后所有回复，再以新文本重新发送。
+  Future<void> deleteMessagesFrom(String messageId, int createdAt) async {
+    final db = await database;
+    await db.delete(
+      'messages',
+      where: 'session_id = (SELECT session_id FROM messages WHERE id = ?) '
+          'AND (created_at > ? OR (created_at = ? AND id >= ?))',
+      whereArgs: [messageId, createdAt, createdAt, messageId],
+    );
   }
 
   /// 设置消息钉住状态（F2：钉住消息所在轮永不压缩）
