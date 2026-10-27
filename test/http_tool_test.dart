@@ -204,7 +204,8 @@ void main() {
 
     test('v9 老库迁移到 v10：http_tools 表建立，老数据不受影响', () async {
       // 手写 v9 历史 schema（被测对象是迁移逻辑本身），升级走生产 onUpgrade 本尊。
-      // messages 表 v1 就存在（v8 时已带 token 列），v11 迁移步会 ALTER 它
+      // messages 表 v1 就存在（v8 时已带 token 列），v11 迁移步会 ALTER 它；
+      // sessions 表 v12 迁移步会 ALTER（加 pinned 列），老 schema 必须带上
       final dir = await databaseFactory.getDatabasesPath();
       final dbPath = '$dir/v9_to_v10_test.db';
       await databaseFactory.deleteDatabase(dbPath);
@@ -212,6 +213,19 @@ void main() {
         dbPath,
         options: OpenDatabaseOptions(version: 9),
       );
+      await old.execute('''
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          profile_id TEXT NOT NULL,
+          model TEXT NOT NULL,
+          effort TEXT NOT NULL DEFAULT 'max',
+          temperature REAL,
+          skill_id TEXT,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
       await old.execute('''
         CREATE TABLE messages (
           id TEXT PRIMARY KEY,

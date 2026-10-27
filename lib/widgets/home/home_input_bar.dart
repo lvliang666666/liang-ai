@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
+import '../../models/chat_message.dart';
 import '../../models/message_attachment.dart';
 import '../../models/provider_profile.dart';
 import '../../models/skill.dart' as skill_model;
@@ -47,6 +48,10 @@ class HomeInputBar extends StatefulWidget {
     required this.onPickSkill,
     required this.onPickModel,
     required this.onPickEffort,
+    this.editingMessage,
+    this.onCancelEdit,
+    this.quotedMessage,
+    this.onCancelQuote,
   });
 
   final TextEditingController controller;
@@ -68,6 +73,20 @@ class HomeInputBar extends StatefulWidget {
   final VoidCallback onPickSkill;
   final VoidCallback onPickModel;
   final VoidCallback onPickEffort;
+
+  /// 编辑态（I4）：正在编辑的 user 消息（null = 非编辑态）。
+  /// 编辑态下发送走编辑重发管线而非普通发送。
+  final ChatMessage? editingMessage;
+
+  /// 取消编辑（编辑态右上角 ×）
+  final VoidCallback? onCancelEdit;
+
+  /// 引用态（I5）：被引用的 assistant 消息（null = 无引用）。
+  /// 引用随下一条消息发出后自动清除。
+  final ChatMessage? quotedMessage;
+
+  /// 取消引用（引用条右侧 ×）
+  final VoidCallback? onCancelQuote;
 
   @override
   State<HomeInputBar> createState() => _HomeInputBarState();
@@ -296,14 +315,18 @@ class _HomeInputBarState extends State<HomeInputBar> {
     final radius = context.watch<ThemeProvider>().cornerRadius;
     final rounded = radius > 0;
 
+    // I4 编辑态 / I5 引用态
+    final editing = widget.editingMessage;
+    final quoted = widget.quotedMessage;
+
     // 附件按钮显隐：供应商支持视觉能力（空闲态无会话，默认显示）
     final showAttachmentButton = inChat ? chat.supportsVision : true;
     final pending = _pendingAttachments;
 
-    // 豆包式右侧动作区：流式中显示停止键；有文字/待发附件显示发送键（覆盖 +）；
-    // 否则只显示 +
+    // 豆包式右侧动作区：流式中显示停止键；有文字/待发附件/编辑态显示发送键
+    //（覆盖 +）；否则只显示 +
     final hasText = widget.controller.text.trim().isNotEmpty;
-    final showSend = isStreaming || hasText || pending.isNotEmpty;
+    final showSend = isStreaming || hasText || pending.isNotEmpty || editing != null;
     final showPlus = !isStreaming && !hasText && showAttachmentButton;
 
     // tags 配置：聊天态取会话绑定值，空闲态取预选值
@@ -379,6 +402,22 @@ class _HomeInputBarState extends State<HomeInputBar> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // I4 编辑态条：正在编辑的原文预览 + 取消
+                if (editing != null)
+                  _EditQuoteBar(
+                    icon: Icons.edit_outlined,
+                    label: '正在编辑',
+                    text: editing.content,
+                    onClose: widget.onCancelEdit,
+                  ),
+                // I5 引用条：被引用原文缩略 + 取消
+                if (quoted != null)
+                  _EditQuoteBar(
+                    icon: Icons.format_quote_outlined,
+                    label: '引用',
+                    text: quoted.content,
+                    onClose: widget.onCancelQuote,
+                  ),
                 // 待发附件预览条
                 if (pending.isNotEmpty)
                   HomeAttachmentPreview(
@@ -469,11 +508,29 @@ class _HomeInputBarState extends State<HomeInputBar> {
   void _send(BuildContext context) {
     final text = widget.controller.text.trim();
     final pending = _pendingAttachments;
-    if (text.isEmpty && pending.isEmpty) return;
+    final editing = widget.editingMessage;
+    final quoted = widget.quotedMessage;
     final chat = widget.chat;
+
+    // I4 编辑态：发送 = 编辑重发（截断 + 重新生成），不走普通发送
+    if (editing != null) {
+      if (text.isEmpty) return;
+      chat?.editAndResend(editing, text);
+      context.read<SettingsService>().clearDraft(chat!.session.id);
+      widget.controller.clear();
+      FocusManager.instance.primaryFocus?.unfocus();
+      return;
+    }
+
+    // I5 引用态：引用内容以「【引用】」块拼进消息正文（纯文本方案，
+    // 模型自然读到上下文，零 API 改动）
+    final composed = quoted != null
+        ? '【引用】${quoted.content}\n\n$text'
+        : text;
+    if (composed.trim().isEmpty && pending.isEmpty) return;
     if (chat != null) {
       // 聊天态：附件已在 provider 队列，直接发；草稿随发送清除（I6）
-      chat.sendMessage(text);
+      chat.sendMessage(composed);
       context.read<SettingsService>().clearDraft(chat.session.id);
     } else {
       // 空闲态：创建会话进入聊天态，附件随首条消息传入；空闲草稿清除（I6）
@@ -481,7 +538,7 @@ class _HomeInputBarState extends State<HomeInputBar> {
       setState(() => _idleAttachments = []);
       context.read<SettingsService>().setIdleDraft('');
       widget.onSendIdle(
-        text,
+        composed,
         skillId: widget.selectedSkill?.id,
         modelPick: widget.selectedModel,
         attachments: attachments,
@@ -507,6 +564,67 @@ class _HomeInputBarState extends State<HomeInputBar> {
           slideUpRoute(PayloadLensPage(chat: chat)),
         );
       },
+    );
+  }
+}
+
+/// I4 编辑态 / I5 引用态条：图标 + 标签 + 原文缩略（单行省略）+ 关闭键
+class _EditQuoteBar extends StatelessWidget {
+  const _EditQuoteBar({
+    required this.icon,
+    required this.label,
+    required this.text,
+    this.onClose,
+  });
+
+  final IconData icon;
+  final String label;
+  final String text;
+  final VoidCallback? onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: colorScheme.outlineVariant, width: 0.5),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: colorScheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colorScheme.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close,
+                size: 16, color: colorScheme.onSurfaceVariant),
+            tooltip: '取消',
+            onPressed: onClose,
+          ),
+        ],
+      ),
     );
   }
 }

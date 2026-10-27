@@ -46,6 +46,8 @@ class MessageBubble extends StatefulWidget {
     this.toolResults = const [],
     this.toolExecuting = false,
     this.onTogglePin,
+    this.onEdit,
+    this.onQuote,
   });
 
   final ChatMessage message;
@@ -61,6 +63,12 @@ class MessageBubble extends StatefulWidget {
   /// 切换钉住状态（F2：钉住消息所在轮永不压缩进前情摘要）。
   /// null = 无钉住能力（纯展示场景）
   final ValueChanged<bool>? onTogglePin;
+
+  /// 编辑重发（I4：仅 user 消息，null = 无编辑能力）
+  final VoidCallback? onEdit;
+
+  /// 引用追问（I5：仅 assistant 消息，null = 无引用能力）
+  final VoidCallback? onQuote;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -170,14 +178,15 @@ class _MessageBubbleState extends State<MessageBubble> {
               color: colorScheme.primary,
               borderRadius: BorderRadius.circular(20),
             ),
-            // 长按直接复制（与横滑复制同反馈）。不用 SelectableText——
+            // 长按弹锚点菜单（I4：复制/编辑/钉住）。不用 SelectableText——
             // 其内部 TapAndHorizontalDragGestureRecognizer 会抢赢手势
             // 竞技场，横滑复制在文字上起手时永远无法触发
             child: GestureDetector(
-              onLongPress: message.content.isNotEmpty
-                  ? () {
+              onLongPressStart: message.content.isNotEmpty
+                  ? (details) {
                       Haptics.medium();
-                      _copyMessage(context, message);
+                      _showUserMessageActions(
+                          context, message, details.globalPosition);
                     }
                   : null,
               child: Column(
@@ -405,6 +414,94 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
   }
 
+  /// 用户消息长按菜单（I4）：锚点式——复制 / 编辑重发 / 钉住
+  ///
+  /// [pressPosition] = 长按点全局坐标，菜单锚定该处弹出
+  Future<void> _showUserMessageActions(
+      BuildContext context, ChatMessage message, Offset pressPosition) async {
+    final overlay =
+        Overlay.of(context).context.findRenderObject() as RenderBox;
+    final box = overlay.size;
+    // 菜单估算尺寸：3 项（44 高）≈ 132 高，宽约 150
+    const menuWidth = 150.0;
+    const menuHeight = 132.0;
+    var left = pressPosition.dx;
+    var top = pressPosition.dy;
+    if (left + menuWidth > box.width) left = box.width - menuWidth - 8;
+    if (top + menuHeight > box.height) top = box.height - menuHeight - 8;
+    final canEdit = widget.onEdit != null && !widget.isStreaming;
+    final canPin = widget.onTogglePin != null;
+    final action = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        left, top, box.width - left - menuWidth, box.height - top - menuHeight,
+      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      items: [
+        const PopupMenuItem(
+          value: 'copy',
+          height: 44,
+          child: Row(
+            children: [
+              Icon(Icons.copy_outlined, size: 20),
+              SizedBox(width: 12),
+              Text('复制'),
+            ],
+          ),
+        ),
+        if (canEdit)
+          const PopupMenuItem(
+            value: 'edit',
+            height: 44,
+            child: Row(
+              children: [
+                Icon(Icons.edit_outlined, size: 20),
+                SizedBox(width: 12),
+                Text('编辑重发'),
+              ],
+            ),
+          ),
+        if (canPin)
+          PopupMenuItem(
+            value: 'pin',
+            height: 44,
+            child: Row(
+              children: [
+                Icon(
+                  message.pinned
+                      ? Icons.push_pin_outlined
+                      : Icons.push_pin,
+                  size: 20,
+                  color: message.pinned
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+                const SizedBox(width: 12),
+                Text(message.pinned ? '取消钉住' : '钉住'),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (!context.mounted || action == null) return;
+
+    if (action == 'copy') {
+      await _copyMessage(context, message);
+      return;
+    }
+    if (action == 'edit') {
+      widget.onEdit?.call();
+      return;
+    }
+    if (action == 'pin') {
+      final target = !message.pinned;
+      widget.onTogglePin?.call(target);
+      if (context.mounted) {
+        showAppToast(context, target ? '已钉住，所在轮不参与压缩' : '已取消钉住');
+      }
+    }
+  }
+
   /// 助手消息长按菜单：锚点式（微信/桌面右键菜单风格，与长按会话卡片
   /// 菜单同形态）——复制全文 / 选择文字 / 钉住 / 导出为文档
   ///
@@ -414,14 +511,15 @@ class _MessageBubbleState extends State<MessageBubble> {
     final overlay =
         Overlay.of(context).context.findRenderObject() as RenderBox;
     final box = overlay.size;
-    // 菜单估算尺寸：4 项（44 高）+ divider ≈ 194 高，宽约 170
+    // 菜单估算尺寸：5 项（44 高）+ divider ≈ 238 高，宽约 170
     const menuWidth = 170.0;
-    const menuHeight = 194.0;
+    const menuHeight = 238.0;
     var left = pressPosition.dx;
     var top = pressPosition.dy;
     if (left + menuWidth > box.width) left = box.width - menuWidth - 8;
     if (top + menuHeight > box.height) top = box.height - menuHeight - 8;
     final canPin = widget.onTogglePin != null;
+    final canQuote = widget.onQuote != null && !widget.isStreaming;
     final action = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -451,6 +549,18 @@ class _MessageBubbleState extends State<MessageBubble> {
             ],
           ),
         ),
+        if (canQuote)
+          const PopupMenuItem(
+            value: 'quote',
+            height: 44,
+            child: Row(
+              children: [
+                Icon(Icons.format_quote_outlined, size: 20),
+                SizedBox(width: 12),
+                Text('引用'),
+              ],
+            ),
+          ),
         if (canPin)
           PopupMenuItem(
             value: 'pin',
@@ -500,6 +610,11 @@ class _MessageBubbleState extends State<MessageBubble> {
     if (action == 'select') {
       // 豆包式选择：正文包 SelectionArea（Markdown 渲染不变，不弹层）
       if (mounted) setState(() => _selecting = true);
+      return;
+    }
+
+    if (action == 'quote') {
+      widget.onQuote?.call();
       return;
     }
 
