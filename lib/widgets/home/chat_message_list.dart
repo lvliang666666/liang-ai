@@ -16,7 +16,7 @@ import '../message_bubble.dart';
 ///
 /// I1 流式智能跟随：
 /// - 用户手指触摸列表（拖拽中）→ 暂停自动跟随，流式新内容不再拽回底部
-/// - 用户滚离底部 → 右下角浮出「↓ 回到最新」胶囊（含未读条数）
+/// - 用户滚离底部 → 右下角浮出「↓ 回到最新」胶囊
 /// - 点胶囊平滑滚回底部并恢复跟随；手动滚回底部同样恢复跟随
 class ChatMessageList extends StatefulWidget {
   const ChatMessageList({
@@ -64,9 +64,6 @@ class ChatMessageListState extends State<ChatMessageList> {
   /// 距底部多少像素内算「在底部」（reverse 列表 offset 0 = 底部）
   static const double _bottomThreshold = 60;
 
-  /// 距底部还有多少条未读（胶囊 +N 显示用；0 = 在底部）
-  int _unreadCount = 0;
-
   @override
   void initState() {
     super.initState();
@@ -87,7 +84,6 @@ class ChatMessageListState extends State<ChatMessageList> {
     if (atBottom != _following) {
       setState(() {
         _following = atBottom;
-        if (atBottom) _unreadCount = 0;
       });
     }
   }
@@ -112,32 +108,6 @@ class ChatMessageListState extends State<ChatMessageList> {
         _scrollController.jumpTo(0);
       }
     }
-    // 非跟随态：统计距底部的未读条数（胶囊 +N）。
-    // build 期间不能 setState——变化延迟到帧末提交
-    if (!_following) {
-      _updateUnreadCount();
-    }
-  }
-
-  /// 非跟随态下计算「回到最新」胶囊的未读条数：
-  /// 按 offset 与平均行高估算，避免逐条布局测量。
-  /// build 期间调用：只改字段，需要上屏的变化走 post-frame setState
-  void _updateUnreadCount() {
-    if (!_scrollController.hasClients) return;
-    final total = widget.chat.displayMessages.length;
-    if (total == 0) return;
-    // reverse 列表：offset = 距底部滚出的像素。每条按 72px 粗估
-    //（气泡+间距），只用于胶囊提示，不要求精确
-    final hiddenPx = _scrollController.offset;
-    const avgItem = 72.0;
-    final hidden = (hiddenPx / avgItem).round();
-    final unread = hidden.clamp(0, total);
-    if (unread != _unreadCount) {
-      _unreadCount = unread;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() {});
-      });
-    }
   }
 
   /// 点「回到最新」胶囊：平滑滚回底部并恢复跟随
@@ -146,7 +116,6 @@ class ChatMessageListState extends State<ChatMessageList> {
     Haptics.light();
     setState(() {
       _following = true;
-      _unreadCount = 0;
     });
     await _scrollController.animateTo(
       0,
@@ -234,7 +203,6 @@ class ChatMessageListState extends State<ChatMessageList> {
                               !_following) {
                             setState(() {
                               _following = true;
-                              _unreadCount = 0;
                             });
                           }
                         }
@@ -295,7 +263,6 @@ class ChatMessageListState extends State<ChatMessageList> {
                         right: 16,
                         bottom: 12,
                         child: _BackToLatestButton(
-                          unread: _unreadCount,
                           isStreaming: widget.chat.isStreaming,
                           onTap: scrollToBottom,
                         ),
@@ -328,13 +295,10 @@ class ChatMessageListState extends State<ChatMessageList> {
 /// 「↓ 回到最新」胶囊按钮：非跟随态浮出，流式时带呼吸点提示仍在生成
 class _BackToLatestButton extends StatelessWidget {
   const _BackToLatestButton({
-    required this.unread,
     required this.isStreaming,
     required this.onTap,
   });
 
-  /// 距底部未读条数（0 不显示 +N）
-  final int unread;
   final bool isStreaming;
   final VoidCallback onTap;
 
@@ -358,7 +322,7 @@ class _BackToLatestButton extends StatelessWidget {
                   size: 16, color: theme.colorScheme.primary),
               const SizedBox(width: 4),
               Text(
-                unread > 0 ? '回到最新（+$unread）' : '回到最新',
+                '回到最新',
                 style: theme.textTheme.labelMedium
                     ?.copyWith(color: theme.colorScheme.onSurface),
               ),
