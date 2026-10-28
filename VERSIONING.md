@@ -8,7 +8,18 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.11.3**（2026-10-28 发布）
+**当前版本：v2.12.0**（2026-10-28 发布）
+
+v2.12.0 在 v2.11.3 基础上新增（feat/generation-status 分支，roadmap I10 → MINOR）：
+
+- **动态思考计时**：ThinkingBlock 流式中内部 1s Timer 驱动「已思考 Ns」实时增长（思考静默期 provider 无事件，组件自计时保证不冻结）；完成态「已深度思考（用时 N 秒）」不变；流式→完成 Timer 停止
+- **token/耗时角标**：assistant 气泡尾部小字「120 / 45 token · 8s」（k 缩写千级格式化）；老数据（null）不显示对应段，两段全缺整行不渲染；流式中不显示（收尾后才有准确值）
+- **断流续传**：SSE 流未收到 [DONE] 即断 → 新增 SseInterrupted 事件（不再伪装 SseDone 掩盖截断）→ ChatProvider 落库部分内容 + lastRoundInterrupted；最后一条 assistant 气泡尾部「连接中断 · 点击续传」胶囊（onResume null 不显示、流式中不显示）；点击删除截断消息后复用原 user 消息重新发起（SSE 无法断点续传，语义为重跑最后一轮）
+- **DB v14**：messages 加 thinking_seconds / generation_seconds 两列（onCreate + v13→v14 ALTER）
+- **修复既有订阅泄漏**：finisher 在事件回调内置空 _subscription 导致 loop 的 cancel(null) no-op，广播流双消费（续传后内容翻倍）；现仅 loop 持有/取消订阅
+- 684 项测试全绿（新增 21：provider 7 + UI 14）；flutter analyze 零 error/warning（51 条 info）
+
+### v2.11.3（2026-10-28）
 
 v2.11.3 在 v2.11.2 基础上修复（用户验收反馈 → PATCH）：
 
