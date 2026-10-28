@@ -455,31 +455,8 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
       return ListView(
         padding: const EdgeInsets.symmetric(vertical: 4),
         children: [
-          // ===== FTS 正文命中 =====
-          if (_messageHits.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text('消息内容',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant)),
-            ),
-            for (final hit in _messageHits)
-              _MessageHitTile(
-                hit: hit,
-                sessionTitle: widget.sessions
-                        .where((s) => s.id == hit.sessionId)
-                        .firstOrNull
-                        ?.title ??
-                    '已删除的会话',
-                query: _query.trim(),
-                snippet: _snippet(hit, _query.trim()),
-                onTap: () {
-                  Haptics.light();
-                  widget.onOpenMessage(hit, _query.trim());
-                },
-              ),
-          ],
-          // ===== 会话标题命中 =====
+          // ===== 会话标题命中（置顶：会话少，搜会话不该滚过一堆消息；
+          // 用户定版 2026-10-28——原顺序消息组在上，搜会话要往下滑很烦）=====
           if (sessionHits.isNotEmpty) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
@@ -507,6 +484,30 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
                 onTap: () {
                   Haptics.light();
                   widget.onOpenChat(s.id);
+                },
+              ),
+          ],
+          // ===== FTS 正文命中 =====
+          if (_messageHits.isNotEmpty) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Text('消息内容',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant)),
+            ),
+            for (final hit in _messageHits)
+              _MessageHitTile(
+                hit: hit,
+                sessionTitle: widget.sessions
+                        .where((s) => s.id == hit.sessionId)
+                        .firstOrNull
+                        ?.title ??
+                    '已删除的会话',
+                query: _query.trim(),
+                snippet: _snippet(hit, _query.trim()),
+                onTap: () {
+                  Haptics.light();
+                  widget.onOpenMessage(hit, _query.trim());
                 },
               ),
           ],

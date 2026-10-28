@@ -14,7 +14,8 @@ import 'helpers/test_db.dart';
 /// I7 全文搜索 UI 测试：抽屉搜索接 FTS（防抖 → 命中列表 → 跳转回调）
 ///
 /// 核心行为：
-/// - 搜索态输入 ≥2 字：FTS 命中消息以「会话名 + 缩略」展示在会话结果上方
+/// - 搜索态输入 ≥2 字：FTS 命中消息以「会话名 + 缩略」展示在会话结果下方
+///   （会话组置顶——会话少，搜会话不该滚过一堆消息；用户定版 2026-10-28）
 /// - 命中词在缩略中高亮（TextSpan 主色加粗）
 /// - 单字走 LIKE 兜底同样出结果
 /// - 点命中项回调 onOpenMessage（宿主负责切会话 + 定位高亮）
@@ -178,6 +179,24 @@ void main() {
 
       expect(find.text('消息内容'), findsOneWidget);
       expect(find.text('会话'), findsOneWidget);
+    });
+
+    testWidgets('分组顺序：会话组在消息内容组之上（用户定版）', (tester) async {
+      await tester.runAsync(() async {
+        await db.insertSession(session('s1', '报销讨论'));
+        await db.insertMessage(msg('m1', 's1', '报销流程怎么走'));
+      });
+      await pumpPanel(tester, sessions: [session('s1', '报销讨论')]);
+
+      await search(tester, '报销');
+
+      // 会话少消息多：会话组置顶，消息组在下（搜会话不用滚过一堆消息）
+      final sessionGroupY =
+          tester.getTopLeft(find.text('会话')).dy;
+      final messageGroupY =
+          tester.getTopLeft(find.text('消息内容')).dy;
+      expect(sessionGroupY, lessThan(messageGroupY),
+          reason: '会话组应排在消息内容组上方');
     });
 
     testWidgets('无命中：显示「没有找到」', (tester) async {
