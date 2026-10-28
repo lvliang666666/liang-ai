@@ -273,9 +273,14 @@ class ChatProvider extends ChangeNotifier {
     await _refreshMemoryText();
 
     // 4. 启动 agentic loop（fire-and-forget：sendMessage 立即返回，
-    // loop 在后台推进，与旧版「启动流即返回」语义一致）
+    // loop 在后台推进，与旧版「启动流即返回」语义一致）。
+    // loop 后台推进期间宿主可能已 dispose（切会话/测试 tearDown 关库），
+    // 后续落库会抛 database_closed——吞掉即可：dispose 后 UI 已不订阅，
+    // 消息数据以已落库部分为准，索引/续轮丢失无碍。
     _toolResults = [];
-    unawaited(_runLoop());
+    unawaited(_runLoop().catchError((Object e) {
+      debugPrint('ChatProvider loop 后台异常（已忽略）：$e');
+    }));
   }
 
   /// F2 分层上下文压缩：水位检查 → 触发摘要生成 → 更新注入状态

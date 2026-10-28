@@ -55,6 +55,10 @@ Future<void> main() async {
   // v2.3.7 及之前版本的 DB 明文 Key → 安全存储（幂等；无明文时零操作）
   await db.migrateKeysToBridge();
 
+  // F1 FTS 检索底座：存量消息补索引（幂等——索引表空才重建，
+  // 老库升级后首次启动跑一次，之后零操作）
+  await db.rebuildFtsIndexIfEmpty();
+
   runApp(AiChatApp(settings: settings));
 }
 

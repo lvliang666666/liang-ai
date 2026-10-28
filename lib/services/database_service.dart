@@ -10,6 +10,7 @@ import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
 import '../models/skill.dart';
+import 'fts_service.dart';
 import 'secure_key_store.dart';
 
 /// 本地数据库服务：sessions / messages / skills / providers / memories /
@@ -21,13 +22,19 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 12;
+  static const int dbVersion = 13;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
   static SecureKeyBridge? keyBridge;
 
   Database? _db;
+
+  /// FTS 检索服务（F1）：懒创建，随 instance 生命周期。
+  /// 消息 CRUD 三路径经此同步索引（应用层同步，见 FtsService 注释）
+  FtsService? _fts;
+
+  FtsService get fts => _fts ??= FtsService(this);
 
   Future<Database> get database async {
     _db ??= await _open();
@@ -98,6 +105,7 @@ class DatabaseService {
     await _createMemoriesTable(db);
     await _createHttpToolsTable(db);
     await _createContextSummariesTable(db);
+    await _createFtsTables(db);
   }
 
   /// 版本迁移：老用户数据无损升级
@@ -187,6 +195,33 @@ class DatabaseService {
       await db.execute(
           'ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0');
     }
+    if (oldVersion < 13 && newVersion >= 13) {
+      // v12 → v13：FTS5 检索底座（F1）——消息全文搜索索引表
+      //（bigram 自管索引，应用层同步；存量消息由 FtsService.rebuildIndex
+      // 在启动时补齐——迁移只建表，重建是数据操作放服务层）
+      await _createFtsTables(db);
+    }
+  }
+
+  /// FTS5 检索底座表（F1）：bigram 自管索引
+  ///
+  /// - messages_fts：FTS5 虚表，content 列存 bigram 变形文本
+  ///   （unicode61 按空格分词；中文原文切 2-gram 空格连接）
+  /// - messages_fts_rowid：messages.id(TEXT 主键) ↔ FTS rowid 映射
+  ///
+  /// 索引同步在应用层（FtsService）——触发器内无法调用 Dart bigram
+  /// 函数，且变形文本必须与查询词切分规则一致。
+  static Future<void> _createFtsTables(Database db) async {
+    await db.execute(
+      "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
+      "content, tokenize='unicode61 remove_diacritics 2')",
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS messages_fts_rowid (
+        id TEXT PRIMARY KEY,
+        rowid INTEGER NOT NULL UNIQUE
+      )
+    ''');
   }
 
   static Future<void> _createAgentsTable(Database db) async {
@@ -373,6 +408,8 @@ class DatabaseService {
   /// 删除会话及其全部消息
   Future<void> deleteSession(String id) async {
     final db = await database;
+    // F1：先同步删该会话全部消息的 FTS 索引（事务删表后查不到归属了）
+    await fts.removeSession(id);
     await db.transaction((txn) async {
       await txn.delete('messages', where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('context_summaries',
@@ -383,10 +420,33 @@ class DatabaseService {
 
   // ===== Messages =====
 
+  /// F1：存量消息补 FTS 索引（启动时调用，幂等）
+  ///
+  /// 索引表空才重建——老库升级 v13 后首次启动跑一次（千级消息毫秒级），
+  /// 之后每次启动零操作。新消息走 CRUD 三路径实时同步，不经过这里。
+  /// 启动路径 best-effort：重建失败不阻塞 App 启动（索引可下次再补）。
+  Future<void> rebuildFtsIndexIfEmpty() async {
+    try {
+      final db = await database;
+      final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM messages_fts');
+      final count = rows.first['c'] as int;
+      if (count > 0) return;
+      await fts.rebuildIndex();
+    } catch (e) {
+      assert(() {
+        // ignore: avoid_print
+        print('rebuildFtsIndexIfEmpty 失败（下次启动重试）：$e');
+        return true;
+      }());
+    }
+  }
+
   Future<void> insertMessage(ChatMessage message) async {
     final db = await database;
     await db.insert('messages', message.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
+    // F1：同步 FTS 索引（流式消息逐次 update 也会走到 updateMessageContent）
+    await fts.indexMessage(message);
   }
 
   /// 按时间正序的会话消息
@@ -409,11 +469,21 @@ class DatabaseService {
     if (reasoning != null) map['reasoning'] = reasoning;
     if (map.isEmpty) return;
     await db.update('messages', map, where: 'id = ?', whereArgs: [id]);
+    // F1：内容变了同步 FTS 索引（流式打字机每轮 update，索引随最新内容）
+    if (content != null) {
+      final rows =
+          await db.query('messages', where: 'id = ?', whereArgs: [id]);
+      if (rows.isNotEmpty) {
+        await fts.indexMessage(ChatMessage.fromMap(rows.first));
+      }
+    }
   }
 
   Future<void> deleteMessage(String id) async {
     final db = await database;
     await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+    // F1：同步删索引
+    await fts.removeMessage(id);
   }
 
   /// 截断删除：删除 [messageId] 及其后全部消息（I4 编辑重发）
@@ -422,12 +492,21 @@ class DatabaseService {
   /// 编辑重发 = 删掉原 user 消息及其后所有回复，再以新文本重新发送。
   Future<void> deleteMessagesFrom(String messageId, int createdAt) async {
     final db = await database;
+    // F1：先取被删消息 id 同步删索引（删除后查不到了）
+    final doomed = await db.rawQuery('''
+      SELECT id FROM messages
+      WHERE session_id = (SELECT session_id FROM messages WHERE id = ?)
+        AND (created_at > ? OR (created_at = ? AND id >= ?))
+    ''', [messageId, createdAt, createdAt, messageId]);
     await db.delete(
       'messages',
       where: 'session_id = (SELECT session_id FROM messages WHERE id = ?) '
           'AND (created_at > ? OR (created_at = ? AND id >= ?))',
       whereArgs: [messageId, createdAt, createdAt, messageId],
     );
+    for (final row in doomed) {
+      await fts.removeMessage(row['id'] as String);
+    }
   }
 
   /// 设置消息钉住状态（F2：钉住消息所在轮永不压缩）
@@ -807,5 +886,8 @@ class DatabaseService {
   Future<void> close() async {
     await _db?.close();
     _db = null;
+    // F1：FTS 服务随库关闭重置（测试每用例 initForTest 换新库，
+    // 旧 fts 实例持有已关闭库的引用会炸 database_closed）
+    _fts = null;
   }
 }
