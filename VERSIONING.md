@@ -8,7 +8,14 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.11.0**（2026-10-28 发布）
+**当前版本：v2.11.1**（2026-10-28 发布）
+
+v2.11.1 在 v2.11.0 基础上修复（真机白屏事故 → PATCH）：
+
+- **FTS5 可用性探测 + 优雅降级**：v2.11.0 真机白屏根因——Android 系统 SQLite 编译旗标只有 ENABLE_FTS3/FTS4 **没有 ENABLE_FTS5**（AOSP 源码取证），sqflite 真机用系统 SQLite，DB v13 迁移建 FTS5 虚表必抛 "no such module: fts5" → 迁移失败 → main() 挂死白屏。模拟器/桌面测试用 ffi 自带 SQLite（全模块编译）测不出该差异。修复：启动迁移先在临时探测表试建 FTS5，失败置 ftsAvailable=false 跳过建表——消息 CRUD 索引同步跳过、搜索全量走 LIKE 兜底（个人规模毫秒级，功能完整只是无索引加速），App 任何真机都能启动
+- 658 项测试全绿（新增 4 降级用例）；flutter analyze 零 error/warning（51 条 info）
+
+### v2.11.0（2026-10-28）
 
 v2.11.0 在 v2.10.1 基础上新增（feat/fts-search 分支，roadmap F1+I7 → MINOR）：
 
