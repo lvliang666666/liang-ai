@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.10.1**（2026-10-27 发布）
+**当前版本：v2.11.0**（2026-10-28 发布）
+
+v2.11.0 在 v2.10.1 基础上新增（feat/fts-search 分支，roadmap F1+I7 → MINOR）：
+
+- **F1 本地 FTS5 检索底座**（基建型投资）：SQLite FTS5 虚表 + 中文二元分词（bigram）——应用层把文本切成 2-gram 存入 unicode61 虚表，查询同法切分 AND 连接；单字查询走 LIKE 兜底；messages_fts_rowid 映射表维护 FTS rowid ↔ 消息 id；插入/更新/删除三路径触发器 + best-effort `_guarded` 同步（索引失败不阻塞主流程）；DB v13 无损迁移（存量消息首次搜索时懒建索引）
+- **I7 全文搜索定位**（收尾）：抽屉搜索框接 FTS（300ms 防抖 → top20），「消息内容」命中组（会话名 + ±24 字缩略，命中词主色 TextSpan 加粗）置于「会话」标题命中组之上；点命中项 → 关抽屉 → 切会话（如需）→ `scrollToMessage` 定位（GlobalKey + ensureVisible，未构建消息按 listIndex 估算 jumpTo 后二次 ensureVisible）→ 气泡高亮 2s 渐隐（user 描边+光晕 / assistant 主色底+描边）；定位即暂停跟随，新消息不拽回底部
+- 654 项测试全绿（新增 17：FTS 分词/索引同步/查询 11 + 抽屉搜索 UI 11 中 FTS 相关 + 定位 6）；flutter analyze 零 error/warning（51 条 info）
+
+### v2.10.1（2026-10-27）
 
 v2.10.1 在 v2.10.0 基础上修复（用户验收反馈 → PATCH）：
 
