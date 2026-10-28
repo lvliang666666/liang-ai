@@ -8,7 +8,14 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.11.2**（2026-10-28 发布）
+**当前版本：v2.11.3**（2026-10-28 发布）
+
+v2.11.3 在 v2.11.2 基础上修复（用户验收反馈 → PATCH）：
+
+- **已 v13 库无 FTS 表时搜索静默失效**：v2.11.1 在无 FTS5 模块的真机上建出 v13 库（迁移探测失败 → FTS 表被跳过），装 v2.11.2 不再触发 onUpgrade → 探测只在迁移链里跑 → ftsAvailable 恒 null → ftsOrNull 误判可用 → MATCH 炸 "no such table: messages_fts" → 抽屉 catch 吞掉 → 搜索永远「没有找到」。修复两层：`_open` 打开已有库后 flag 仍 null 时补一次探测（覆盖已 v13 库升级路径）；`FtsService.searchMessages` FTS 路径捕获 no-such-table 降级 LIKE（纵深防御）
+- 663 项测试全绿（新增 4 回归用例）；flutter analyze 零 error/warning（51 条 info）
+
+### v2.11.2（2026-10-28）
 
 v2.11.2 在 v2.11.1 基础上修复（用户验收反馈 → PATCH）：
 

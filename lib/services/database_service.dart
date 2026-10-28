@@ -34,7 +34,12 @@ class DatabaseService {
   /// （AOSP 编译旗标只有 ENABLE_FTS3/FTS4，v2.11.0 真机白屏根因——
   /// 模拟器/桌面测试用 ffi 自带 SQLite 全模块编译，测不出该差异）。
   /// 不可用时：跳过 FTS 建表与索引同步，搜索全量走 LIKE 兜底。
-  /// null = 未探测；探测在 [_createFtsTables]（onCreate/onUpgrade 必经）。
+  /// null = 未探测。探测点有两处：
+  /// - [_createFtsTables]（onCreate/onUpgrade 必经，建表前先探测）
+  /// - [_open] 打开已有库后（**已在新版本号的库上装旧版 App 的升级路径
+  ///   不触发迁移**——v2.11.1 在无 FTS5 真机上建出 v13 库但表被跳过，
+  ///   装 v2.11.2 不再走 onUpgrade，若只在迁移里探测则 flag 恒 null，
+  ///   ftsOrNull 误判可用 → MATCH 炸 "no such table" → 搜索静默失效）
   static bool? ftsAvailable;
 
   /// FTS 检索服务（F1）：懒创建，随 instance 生命周期。
@@ -58,12 +63,33 @@ class DatabaseService {
 
   Future<Database> _open() async {
     final dir = await getDatabasesPath();
-    return openDatabase(
+    final db = await openDatabase(
       p.join(dir, _dbName),
       version: dbVersion,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
+    // 已是当前版本的库不触发 onCreate/onUpgrade → 探测没跑过（flag 仍
+    // null）。补一次探测：库在旧版 App 时代建出（FTS 表可能被跳过），
+    // 不探测则 ftsOrNull 误判可用，搜索 MATCH 炸 "no such table"。
+    if (ftsAvailable == null) {
+      await _probeFtsAvailable(db);
+    }
+    return db;
+  }
+
+  /// FTS5 可用性探测（临时虚表试建即删，不污染正式表）。
+  /// 失败置 [ftsAvailable]=false——调用方跳过建表/索引同步，搜索走 LIKE。
+  static Future<void> _probeFtsAvailable(Database db) async {
+    try {
+      await db.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(content)",
+      );
+      await db.execute('DROP TABLE IF EXISTS _fts5_probe');
+      ftsAvailable = true;
+    } catch (_) {
+      ftsAvailable = false;
+    }
   }
 
   /// 建表入口（公开给测试 fixture：测试库直接跑生产建表逻辑，
@@ -230,14 +256,8 @@ class DatabaseService {
   /// App 任何真机都能启动。
   static Future<void> _createFtsTables(Database db) async {
     // 探测：临时虚表试建即删（不污染正式表；失败说明模块缺失）
-    try {
-      await db.execute(
-        "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(content)",
-      );
-      await db.execute('DROP TABLE IF EXISTS _fts5_probe');
-      ftsAvailable = true;
-    } catch (_) {
-      ftsAvailable = false;
+    await _probeFtsAvailable(db);
+    if (ftsAvailable != true) {
       return; // 跳过建表：messages_fts 不存在，搜索走 LIKE 兜底
     }
     await db.execute(

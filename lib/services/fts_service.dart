@@ -153,18 +153,39 @@ class FtsService {
       args.add(match);
       if (sessionId != null) args.add(sessionId);
       args.add(limit);
-      final rows = await db.rawQuery('''
+      try {
+        final rows = await db.rawQuery('''
         SELECT m.* FROM messages_fts f
         JOIN messages m ON m.id = (SELECT id FROM messages_fts_rowid WHERE rowid = f.rowid)
         WHERE messages_fts MATCH ? $sessionFilter
         ORDER BY m.created_at DESC
         LIMIT ?
       ''', args);
-      return rows.map(ChatMessage.fromMap).toList();
+        return rows.map(ChatMessage.fromMap).toList();
+      } on DatabaseException catch (e) {
+        // 纵深防御：库在旧版 App 时代建出且 FTS 表被跳过（真机无 FTS5
+        // 模块），升级后未再触发迁移 → messages_fts 不存在。探测兜底
+        // （_open）正常会先置 ftsAvailable=false，这里兜探测之外的
+        // 一切漏网（如直接注入的测试库），降级 LIKE 而不是把异常抛给
+        // UI 层（抽屉 catch 吞掉 = 「没有找到」假象，搜索静默失效）。
+        if (!e.isNoSuchTableError()) rethrow;
+        return _likeFallback(q, sessionId: sessionId, limit: limit);
+      }
     }
 
     // 单字 LIKE 兜底
-    args.add('%$q%');
+    return _likeFallback(q, sessionId: sessionId, limit: limit);
+  }
+
+  /// LIKE 兜底查询（单字路径 + FTS 表缺失降级共用）
+  Future<List<ChatMessage>> _likeFallback(
+    String q, {
+    String? sessionId,
+    required int limit,
+  }) async {
+    final db = await _db.database;
+    final sessionFilter = sessionId != null ? 'AND session_id = ?' : '';
+    final args = <Object?>['%$q%'];
     if (sessionId != null) args.add(sessionId);
     args.add(limit);
     final rows = await db.rawQuery('''
