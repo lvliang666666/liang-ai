@@ -144,8 +144,11 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
     _debounce = Timer(const Duration(milliseconds: 300), () async {
       setState(() => _searchingMessages = true);
       try {
-        final hits = await DatabaseService.instance.fts
-            .searchMessages(q, limit: 20);
+        // FTS5 不可用的真机（系统 SQLite 无该模块）：ftsOrNull 为 null，
+        // searchMessagesLike 全量 LIKE 兜底（功能降级不崩溃）
+        final hits = await DatabaseService.instance.ftsOrNull
+                ?.searchMessages(q, limit: 20) ??
+            await DatabaseService.instance.searchMessagesLike(q, limit: 20);
         if (!mounted) return;
         setState(() {
           _messageHits = hits;

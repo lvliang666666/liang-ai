@@ -30,11 +30,21 @@ class DatabaseService {
 
   Database? _db;
 
+  /// FTS5 可用性（启动时探测）。**Android 系统 SQLite 不带 FTS5 模块**
+  /// （AOSP 编译旗标只有 ENABLE_FTS3/FTS4，v2.11.0 真机白屏根因——
+  /// 模拟器/桌面测试用 ffi 自带 SQLite 全模块编译，测不出该差异）。
+  /// 不可用时：跳过 FTS 建表与索引同步，搜索全量走 LIKE 兜底。
+  /// null = 未探测；探测在 [_createFtsTables]（onCreate/onUpgrade 必经）。
+  static bool? ftsAvailable;
+
   /// FTS 检索服务（F1）：懒创建，随 instance 生命周期。
   /// 消息 CRUD 三路径经此同步索引（应用层同步，见 FtsService 注释）
   FtsService? _fts;
 
-  FtsService get fts => _fts ??= FtsService(this);
+  /// FTS 服务（FTS5 不可用时返回 null——调用方跳过索引同步，
+  /// 搜索侧走 LIKE 兜底，功能降级但零崩溃）
+  FtsService? get ftsOrNull =>
+      (ftsAvailable ?? true) ? (_fts ??= FtsService(this)) : null;
 
   Future<Database> get database async {
     _db ??= await _open();
@@ -211,7 +221,25 @@ class DatabaseService {
   ///
   /// 索引同步在应用层（FtsService）——触发器内无法调用 Dart bigram
   /// 函数，且变形文本必须与查询词切分规则一致。
+  ///
+  /// **FTS5 可用性探测（v2.11.0 真机白屏修复）**：Android 系统 SQLite
+  /// 不带 FTS5 模块（AOSP 旗标只有 ENABLE_FTS3/FTS4），CREATE VIRTUAL
+  /// TABLE 直接炸 "no such module: fts5" → openDatabase 迁移失败 →
+  /// main() await db.database 挂死 → 白屏。先在临时探测表上试建，
+  /// 失败置 [ftsAvailable]=false 跳过建表——搜索降级 LIKE 兜底，
+  /// App 任何真机都能启动。
   static Future<void> _createFtsTables(Database db) async {
+    // 探测：临时虚表试建即删（不污染正式表；失败说明模块缺失）
+    try {
+      await db.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS _fts5_probe USING fts5(content)",
+      );
+      await db.execute('DROP TABLE IF EXISTS _fts5_probe');
+      ftsAvailable = true;
+    } catch (_) {
+      ftsAvailable = false;
+      return; // 跳过建表：messages_fts 不存在，搜索走 LIKE 兜底
+    }
     await db.execute(
       "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5("
       "content, tokenize='unicode61 remove_diacritics 2')",
@@ -409,7 +437,7 @@ class DatabaseService {
   Future<void> deleteSession(String id) async {
     final db = await database;
     // F1：先同步删该会话全部消息的 FTS 索引（事务删表后查不到归属了）
-    await fts.removeSession(id);
+    await ftsOrNull?.removeSession(id);
     await db.transaction((txn) async {
       await txn.delete('messages', where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('context_summaries',
@@ -427,11 +455,13 @@ class DatabaseService {
   /// 启动路径 best-effort：重建失败不阻塞 App 启动（索引可下次再补）。
   Future<void> rebuildFtsIndexIfEmpty() async {
     try {
+      // FTS5 不可用（真机系统 SQLite 无该模块）：无索引可建，直接跳过
+      if (ftsAvailable == false) return;
       final db = await database;
       final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM messages_fts');
       final count = rows.first['c'] as int;
       if (count > 0) return;
-      await fts.rebuildIndex();
+      await ftsOrNull?.rebuildIndex();
     } catch (e) {
       assert(() {
         // ignore: avoid_print
@@ -446,7 +476,30 @@ class DatabaseService {
     await db.insert('messages', message.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
     // F1：同步 FTS 索引（流式消息逐次 update 也会走到 updateMessageContent）
-    await fts.indexMessage(message);
+    await ftsOrNull?.indexMessage(message);
+  }
+
+  /// 全文搜索 LIKE 兜底（F1 降级路径：FTS5 不可用的真机）
+  ///
+  /// 子串匹配（content LIKE %q%），按时间倒序。个人规模（千级消息）
+  /// 全表扫描毫秒级，功能完整只是无索引加速。
+  Future<List<ChatMessage>> searchMessagesLike(String query,
+      {String? sessionId, int limit = 50}) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    final db = await database;
+    final rows = await db.query(
+      'messages',
+      where: sessionId != null
+          ? 'content LIKE ? AND session_id = ?'
+          : 'content LIKE ?',
+      whereArgs: sessionId != null
+          ? ['%$q%', sessionId]
+          : ['%$q%'],
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
+    return rows.map(ChatMessage.fromMap).toList();
   }
 
   /// 按时间正序的会话消息
@@ -474,7 +527,7 @@ class DatabaseService {
       final rows =
           await db.query('messages', where: 'id = ?', whereArgs: [id]);
       if (rows.isNotEmpty) {
-        await fts.indexMessage(ChatMessage.fromMap(rows.first));
+        await ftsOrNull?.indexMessage(ChatMessage.fromMap(rows.first));
       }
     }
   }
@@ -483,7 +536,7 @@ class DatabaseService {
     final db = await database;
     await db.delete('messages', where: 'id = ?', whereArgs: [id]);
     // F1：同步删索引
-    await fts.removeMessage(id);
+    await ftsOrNull?.removeMessage(id);
   }
 
   /// 截断删除：删除 [messageId] 及其后全部消息（I4 编辑重发）
@@ -505,7 +558,7 @@ class DatabaseService {
       whereArgs: [messageId, createdAt, createdAt, messageId],
     );
     for (final row in doomed) {
-      await fts.removeMessage(row['id'] as String);
+      await ftsOrNull?.removeMessage(row['id'] as String);
     }
   }
 
@@ -889,5 +942,7 @@ class DatabaseService {
     // F1：FTS 服务随库关闭重置（测试每用例 initForTest 换新库，
     // 旧 fts 实例持有已关闭库的引用会炸 database_closed）
     _fts = null;
+    // 探测结果随库重置（下个库重新探测；测试每用例换库必须重跑）
+    ftsAvailable = null;
   }
 }

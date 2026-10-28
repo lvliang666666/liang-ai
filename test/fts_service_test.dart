@@ -23,7 +23,7 @@ void main() {
     final inMemory = await openTestDb();
     db = DatabaseService.instance;
     await db.initForTest(inMemory);
-    fts = db.fts;
+    fts = db.ftsOrNull!;
   });
 
   tearDown(() async {
@@ -261,9 +261,66 @@ void main() {
       final svc = DatabaseService.instance;
       await svc.initForTest(dbFile);
       await svc.rebuildFtsIndexIfEmpty();
-      final hits = await svc.fts.searchMessages('可搜索');
+      final hits = await svc.ftsOrNull!.searchMessages('可搜索');
       expect(hits, hasLength(1));
       await svc.close();
+    });
+  });
+
+  group('FTS5 不可用降级（v2.11.0 真机白屏修复）', () {
+    test('ftsAvailable=false：ftsOrNull 为 null，CRUD 不炸', () async {
+      // 模拟真机系统 SQLite 无 FTS5 模块（探测失败态）
+      DatabaseService.ftsAvailable = false;
+      addTearDown(() => DatabaseService.ftsAvailable = null);
+
+      // 消息 CRUD 三路径正常（索引同步被跳过）
+      await db.insertMessage(msg('m1', '今天讨论了报销流程'));
+      await db.updateMessageContent('m1', content: '改后的内容');
+      await db.deleteMessage('m1');
+      expect(db.ftsOrNull, isNull, reason: 'FTS5 不可用时服务不创建');
+    });
+
+    test('LIKE 兜底搜索：多字查询同样命中', () async {
+      DatabaseService.ftsAvailable = false;
+      addTearDown(() => DatabaseService.ftsAvailable = null);
+
+      await db.insertMessage(msg('m1', '今天讨论了报销流程'));
+      await db.insertMessage(msg('m2', '明天去公园玩', sessionId: 's2'));
+
+      // 多字查询走 LIKE 兜底（正常走 FTS 的路径也降级）
+      final hits = await db.searchMessagesLike('报销');
+      expect(hits, hasLength(1));
+      expect(hits.first.id, 'm1');
+
+      // 会话过滤
+      final scoped = await db.searchMessagesLike('玩', sessionId: 's2');
+      expect(scoped, hasLength(1));
+      expect(scoped.first.id, 'm2');
+
+      // 无命中
+      expect(await db.searchMessagesLike('不存在的词'), isEmpty);
+      // 空查询
+      expect(await db.searchMessagesLike('  '), isEmpty);
+    });
+
+    test('抽屉搜索降级路径：ftsOrNull null 时走 LIKE', () async {
+      DatabaseService.ftsAvailable = false;
+      addTearDown(() => DatabaseService.ftsAvailable = null);
+
+      await db.insertMessage(msg('m1', '今天讨论了报销流程'));
+      // 模拟 session_drawer_panel 的降级表达式
+      final hits = await DatabaseService.instance.ftsOrNull
+              ?.searchMessages('报销', limit: 20) ??
+          await db.searchMessagesLike('报销', limit: 20);
+      expect(hits, hasLength(1));
+      expect(hits.first.id, 'm1');
+    });
+
+    test('close 后探测状态重置（下个库重新探测）', () async {
+      DatabaseService.ftsAvailable = false;
+      await db.close();
+      expect(DatabaseService.ftsAvailable, isNull,
+          reason: '探测结果随库关闭重置');
     });
   });
 }
