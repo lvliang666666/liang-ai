@@ -233,7 +233,10 @@ void main() {
           'context_summaries',
         ]),
       );
-      expect(tables.length, 7); // agents 表应已在 v6 迁移中删除
+      // v13 起新增 FTS5 虚表 + 影子表（_data/_idx/_content/_docsize/_config）
+      // + rowid 映射表：7 业务表 + 8 FTS 相关 = 15？实际 14（虚表 1 +
+      // 影子 5 + 映射 1 = 7，7+7=14）
+      expect(tables.length, 14); // agents 表应已在 v6 迁移中删除
 
       // 迁移后可正常写入读出（走一遍核心链路）
       await migrated.insert('sessions', {

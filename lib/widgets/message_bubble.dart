@@ -45,6 +45,7 @@ class MessageBubble extends StatefulWidget {
     this.thinkingSeconds = 0,
     this.toolResults = const [],
     this.toolExecuting = false,
+    this.highlight = false,
     this.onTogglePin,
     this.onEdit,
     this.onQuote,
@@ -59,6 +60,11 @@ class MessageBubble extends StatefulWidget {
 
   /// 工具是否正在执行（toolCalling 状态）
   final bool toolExecuting;
+
+  /// I7 搜索定位：命中气泡临时高亮（外层描边 + 底色闪烁，2s 渐隐由
+  /// 宿主 ChatMessageListState 控制）。Markdown 正文不做词级高亮——
+  /// GptMarkdown 无法注入内联样式，气泡级高亮已足够定位
+  final bool highlight;
 
   /// 切换钉住状态（F2：钉住消息所在轮永不压缩进前情摘要）。
   /// null = 无钉住能力（纯展示场景）
@@ -177,6 +183,21 @@ class _MessageBubbleState extends State<MessageBubble> {
             decoration: BoxDecoration(
               color: colorScheme.primary,
               borderRadius: BorderRadius.circular(20),
+              // I7 搜索定位高亮：主色描边 + 外发光圈（用户气泡本身是
+              // 主色底，描边比换底色更醒目且不破坏对比度）
+              border: widget.highlight
+                  ? Border.all(
+                      color: colorScheme.onPrimary, width: 2)
+                  : null,
+              boxShadow: widget.highlight
+                  ? [
+                      BoxShadow(
+                        color: colorScheme.primary.withValues(alpha: 0.55),
+                        blurRadius: 16,
+                        spreadRadius: 2,
+                      ),
+                    ]
+                  : null,
             ),
             // 长按弹锚点菜单（I4：复制/编辑/钉住）。不用 SelectableText——
             // 其内部 TapAndHorizontalDragGestureRecognizer 会抢赢手势
@@ -263,8 +284,15 @@ class _MessageBubbleState extends State<MessageBubble> {
             maxWidth: MediaQuery.widthOf(context) * 0.86,
           ),
           decoration: BoxDecoration(
-            color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
             borderRadius: BorderRadius.circular(20),
+            // I7 搜索定位高亮：主色底闪烁 + 描边（浅灰底气泡换主色底
+            // 最醒目；2s 后宿主清除 highlight 恢复原样）
+            color: widget.highlight
+                ? colorScheme.primaryContainer
+                : colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+            border: widget.highlight
+                ? Border.all(color: colorScheme.primary, width: 1.5)
+                : null,
           ),
           child: GestureDetector(
             behavior: HitTestBehavior.translucent,

@@ -674,6 +674,22 @@ class _HomePageState extends State<HomePage> {
             if (!mounted) return;
             _openChat(id);
           },
+          // I7 全文搜索命中：切到命中会话后滚动定位 + 高亮
+          onOpenMessage: (hit, query) async {
+            await _closeDrawerAndWait();
+            if (!mounted) return;
+            if (_chat?.session.id != hit.sessionId) {
+              await _openChat(hit.sessionId);
+              if (!mounted) return;
+            }
+            // 切会话后列表已就绪（_enterChat 原子替换后才返回）；
+            // 同会话直接定位。等一帧让列表完成首次布局再定位
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              _chatAreaKey.currentState
+                  ?.scrollToMessage(hit.id, highlight: query);
+            });
+          },
           onOpenSettings: () {
             _closeDrawer();
             Haptics.light();
