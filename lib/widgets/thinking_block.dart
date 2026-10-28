@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -33,6 +35,17 @@ class _ThinkingBlockState extends State<ThinkingBlock> {
   bool _userToggled = false;
   final _scrollController = ScrollController();
 
+  /// I10 动态计时：流式中每秒刷新「已思考 Ns」标题。
+  /// provider 只在事件到达时 notifyListeners，思考静默期（模型长推理
+  /// 无增量）计数会冻结——计时器在组件内自走，与数据层解耦
+  Timer? _tickTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTimer();
+  }
+
   @override
   void didUpdateWidget(covariant ThinkingBlock oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -40,6 +53,7 @@ class _ThinkingBlockState extends State<ThinkingBlock> {
     if (!_userToggled && oldWidget.streaming && !widget.streaming) {
       _expanded = false;
     }
+    _syncTimer();
     // 流式中自动滚到底部
     if (widget.streaming && _expanded && _scrollController.hasClients) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -50,8 +64,21 @@ class _ThinkingBlockState extends State<ThinkingBlock> {
     }
   }
 
+  /// 流式中启动每秒 tick，结束/未流式时停掉
+  void _syncTimer() {
+    if (widget.streaming && _tickTimer == null) {
+      _tickTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    } else if (!widget.streaming && _tickTimer != null) {
+      _tickTimer?.cancel();
+      _tickTimer = null;
+    }
+  }
+
   @override
   void dispose() {
+    _tickTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -95,7 +122,9 @@ class _ThinkingBlockState extends State<ThinkingBlock> {
                   Expanded(
                     child: Text(
                       widget.streaming
-                          ? '深度思考中…'
+                          ? (widget.seconds > 0
+                              ? '已思考 ${widget.seconds} 秒…'
+                              : '深度思考中…')
                           : '已深度思考（用时 ${widget.seconds} 秒）',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: colorScheme.primary,

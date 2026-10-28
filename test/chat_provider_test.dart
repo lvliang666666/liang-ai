@@ -442,4 +442,133 @@ void main() {
       expect(provider.contextSummary!.summary, contains('旧摘要'));
     });
   });
+
+  group('I10 生成状态可见性', () {
+    test('正常完成：消息带耗时盖章，中断态复位', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaReasoning('思考'));
+      api.emit(const SseDeltaContent('答案'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      expect(provider.status, ChatStatus.idle);
+      expect(provider.lastRoundInterrupted, isFalse);
+      final msgs = await db.getMessages('s1');
+      final assistant = msgs.last;
+      // 耗时已盖章（同毫秒内完成可能为 0，但字段必须非 null）
+      expect(assistant.thinkingSeconds, isNotNull);
+      expect(assistant.generationSeconds, isNotNull);
+      expect(assistant.generationSeconds!, lessThanOrEqualTo(1));
+    });
+
+    test('断流（SseInterrupted）：已收内容落库 + 中断态标记', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('收到一半的内容'));
+      api.emit(const SseInterrupted());
+      await Future.delayed(Duration.zero);
+
+      // 不进 error 态：断流不是错误，是可续传的常态
+      expect(provider.status, ChatStatus.idle);
+      expect(provider.lastRoundInterrupted, isTrue);
+      expect(provider.isStreaming, isFalse);
+
+      // 已收内容照常落库
+      final msgs = await db.getMessages('s1');
+      expect(msgs.length, 2);
+      expect(msgs.last.content, '收到一半的内容');
+      expect(msgs.last.generationSeconds, isNotNull);
+    });
+
+    test('手动停止不标记中断态', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('部分'));
+      provider.stopGeneration();
+      // mock 模拟 cancel 错误（与 skill_loop_test 同款）
+      api.emitError(DioException(
+          requestOptions: RequestOptions(path: '/'),
+          type: DioExceptionType.cancel));
+      await Future.delayed(Duration.zero);
+
+      expect(provider.status, ChatStatus.idle);
+      expect(provider.lastRoundInterrupted, isFalse,
+          reason: '用户主动停止 ≠ 断流，不显示续传胶囊');
+    });
+
+    test('resumeLastGeneration：删截断消息 + 对原 user 消息重新发起', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('收到一半'));
+      api.emit(const SseInterrupted());
+      await Future.delayed(Duration.zero);
+      expect(provider.lastRoundInterrupted, isTrue);
+      final callsBefore = api.chatStreamCalls;
+
+      await provider.resumeLastGeneration();
+      await Future.delayed(Duration.zero);
+
+      // 截断的 assistant 消息已删（内存），新一轮已发起
+      expect(provider.lastRoundInterrupted, isFalse);
+      expect(provider.isStreaming, isTrue);
+      expect(api.chatStreamCalls, callsBefore + 1);
+      // 请求的最后一条消息 = 原 user 消息（不重复落库）
+      expect(api.lastMessages!.last['role'], 'user');
+      expect(api.lastMessages!.last['content'], '你好');
+
+      // 新一轮正常收尾
+      api.emit(const SseDeltaContent('完整回答'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      expect(provider.status, ChatStatus.idle);
+
+      // DB：截断消息已删，最终只有 user + 完整 assistant
+      final msgs = await db.getMessages('s1');
+      expect(msgs.length, 2);
+      expect(msgs[0].content, '你好');
+      expect(msgs[1].content, '完整回答');
+    });
+
+    test('resumeLastGeneration：非中断态为 no-op', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      final callsBefore = api.chatStreamCalls;
+
+      await provider.resumeLastGeneration();
+      expect(api.chatStreamCalls, callsBefore,
+          reason: '正常完成后不应触发续传');
+    });
+
+    test('resumeLastGeneration：流式中为 no-op', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('流式中'));
+      await Future.delayed(Duration.zero);
+      final callsBefore = api.chatStreamCalls;
+
+      await provider.resumeLastGeneration();
+      expect(api.chatStreamCalls, callsBefore,
+          reason: '流式中不应触发续传');
+
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+    });
+
+    test('generationSeconds 流式中实时可读', () async {
+      await provider.loadMessages();
+      expect(provider.generationSeconds, 0);
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('x'));
+      await Future.delayed(Duration.zero);
+      // 流式中起点已记录（同毫秒内为 0，但 getter 不崩溃）
+      expect(provider.generationSeconds, lessThanOrEqualTo(1));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      // 收尾后复位为 0（起点清空）
+      expect(provider.generationSeconds, 0);
+    });
+  });
 }

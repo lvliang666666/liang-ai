@@ -22,7 +22,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 13;
+  static const int dbVersion = 14;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -129,6 +129,8 @@ class DatabaseService {
         tool_call_id TEXT,
         prompt_tokens INTEGER,
         completion_tokens INTEGER,
+        thinking_seconds INTEGER,
+        generation_seconds INTEGER,
         pinned INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
       )
@@ -236,6 +238,14 @@ class DatabaseService {
       //（bigram 自管索引，应用层同步；存量消息由 FtsService.rebuildIndex
       // 在启动时补齐——迁移只建表，重建是数据操作放服务层）
       await _createFtsTables(db);
+    }
+    if (oldVersion < 14 && newVersion >= 14) {
+      // v13 → v14：生成状态可见性（I10）——messages 加思考/生成耗时列
+      //（秒；收尾时盖章。NULL = 老数据/流式中未收尾）
+      await db.execute(
+          'ALTER TABLE messages ADD COLUMN thinking_seconds INTEGER');
+      await db.execute(
+          'ALTER TABLE messages ADD COLUMN generation_seconds INTEGER');
     }
   }
 

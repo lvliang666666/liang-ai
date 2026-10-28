@@ -31,6 +31,13 @@ class ChatMessage {
   /// 本轮输出 token（reasoning+content；usage 末帧或本地估算）
   int? completionTokens;
 
+  /// 思考耗时（秒；I10 生成状态可见性——完成态思考块「已深度思考
+  /// （用时 N 秒）」的数据源。null = 老数据/流式中未收尾）
+  int? thinkingSeconds;
+
+  /// 生成总耗时（秒；思考+回答全程。null = 老数据/流式中未收尾）
+  int? generationSeconds;
+
   /// 用户钉住（F2：钉住消息所在轮永不压缩进前情摘要）
   bool pinned;
 
@@ -47,6 +54,8 @@ class ChatMessage {
     this.toolCallId,
     this.promptTokens,
     this.completionTokens,
+    this.thinkingSeconds,
+    this.generationSeconds,
     this.pinned = false,
     required this.createdAt,
   })  : attachments = attachments ?? const [],
@@ -69,6 +78,8 @@ class ChatMessage {
         'tool_call_id': toolCallId,
         'prompt_tokens': promptTokens,
         'completion_tokens': completionTokens,
+        'thinking_seconds': thinkingSeconds,
+        'generation_seconds': generationSeconds,
         'pinned': pinned ? 1 : 0,
         'created_at': createdAt,
       };
@@ -85,6 +96,8 @@ class ChatMessage {
         toolCallId: map['tool_call_id'] as String?,
         promptTokens: map['prompt_tokens'] as int?,
         completionTokens: map['completion_tokens'] as int?,
+        thinkingSeconds: map['thinking_seconds'] as int?,
+        generationSeconds: map['generation_seconds'] as int?,
         pinned: ((map['pinned'] as int?) ?? 0) != 0,
         createdAt: map['created_at'] as int,
       );

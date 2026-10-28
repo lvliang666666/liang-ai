@@ -48,6 +48,15 @@ class SseDone extends SseEvent {
   const SseDone();
 }
 
+/// 流中断（连接断开但未收到 [DONE]——网络抖动/网关提前断开）
+///
+/// 与 [SseDone] 的区别决定 UI 行为：Done = 正常收尾；Interrupted =
+/// 回答被截断，UI 显示「连接中断 · 点击续传」。上层（ChatProvider）
+/// 据此保留已收内容并进入可续传状态。
+class SseInterrupted extends SseEvent {
+  const SseInterrupted();
+}
+
 /// Token 用量统计（OpenAI stream_options.include_usage 的末帧）
 ///
 /// vLLM/OpenAI 兼容网关在流末尾发一帧 `choices: []` + `usage: {...}`，

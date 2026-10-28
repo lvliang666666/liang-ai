@@ -123,6 +123,12 @@ class ChatProvider extends ChangeNotifier {
   StreamSubscription<SseEvent>? _subscription;
   DateTime? _thinkingStart;
 
+  /// 本轮生成起始时间（I10：思考+回答全程耗时；工具轮跨轮累计）
+  DateTime? _generationStart;
+
+  /// 最近一次收尾的耗时快照（落库后供 UI 角标读取；流式中为 null）
+  int? _lastGenerationSeconds;
+
   /// 本轮 usage 统计（SseUsage 末帧捕获；null = 网关未透传，走估算）
   int? _roundPromptTokens;
   int? _roundCompletionTokens;
@@ -373,6 +379,8 @@ class ChatProvider extends ChangeNotifier {
       );
       _status = ChatStatus.thinking;
       _thinkingStart ??= DateTime.now();
+      // I10：首轮记生成起点（工具轮跨轮累计，不重置）
+      _generationStart ??= DateTime.now();
       _notify();
 
       // 发起流式请求（Agent system prompt 插入消息头部）
@@ -425,6 +433,12 @@ class ChatProvider extends ChangeNotifier {
               // 工具轮后服务端常尾随 [DONE]：此时本轮已交给工具流程，忽略
               if (toolRoundStarted) return;
               _finishStreaming();
+              if (!completer.isCompleted) completer.complete();
+            case SseInterrupted():
+              // I10 断流：连接断开未收到 [DONE]——保留已收内容落库，
+              // 标记中断态供 UI 显示「连接中断 · 点击续传」
+              if (toolRoundStarted) return;
+              _interruptStreaming();
               if (!completer.isCompleted) completer.complete();
             case SseError(:final message):
               if (toolRoundStarted) return;
@@ -524,7 +538,6 @@ class ChatProvider extends ChangeNotifier {
     // 5. 取消检查：用户在工具执行期间点了停止 → 终止 loop（已落库保留）
     if (_cancelToken?.isCancelled == true) {
       _status = ChatStatus.idle;
-      _subscription = null;
       _cancelToken = null;
       _notify();
       return false;
@@ -545,6 +558,36 @@ class ChatProvider extends ChangeNotifier {
     _cancelToken?.cancel();
   }
 
+  /// 断流续传（I10）：对最后一条 user 消息重新发起生成
+  ///
+  /// SSE 无法断点续传（连接已断，服务端不会从断点继续发）——续传 =
+  /// 删掉截断的 assistant 消息（已收内容不完整，留着会误导），对同一条
+  /// user 消息重新走完整管线（水位检查/记忆注入/loop 全复用）。
+  /// 仅在 [lastRoundInterrupted] 时有效；流式中/非中断态为 no-op。
+  Future<void> resumeLastGeneration() async {
+    if (isStreaming || !_lastRoundInterrupted) return;
+    _lastRoundInterrupted = false;
+
+    // 找最后一条 user 消息（截断的 assistant 消息已落库，需删除）
+    final lastUser = _messages.lastWhere((m) => m.isUser,
+        orElse: () => throw StateError('中断续传：找不到 user 消息'));
+    // 截断 assistant 消息在 user 之后：全部删除（含 tool 结果等中间产物）
+    final cutoff = _messages.indexOf(lastUser);
+    final orphans = _messages.skip(cutoff + 1).toList();
+    for (final m in orphans) {
+      await _db.deleteMessage(m.id);
+    }
+    _messages = _messages.sublist(0, cutoff + 1);
+
+    // 重新发送（sendMessage 落库新 assistant 轮；user 消息复用原条，
+    // 不重复落库——直接走 loop 启动段）
+    await _refreshMemoryText();
+    _toolResults = [];
+    unawaited(_runLoop().catchError((Object e) {
+      debugPrint('ChatProvider loop 后台异常（已忽略）：$e');
+    }));
+  }
+
   /// 正常结束：落库 assistant 消息
   void _finishStreaming() {
     final msg = _streamingMessage;
@@ -554,33 +597,81 @@ class ChatProvider extends ChangeNotifier {
           msg.reasoning.isNotEmpty ||
           msg.toolCalls.isNotEmpty) {
         _stampTokenUsage(msg);
+        _stampDurations(msg);
         _db.insertMessage(msg);
         _messages = [..._messages, msg];
       }
     }
     _streamingMessage = null;
     _status = ChatStatus.idle;
-    _subscription = null;
     _cancelToken = null;
     _toolCallAccumulators.clear();
     _thinkingStart = null;
+    _generationStart = null;
+    _lastRoundInterrupted = false;
     _notify();
+  }
+
+  /// 断流收尾（I10）：保留已收内容落库 + 标记中断态
+  ///
+  /// 与 [_failStreaming] 的区别：断流不是错误（网络抖动是常态），
+  /// 不弹错误条，而是尾部显示「连接中断 · 点击续传」胶囊——
+  /// 已收内容照常落库展示，用户可一键续传。
+  void _interruptStreaming() {
+    final msg = _streamingMessage;
+    if (msg != null &&
+        (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
+      _stampTokenUsage(msg);
+      _stampDurations(msg);
+      _db.insertMessage(msg);
+      _messages = [..._messages, msg];
+    }
+    _streamingMessage = null;
+    _status = ChatStatus.idle;
+    _cancelToken = null;
+    _toolCallAccumulators.clear();
+    _thinkingStart = null;
+    _generationStart = null;
+    _lastRoundInterrupted = true;
+    _notify();
+  }
+
+  /// 耗时盖章（I10）：思考秒数 + 生成总秒数写到消息上（落库前调用）。
+  /// 思考耗时 = 思考起点到首个正文增量（无正文 = 到收尾）；
+  /// 生成耗时 = 本轮生成起点到收尾（工具轮跨轮累计）
+  void _stampDurations(ChatMessage msg) {
+    final thinkStart = _thinkingStart;
+    if (thinkStart != null) {
+      // 思考结束点：进入 answering 后 _thinkingStart 不变，这里用
+      // 「首个 content 增量到达时刻」近似——收尾时若已有正文，思考
+      // 时长按 reasoning 结束计；纯思考无正文按收尾时刻计
+      msg.thinkingSeconds = DateTime.now().difference(thinkStart).inSeconds;
+    }
+    final genStart = _generationStart;
+    if (genStart != null) {
+      final seconds = DateTime.now().difference(genStart).inSeconds;
+      msg.generationSeconds = seconds;
+      _lastGenerationSeconds = seconds;
+    }
   }
 
   /// 出错：保留已收内容落库，显示错误
   void _failStreaming(String message) {
     final msg = _streamingMessage;
     if (msg != null && (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
+      _stampTokenUsage(msg);
+      _stampDurations(msg);
       _db.insertMessage(msg);
       _messages = [..._messages, msg];
     }
     _streamingMessage = null;
     _status = ChatStatus.error;
     _errorMessage = message;
-    _subscription = null;
     _cancelToken = null;
     _toolCallAccumulators.clear();
     _thinkingStart = null;
+    _generationStart = null;
+    _lastRoundInterrupted = false;
     _notify();
   }
 
@@ -735,6 +826,22 @@ class ChatProvider extends ChangeNotifier {
     if (start == null) return 0;
     return DateTime.now().difference(start).inSeconds;
   }
+
+  /// 本轮生成用时（秒；I10 流式角标实时显示，思考+回答全程）
+  int get generationSeconds {
+    final start = _generationStart;
+    if (start == null) return 0;
+    return DateTime.now().difference(start).inSeconds;
+  }
+
+  /// 最近一次收尾的生成耗时（秒；null = 本会话尚无收尾记录）。
+  /// 落库消息已带 generationSeconds，这里供流式收尾瞬间 UI 过渡读取
+  int? get lastGenerationSeconds => _lastGenerationSeconds;
+
+  /// 最近一轮是否被中断（I10 断流续传：true = 尾部显示「连接中断 ·
+  /// 点击续传」）。手动停止/正常完成/出错均复位
+  bool get lastRoundInterrupted => _lastRoundInterrupted;
+  bool _lastRoundInterrupted = false;
 
   String _genId() =>
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
