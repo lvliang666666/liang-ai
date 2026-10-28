@@ -79,7 +79,10 @@ class ApiService {
         yield event;
         if (event is SseDone || event is SseError) return;
       }
-      if (!parser.isDone) yield const SseDone();
+      // 未收到 [DONE] 即流断开（网络抖动/网关提前断开）：显式中断事件
+      // 而非合成 Done——截断的回答必须让用户知道并可续传（I10），
+      // 伪装成正常完成会让用户以为模型就说这么多
+      if (!parser.isDone) yield const SseInterrupted();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) rethrow; // 停止生成，由上层处理
       throw ApiException(_mapError(e, profile), statusCode: e.response?.statusCode);

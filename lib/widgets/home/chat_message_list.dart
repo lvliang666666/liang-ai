@@ -323,6 +323,14 @@ class ChatMessageListState extends State<ChatMessageList> {
                                     msg.id == widget.chat.lastToolCallMessageId &&
                                         widget.chat.status ==
                                             ChatStatus.toolCalling,
+                                // I10 断流续传：最后一条 assistant 消息 +
+                                // 中断态 → 尾部「连接中断 · 点击续传」胶囊
+                                interrupted: isLast &&
+                                    !widget.chat.isStreaming &&
+                                    widget.chat.lastRoundInterrupted &&
+                                    msg.role == 'assistant',
+                                onResume: () =>
+                                    widget.chat.resumeLastGeneration(),
                                 // I7 搜索定位：命中气泡临时高亮（2s 渐隐）
                                 highlight: _isHighlighted(msg.id),
                                 // F2 钉住：钉住消息所在轮永不压缩进前情摘要

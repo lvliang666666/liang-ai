@@ -46,6 +46,8 @@ class MessageBubble extends StatefulWidget {
     this.toolResults = const [],
     this.toolExecuting = false,
     this.highlight = false,
+    this.interrupted = false,
+    this.onResume,
     this.onTogglePin,
     this.onEdit,
     this.onQuote,
@@ -54,6 +56,13 @@ class MessageBubble extends StatefulWidget {
   final ChatMessage message;
   final bool isStreaming;
   final int thinkingSeconds;
+
+  /// I10 断流续传：本条消息是否处于「连接中断」态（尾部显示
+  /// 「连接中断 · 点击续传」胶囊，点击回调 [onResume]）
+  final bool interrupted;
+
+  /// 断流续传回调（null = 无续传能力，胶囊不显示）
+  final VoidCallback? onResume;
 
   /// 本消息 tool_calls 对应的执行结果（UI 卡片展示）
   final List<ToolCallResult> toolResults;
@@ -425,6 +434,15 @@ class _MessageBubbleState extends State<MessageBubble> {
                     message.content.isEmpty &&
                     message.reasoning.isEmpty)
                   const _TypingIndicator(),
+                // I10 断流续传胶囊：连接中断 · 点击续传
+                //（onResume 为 null = 无续传能力，不显示）
+                if (widget.interrupted &&
+                    !isStreaming &&
+                    widget.onResume != null)
+                  _InterruptedBanner(onResume: widget.onResume),
+                // I10 生成状态角标：token 数 + 耗时（非流式 assistant 消息）
+                if (!isStreaming && !widget.interrupted)
+                  _GenerationBadge(message: message),
               ],
             ),
           ),
@@ -916,6 +934,82 @@ class _ImageViewer extends StatelessWidget {
               ),
       ),
     );
+  }
+}
+
+/// I10 断流续传胶囊：「连接中断 · 点击续传」（错误色调，点击续传）
+class _InterruptedBanner extends StatelessWidget {
+  const _InterruptedBanner({this.onResume});
+
+  final VoidCallback? onResume;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onResume,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: cs.errorContainer.withValues(alpha: 0.6),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.wifi_off_rounded, size: 14, color: cs.error),
+              const SizedBox(width: 6),
+              Text(
+                '连接中断 · 点击续传',
+                style: theme.textTheme.labelSmall?.copyWith(color: cs.error),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// I10 生成状态角标：token 数 + 耗时（气泡尾部小字，onSurfaceVariant）
+///
+/// 数据缺失（老消息无 token/耗时）时对应段省略；两段都缺则整行不渲染。
+/// 流式中不显示（收尾后才有准确值）。
+class _GenerationBadge extends StatelessWidget {
+  const _GenerationBadge({required this.message});
+
+  final ChatMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final segments = <String>[
+      if (message.promptTokens != null || message.completionTokens != null)
+        '${_fmt(message.promptTokens ?? 0)} / ${_fmt(message.completionTokens ?? 0)} token',
+      if (message.generationSeconds != null && message.generationSeconds! > 0)
+        '${message.generationSeconds}s',
+    ];
+    if (segments.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Text(
+        segments.join(' · '),
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+        ),
+      ),
+    );
+  }
+
+  static String _fmt(int tokens) {
+    if (tokens < 1000) return '$tokens';
+    var s = (tokens / 1000).toStringAsFixed(1);
+    if (s.endsWith('.0')) s = s.substring(0, s.length - 2);
+    return '${s}k';
   }
 }
 
