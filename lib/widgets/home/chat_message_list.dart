@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import '../../models/chat_message.dart';
@@ -64,6 +67,17 @@ class ChatMessageListState extends State<ChatMessageList> {
   /// 距底部多少像素内算「在底部」（reverse 列表 offset 0 = 底部）
   static const double _bottomThreshold = 60;
 
+  // ===== I7 搜索定位（FTS 命中跳转）=====
+
+  /// 消息 id → 气泡锚点（itemBuilder 登记宿主回调，定位时取用）
+  final Map<String, GlobalKey> _bubbleKeys = {};
+
+  /// 当前高亮的消息 id（scrollToMessage 设置，2s 后自动清除）
+  String? _highlightMessageId;
+
+  /// 高亮渐隐定时器（重复定位时先取消旧的）
+  Timer? _highlightTimer;
+
   @override
   void initState() {
     super.initState();
@@ -72,10 +86,76 @@ class ChatMessageListState extends State<ChatMessageList> {
 
   @override
   void dispose() {
+    _highlightTimer?.cancel();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
+
+  /// itemBuilder 登记气泡锚点（GlobalKey 挂 MessageBubble）
+  GlobalKey _bubbleKey(String messageId) =>
+      _bubbleKeys.putIfAbsent(messageId, () => GlobalKey());
+
+  /// FTS 命中跳转（I7）：滚动定位到目标消息并临时高亮
+  ///
+  /// [messageId] 目标消息 id；[highlight] 命中词（透传气泡做词级高亮，
+  /// null = 只做气泡级高亮）。
+  /// 定位策略：目标在渲染缓存内 → Scrollable.ensureVisible 平滑滚到
+  /// 锚点；在缓存外（长会话深处）→ 先按索引估算 offset 跳过去，等
+  /// 气泡构建出来再 ensureVisible 精修。高亮 2s 后渐隐清除。
+  Future<void> scrollToMessage(String messageId, {String? highlight}) async {
+    if (!_scrollController.hasClients) return;
+    final msgs = widget.chat.displayMessages;
+    final index = msgs.indexWhere((m) => m.id == messageId);
+    if (index < 0) return;
+    // reverse 列表：列表第 0 项 = 最后一条消息
+    final listIndex = msgs.length - 1 - index;
+
+    Haptics.light();
+    // 暂停跟随：定位到历史消息后流式增长不得拽回底部
+    _following = false;
+
+    final key = _bubbleKey(messageId);
+    final ctx = key.currentContext;
+    if (ctx != null) {
+      // 已构建：直接平滑滚到可见
+      await Scrollable.ensureVisible(
+        ctx,
+        duration: const Duration(milliseconds: 350),
+        curve: Curves.easeOutCubic,
+        alignment: 0.35, // 目标偏列表上部一点，上下文可见
+      );
+    } else {
+      // 未构建（缓存外）：估算 offset 跳过去，下一帧气泡出现后精修。
+      // 估算：平均每条消息 ~120px（气泡+间距），误差由二段定位兜住
+      final estimate = listIndex * 120.0;
+      _scrollController.jumpTo(
+        math.min(estimate, _scrollController.position.maxScrollExtent),
+      );
+      // 等目标气泡构建出来再精确滚到可见
+      await WidgetsBinding.instance.endOfFrame;
+      final ctx2 = key.currentContext;
+      if (ctx2 != null && mounted) {
+        await Scrollable.ensureVisible(
+          ctx2,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOutCubic,
+          alignment: 0.35,
+        );
+      }
+    }
+
+    if (!mounted) return;
+    setState(() => _highlightMessageId = messageId);
+    _highlightTimer?.cancel();
+    _highlightTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _highlightMessageId = null);
+    });
+  }
+
+  /// 气泡是否处于高亮态（itemBuilder 透传 MessageBubble）
+  bool _isHighlighted(String messageId) =>
+      _highlightMessageId == messageId;
 
   /// 滚动监听：位置驱动跟随状态（唯一事实来源，触摸/惯性/点击胶囊都汇到这里）
   void _onScroll() {
@@ -222,11 +302,14 @@ class ChatMessageListState extends State<ChatMessageList> {
                           // 微信式时间戳：首条必显，之后与上一条间隔 >5 分钟才显示
                           final showTime = _shouldShowTime(index);
                           return Column(
+                            key: ValueKey('col-${msg.id}'),
                             children: [
                               if (showTime)
                                 MessageTimeLabel(timestamp: msg.createdAt),
                               MessageBubble(
-                                key: ValueKey(msg.id),
+                                // I7：GlobalKey 供 scrollToMessage 定位
+                                //（ValueKey 保流式重建时的元素身份）
+                                key: _bubbleKey(msg.id),
                                 message: msg,
                                 isStreaming:
                                     isLast && widget.chat.isStreaming,
@@ -240,6 +323,8 @@ class ChatMessageListState extends State<ChatMessageList> {
                                     msg.id == widget.chat.lastToolCallMessageId &&
                                         widget.chat.status ==
                                             ChatStatus.toolCalling,
+                                // I7 搜索定位：命中气泡临时高亮（2s 渐隐）
+                                highlight: _isHighlighted(msg.id),
                                 // F2 钉住：钉住消息所在轮永不压缩进前情摘要
                                 onTogglePin: (pinned) =>
                                     widget.chat.setMessagePinned(msg, pinned),
