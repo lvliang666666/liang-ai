@@ -323,4 +323,80 @@ void main() {
           reason: '探测结果随库关闭重置');
     });
   });
+
+  group('已 v13 库无 FTS 表（v2.11.2 真机搜索失效修复）', () {
+    // 用户真机路径：v2.11.1 在无 FTS5 模块的系统 SQLite 上建出 v13 库
+    // （迁移探测失败 → FTS 表被跳过），装 v2.11.2 不再触发 onUpgrade
+    // → 旧版只在迁移里探测 → ftsAvailable 恒 null → ftsOrNull 误判
+    // 可用 → MATCH 炸 "no such table" → 抽屉 catch 吞掉 → 搜索全灭。
+    late Database staleDb;
+
+    setUp(() async {
+      // 模拟：当前版本库 + FTS 表不存在（探测失败时的建库结果）
+      staleDb = await openTestDb();
+      await staleDb.execute('DROP TABLE IF EXISTS messages_fts');
+      await staleDb.execute('DROP TABLE IF EXISTS messages_fts_rowid');
+      await staleDb.insert('messages', {
+        'id': 'm1',
+        'session_id': 's1',
+        'role': 'user',
+        'content': '今天讨论了报销流程',
+        'reasoning': '',
+        'attachments': '[]',
+        'tool_calls': '[]',
+        'pinned': 0,
+        'created_at': 1000,
+      });
+      // 关键：flag 置 null（未探测态）——旧版代码在此状态下 ftsOrNull
+      // 误判可用，是 bug 的直接触发条件
+      DatabaseService.ftsAvailable = null;
+      addTearDown(() => DatabaseService.ftsAvailable = null);
+    });
+
+    tearDown(() async {
+      await staleDb.close();
+    });
+
+    test('ftsAvailable=null 且表缺失：searchMessages 降级 LIKE 出结果', () async {
+      final svc = DatabaseService.instance;
+      await svc.initForTest(staleDb);
+      // 旧版行为：这里抛 "no such table: messages_fts"
+      final hits = await svc.ftsOrNull!.searchMessages('报销');
+      expect(hits, hasLength(1), reason: 'FTS 表缺失应降级 LIKE 而非抛异常');
+      expect(hits.first.id, 'm1');
+      await svc.close();
+    });
+
+    test('ftsAvailable=null 且表缺失：单字查询同样出结果', () async {
+      final svc = DatabaseService.instance;
+      await svc.initForTest(staleDb);
+      final hits = await svc.ftsOrNull!.searchMessages('报');
+      expect(hits, hasLength(1));
+      await svc.close();
+    });
+
+    test('表缺失时 insertMessage 不炸（索引同步静默跳过）', () async {
+      final svc = DatabaseService.instance;
+      await svc.initForTest(staleDb);
+      // indexMessage 走 _guarded 静默吞异常，消息本体必须落库成功
+      await svc.insertMessage(ChatMessage(
+        id: 'm2',
+        sessionId: 's1',
+        role: 'user',
+        content: '新消息关于差旅',
+        createdAt: 2000,
+      ));
+      final hits = await svc.ftsOrNull!.searchMessages('差旅');
+      expect(hits, hasLength(1), reason: '消息落库成功且 LIKE 可搜');
+      await svc.close();
+    });
+
+    test('searchMessagesLike 在同库直接可用（UI 兜底路径）', () async {
+      final svc = DatabaseService.instance;
+      await svc.initForTest(staleDb);
+      final hits = await svc.searchMessagesLike('报销', limit: 20);
+      expect(hits, hasLength(1));
+      await svc.close();
+    });
+  });
 }
