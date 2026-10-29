@@ -21,6 +21,9 @@ Future<ChatMessage?> showMessageOutlineSheet(
 ) {
   return showAppBottomSheet<ChatMessage>(
     context: context,
+    // 大纲是轻量目录不是工作面板：限高 45% 屏高（默认 60% 会顶到
+    // 状态栏，用户验收反馈「页面占满屏幕被通知栏挡住」）
+    maxHeightRatio: 0.45,
     builder: (context) => MessageOutlineSheet(
       messages: messages,
       onSelect: (msg) => Navigator.pop(context, msg),
@@ -29,7 +32,7 @@ Future<ChatMessage?> showMessageOutlineSheet(
 }
 
 /// 消息大纲浮层内容：目录条目列表（提问序号 + 首行预览 + 时间）
-class MessageOutlineSheet extends StatelessWidget {
+class MessageOutlineSheet extends StatefulWidget {
   const MessageOutlineSheet({
     super.key,
     required this.messages,
@@ -75,56 +78,99 @@ class MessageOutlineSheet extends StatelessWidget {
   }
 
   @override
+  State<MessageOutlineSheet> createState() => _MessageOutlineSheetState();
+}
+
+class _MessageOutlineSheetState extends State<MessageOutlineSheet>
+    with SingleTickerProviderStateMixin {
+  /// 入场动画：与斜杠面板同款（内容淡入+6px 上滑 180ms），保持
+  /// 全 app 面板手感一致
+  late final AnimationController _enter;
+  late final Animation<double> _fade;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _enter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+    );
+    _fade = CurvedAnimation(parent: _enter, curve: Curves.easeOutCubic);
+    _slide = Tween<Offset>(
+      begin: const Offset(0, 0.02),
+      end: Offset.zero,
+    ).animate(_fade);
+    _enter.forward();
+  }
+
+  @override
+  void dispose() {
+    _enter.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final entries = outlineEntries(messages);
+    final entries = MessageOutlineSheet.outlineEntries(widget.messages);
 
-    return SheetScaffold(
-      title: '消息大纲',
-      onClose: () => Navigator.pop(context),
-      child: entries.isEmpty
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  '还没有提问',
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: cs.onSurfaceVariant),
-                ),
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.only(bottom: 8),
-              itemCount: entries.length,
-              itemBuilder: (context, index) {
-                final msg = entries[index];
-                return ListTile(
-                  key: ValueKey('outline-${msg.id}'),
-                  leading: Text(
-                    '${index + 1}',
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      color: cs.primary,
-                      fontWeight: FontWeight.bold,
+    return FadeTransition(
+      opacity: _fade,
+      child: SlideTransition(
+        position: _slide,
+        child: SheetKeyboardInset(
+          // 限高 45%：与 showMessageOutlineSheet 的 maxHeightRatio 一致
+          maxHeightRatio: 0.45,
+          child: SheetScaffold(
+            title: '消息大纲',
+            onClose: () => Navigator.pop(context),
+            child: entries.isEmpty
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        '还没有提问',
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: cs.onSurfaceVariant),
+                      ),
                     ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    itemCount: entries.length,
+                    itemBuilder: (context, index) {
+                      final msg = entries[index];
+                      return ListTile(
+                        key: ValueKey('outline-${msg.id}'),
+                        leading: Text(
+                          '${index + 1}',
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: cs.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        title: Text(
+                          MessageOutlineSheet.previewOf(msg),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        subtitle: Text(
+                          MessageOutlineSheet.timeLabel(msg.createdAt),
+                          style: theme.textTheme.labelSmall
+                              ?.copyWith(color: cs.onSurfaceVariant),
+                        ),
+                        onTap: () {
+                          Haptics.light();
+                          widget.onSelect(msg);
+                        },
+                      );
+                    },
                   ),
-                  title: Text(
-                    previewOf(msg),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: Text(
-                    timeLabel(msg.createdAt),
-                    style: theme.textTheme.labelSmall
-                        ?.copyWith(color: cs.onSurfaceVariant),
-                  ),
-                  onTap: () {
-                    Haptics.light();
-                    onSelect(msg);
-                  },
-                );
-              },
-            ),
+          ),
+        ),
+      ),
     );
   }
 }

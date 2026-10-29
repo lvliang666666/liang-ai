@@ -16,7 +16,6 @@ import '../../models/provider_profile.dart';
 import '../../models/skill.dart' as skill_model;
 import '../../pages/payload_lens_page.dart';
 import '../../providers/chat_provider.dart';
-import '../../providers/skill_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/attachment_service.dart';
 import '../../services/settings_service.dart';
@@ -136,36 +135,20 @@ class _HomeInputBarState extends State<HomeInputBar> {
     }
   }
 
-  /// I12 斜杠命令面板：Skill 切换 + 自定义短语填入
+  /// I12 斜杠命令面板：快捷短语填入（Skill 切换走输入栏 tag，不进面板）
   Future<void> _openSlashCommands(String query) async {
-    final skills = context.read<SkillProvider>();
-    if (!skills.loaded) await skills.load();
-    if (!mounted) return;
     final settings = context.read<SettingsService>();
-    final chat = widget.chat;
 
-    final result = await showAppBottomSheet<Object>(
+    final result = await showAppBottomSheet<String>(
       context: context,
       builder: (context) => SlashCommandSheet(
-        skills: skills.skills,
         settings: settings,
-        onSelectSkill: (s) => Navigator.pop(context, s),
         onSelectPhrase: (p) => Navigator.pop(context, p),
         onDeletePhrase: (p) => settings.removeSlashPhrase(p),
       ),
     );
     if (!mounted) return;
 
-    if (result is skill_model.Skill) {
-      // 选 Skill：清掉「/」前缀再切换（聊天态 setSkill / 空闲态改预选）
-      widget.controller.clear();
-      if (chat != null) {
-        await chat.setSkill(result);
-      } else {
-        widget.onPickSkill(); // 空闲态走既有选择器（保持单一入口语义）
-      }
-      return;
-    }
     if (result is String) {
       // 选短语：替换输入框内容为短语（「/」前缀一并清掉）
       widget.controller

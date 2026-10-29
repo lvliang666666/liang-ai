@@ -1,11 +1,13 @@
-import 'package:ai_chat_app/models/skill.dart';
 import 'package:ai_chat_app/services/settings_service.dart';
 import 'package:ai_chat_app/widgets/home/slash_command_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// I12 斜杠命令测试：短语 KV 存取 / 面板过滤 / 分组渲染 / 交互回调
+/// I12 斜杠命令测试：短语 KV 存取 / 面板过滤 / 交互回调
+///
+/// v2.16.0 验收反馈后面板收窄为「快捷短语」单一功能（Skill 切换
+/// 走输入栏 tag 入口，不进面板），filter 只处理短语。
 void main() {
   group('SettingsService 斜杠短语 KV', () {
     late SettingsService settings;
@@ -66,35 +68,23 @@ void main() {
   });
 
   group('SlashCommandSheet.filter', () {
-    final skills = [
-      Skill(id: 's1', name: '架构师', prompt: '', description: '系统设计'),
-      Skill(id: 's2', name: '翻译官', prompt: '', description: '中英互译'),
-    ];
-
     test('空查询返回原样', () {
-      final (s, p) = SlashCommandSheet.filter(skills, ['短语A'], '');
-      expect(s.length, 2);
-      expect(p, ['短语A']);
-    });
-
-    test('按名称过滤 Skill（不区分大小写）', () {
-      final (s, p) = SlashCommandSheet.filter(skills, [], '架构');
-      expect(s.map((e) => e.id), ['s1']);
-    });
-
-    test('按描述过滤 Skill', () {
-      final (s, _) = SlashCommandSheet.filter(skills, [], '互译');
-      expect(s.map((e) => e.id), ['s2']);
+      final p = SlashCommandSheet.filter(['短语A', '短语B'], '');
+      expect(p, ['短语A', '短语B']);
     });
 
     test('按全文过滤短语', () {
-      final (_, p) = SlashCommandSheet.filter(skills, ['写周报', '开会'], '周报');
+      final p = SlashCommandSheet.filter(['写周报', '开会'], '周报');
       expect(p, ['写周报']);
     });
 
+    test('不区分大小写', () {
+      final p = SlashCommandSheet.filter(['TODO List', '开会'], 'todo');
+      expect(p, ['TODO List']);
+    });
+
     test('无命中返回空', () {
-      final (s, p) = SlashCommandSheet.filter(skills, ['短语'], '量子');
-      expect(s, isEmpty);
+      final p = SlashCommandSheet.filter(['短语'], '量子');
       expect(p, isEmpty);
     });
   });
@@ -109,49 +99,26 @@ void main() {
 
     Widget wrap(Widget child) => MaterialApp(home: Scaffold(body: child));
 
-    testWidgets('分组渲染：Skill 与短语各自带组标题', (tester) async {
+    testWidgets('渲染短语列表与标题', (tester) async {
       await settings.addSlashPhrase('帮我写周报');
       await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: [Skill(id: 's1', name: '架构师', prompt: '', icon: '🏗️')],
         settings: settings,
-        onSelectSkill: (_) {},
         onSelectPhrase: (_) {},
       )));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
-      expect(find.text('斜杠命令'), findsOneWidget);
-      expect(find.text('Skill'), findsOneWidget);
       expect(find.text('快捷短语'), findsOneWidget);
-      expect(find.text('架构师'), findsOneWidget);
       expect(find.text('帮我写周报'), findsOneWidget);
-    });
-
-    testWidgets('点 Skill 触发 onSelectSkill', (tester) async {
-      Skill? picked;
-      await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: [Skill(id: 's1', name: '架构师', prompt: '')],
-        settings: settings,
-        onSelectSkill: (s) => picked = s,
-        onSelectPhrase: (_) {},
-      )));
-      await tester.pump();
-
-      await tester.tap(find.byKey(const ValueKey('slash-skill-s1')));
-      await tester.pump();
-
-      expect(picked?.id, 's1');
     });
 
     testWidgets('点短语触发 onSelectPhrase', (tester) async {
       String? picked;
       await settings.addSlashPhrase('帮我写周报');
       await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: const [],
         settings: settings,
-        onSelectSkill: (_) {},
         onSelectPhrase: (p) => picked = p,
       )));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('slash-phrase-帮我写周报')));
       await tester.pump();
@@ -161,35 +128,32 @@ void main() {
 
     testWidgets('搜索过滤实时生效', (tester) async {
       await settings.addSlashPhrase('帮我写周报');
+      await settings.addSlashPhrase('开会纪要');
       await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: [Skill(id: 's1', name: '架构师', prompt: '')],
         settings: settings,
-        onSelectSkill: (_) {},
         onSelectPhrase: (_) {},
       )));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField), '周报');
       await tester.pump();
 
       expect(find.text('帮我写周报'), findsOneWidget);
-      expect(find.text('架构师'), findsNothing);
+      expect(find.text('开会纪要'), findsNothing);
     });
 
     testWidgets('长按删除入口：点删除键回调且条目消失', (tester) async {
       final deleted = <String>[];
       await settings.addSlashPhrase('待删短语');
       await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: const [],
         settings: settings,
-        onSelectSkill: (_) {},
         onSelectPhrase: (_) {},
         onDeletePhrase: (p) {
           deleted.add(p);
           settings.removeSlashPhrase(p);
         },
       )));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byTooltip('删除短语'));
       await tester.pump();
@@ -201,36 +165,31 @@ void main() {
     testWidgets('onDeletePhrase 为空时不显示删除键', (tester) async {
       await settings.addSlashPhrase('短语');
       await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: const [],
         settings: settings,
-        onSelectSkill: (_) {},
         onSelectPhrase: (_) {},
       )));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       expect(find.byTooltip('删除短语'), findsNothing);
     });
 
     testWidgets('全空显示空态文案', (tester) async {
       await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: const [],
         settings: settings,
-        onSelectSkill: (_) {},
         onSelectPhrase: (_) {},
       )));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
-      expect(find.text('暂无可用 Skill 或短语'), findsOneWidget);
+      expect(find.text('暂无快捷短语'), findsOneWidget);
     });
 
     testWidgets('搜索无命中显示「没有找到」', (tester) async {
+      await settings.addSlashPhrase('短语');
       await tester.pumpWidget(wrap(SlashCommandSheet(
-        skills: [Skill(id: 's1', name: '架构师', prompt: '')],
         settings: settings,
-        onSelectSkill: (_) {},
         onSelectPhrase: (_) {},
       )));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       await tester.enterText(find.byType(TextField), '量子');
       await tester.pump();
