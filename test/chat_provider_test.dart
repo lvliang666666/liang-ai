@@ -30,6 +30,9 @@ class MockApiService implements ApiService {
   /// 记录最近一次请求的 messages（多轮上下文断言用）
   List<Map<String, Object?>>? lastMessages;
 
+  /// 记录最近一次请求的 effort（F4 智能路由断言用）
+  String? lastEffort;
+
   void emit(SseEvent event) => _controller.add(event);
 
   void emitError(Object error) => _controller.addError(error);
@@ -48,6 +51,7 @@ class MockApiService implements ApiService {
     lastProfile = profile;
     lastTools = tools;
     lastMessages = messages;
+    lastEffort = effort;
     return _controller.stream;
   }
 
@@ -569,6 +573,62 @@ void main() {
       await Future.delayed(Duration.zero);
       // 收尾后复位为 0（起点清空）
       expect(provider.generationSeconds, 0);
+    });
+  });
+
+  group('F4 智能路由', () {
+    /// 建一个开了智能路由的 provider（复用 setUp 的 db/api）
+    ChatProvider routedProvider() => ChatProvider(
+          database: db,
+          api: api,
+          session: ChatSession(
+            id: 's-route',
+            title: '新对话',
+            createdAt: 1000,
+            updatedAt: 1000,
+          ),
+          profile: ProviderProfile.builtinCompany(),
+          model: 'glm5.1',
+          smartRouting: true,
+        );
+
+    test('开关开：max 触发词消息走 max 档', () async {
+      final p = routedProvider();
+      await p.loadMessages();
+      await p.sendMessage('深入分析一下这个问题');
+      expect(api.lastEffort, 'max');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      p.dispose();
+    });
+
+    test('开关开：短寒暄走 low 档', () async {
+      final p = routedProvider();
+      await p.loadMessages();
+      await p.sendMessage('你好');
+      expect(api.lastEffort, 'low');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      p.dispose();
+    });
+
+    test('开关开：普通长消息走 high 档', () async {
+      final p = routedProvider();
+      await p.loadMessages();
+      await p.sendMessage('帮我把这段话润色一下，语气正式一点');
+      expect(api.lastEffort, 'high');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      p.dispose();
+    });
+
+    test('开关关（默认）：effort 走会话设置，路由不介入', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      // setUp 的 provider 未开路由：会话默认 max（builtinCompany 默认档）
+      expect(api.lastEffort, isNot('low'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
     });
   });
 }

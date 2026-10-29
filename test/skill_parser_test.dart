@@ -1,3 +1,4 @@
+import 'package:ai_chat_app/models/skill.dart';
 import 'package:ai_chat_app/services/skill_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -107,6 +108,83 @@ tools: calculate
       final skill = SkillParser.parseToSkill('x', '正文', isBuiltin: false);
       expect(skill.isBuiltin, isFalse);
       expect(skill.name, 'x'); // 无 name 时回退 id
+    });
+  });
+
+  group('T3 Skill 分享码', () {
+    test('toShareCode → fromShareCode 往返一致（全字段）', () {
+      final skill = Skill(
+        id: 'src',
+        name: '技术架构师',
+        icon: '🏗️',
+        description: '严谨的系统设计专家',
+        prompt: '你是资深架构师。',
+        temperature: 0.3,
+        effort: 'high',
+        toolNames: ['calculate', 'get_current_time'],
+      );
+      final code = SkillParser.toShareCode(skill);
+      expect(code.startsWith('---'), isTrue);
+
+      final restored = SkillParser.fromShareCode('dst', code);
+      expect(restored.name, '技术架构师');
+      expect(restored.icon, '🏗️');
+      expect(restored.description, '严谨的系统设计专家');
+      expect(restored.prompt, '你是资深架构师。');
+      expect(restored.temperature, 0.3);
+      expect(restored.effort, 'high');
+      expect(restored.toolNames, ['calculate', 'get_current_time']);
+      expect(restored.isBuiltin, isFalse);
+      expect(restored.id, 'dst');
+    });
+
+    test('toolNames null（全部工具）→ 分享码不含 tools 行 → 导回 null', () {
+      final skill = Skill(id: 'a', name: 'N', prompt: 'P');
+      final code = SkillParser.toShareCode(skill);
+      expect(code.contains('tools:'), isFalse);
+      expect(SkillParser.fromShareCode('b', code).toolNames, isNull);
+    });
+
+    test('toolNames []（无工具）→ tools: none → 导回空列表', () {
+      final skill = Skill(id: 'a', name: 'N', prompt: 'P', toolNames: []);
+      final code = SkillParser.toShareCode(skill);
+      expect(code.contains('tools: none'), isTrue);
+      expect(SkillParser.fromShareCode('b', code).toolNames, isEmpty);
+    });
+
+    test('缺省字段不输出行；导回回退默认值', () {
+      final skill = Skill(id: 'a', name: 'N', prompt: 'P');
+      final code = SkillParser.toShareCode(skill);
+      expect(code.contains('temperature:'), isFalse);
+      expect(code.contains('effort:'), isFalse);
+      expect(code.contains('description:'), isFalse);
+      final restored = SkillParser.fromShareCode('b', code);
+      expect(restored.temperature, isNull);
+      expect(restored.effort, isNull);
+      expect(restored.description, '');
+      expect(restored.icon, '🤖');
+    });
+
+    test('无 front matter 的纯正文分享码：name 回退「导入的 Skill」', () {
+      final restored = SkillParser.fromShareCode('b', '只有正文没有头');
+      expect(restored.name, '导入的 Skill');
+      expect(restored.prompt, '只有正文没有头');
+      expect(restored.isBuiltin, isFalse);
+    });
+
+    test('与内置资产格式互通：解析 default.md 同构文本', () {
+      const raw = '''
+---
+name: 默认助手
+icon: 🤖
+description: 通用智能助手，均衡可靠，适合日常问答
+---
+你是 Liang AI 的默认助手。
+''';
+      final restored = SkillParser.fromShareCode('b', raw);
+      expect(restored.name, '默认助手');
+      expect(restored.description, '通用智能助手，均衡可靠，适合日常问答');
+      expect(restored.toolNames, isNull); // 资产未声明 tools = 全部
     });
   });
 }

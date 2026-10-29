@@ -89,6 +89,18 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 智能路由（F4：按消息内容自动选推理档位） =====
+  // 开 = 每条消息发送前经 SmartRouter 规则决策 effort（max 触发词/
+  //   短消息 low/默认 high），覆盖会话档位；关 = 用户手动选档不变。
+  // 默认关（升级用户行为完全不变；手动档位仍可随时在 tags 切）
+  static const _kSmartRouting = 'smart_routing';
+  bool get smartRouting => _prefs.getBool(_kSmartRouting) ?? false;
+  Future<void> setSmartRouting(bool v) async {
+    if (v == smartRouting) return;
+    await _prefs.setBool(_kSmartRouting, v);
+    notifyListeners();
+  }
+
   // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续

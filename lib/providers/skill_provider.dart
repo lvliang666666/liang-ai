@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/skill.dart';
+import '../services/skill_parser.dart';
 import '../services/skill_service.dart';
 
 /// Skill 列表状态：加载 + CRUD 同步
@@ -74,6 +75,28 @@ class SkillProvider extends ChangeNotifier {
     _skills = [..._skills, copy];
     notifyListeners();
     return copy;
+  }
+
+  /// T3 从分享码导入：解析文本 → 入库为自定义 Skill
+  ///
+  /// 解析失败抛异常由 UI 层提示；成功后刷新列表并返回新 Skill。
+  Future<Skill> importFromShareCode(String raw) async {
+    final skill = SkillParser.fromShareCode(
+      DateTime.now().microsecondsSinceEpoch.toRadixString(36),
+      raw,
+    );
+    await _service.create(
+      name: skill.name,
+      prompt: skill.prompt,
+      icon: skill.icon,
+      description: skill.description,
+      temperature: skill.temperature,
+      effort: skill.effort,
+      toolNames: skill.toolNames,
+    );
+    _skills = [..._skills, skill];
+    notifyListeners();
+    return skill;
   }
 
   Future<void> delete(String id) async {

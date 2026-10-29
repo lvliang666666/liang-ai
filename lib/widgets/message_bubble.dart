@@ -13,6 +13,7 @@ import '../models/tool_call.dart';
 import '../services/file_export_service.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
+import 'app_bottom_sheet.dart';
 import 'app_toast.dart';
 import 'attachment_thumbnail.dart';
 import 'code_block_widget.dart';
@@ -51,6 +52,7 @@ class MessageBubble extends StatefulWidget {
     this.onTogglePin,
     this.onEdit,
     this.onQuote,
+    this.onRegenerate,
   });
 
   final ChatMessage message;
@@ -84,6 +86,10 @@ class MessageBubble extends StatefulWidget {
 
   /// 引用追问（I5：仅 assistant 消息，null = 无引用能力）
   final VoidCallback? onQuote;
+
+  /// 重答（I3：仅 assistant 消息，null = 无重答能力）——删除该回答
+  /// 及其后消息，复用原 user 消息重新生成
+  final VoidCallback? onRegenerate;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -460,74 +466,34 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
   }
 
-  /// 用户消息长按菜单（I4）：锚点式——复制 / 编辑重发 / 钉住
-  ///
-  /// [pressPosition] = 长按点全局坐标，菜单锚定该处弹出
+  /// 用户消息长按菜单（I3）：底部 action sheet——复制 / 编辑重发 / 钉住
   Future<void> _showUserMessageActions(
       BuildContext context, ChatMessage message, Offset pressPosition) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
-    final box = overlay.size;
-    // 菜单估算尺寸：3 项（44 高）≈ 132 高，宽约 150
-    const menuWidth = 150.0;
-    const menuHeight = 132.0;
-    var left = pressPosition.dx;
-    var top = pressPosition.dy;
-    if (left + menuWidth > box.width) left = box.width - menuWidth - 8;
-    if (top + menuHeight > box.height) top = box.height - menuHeight - 8;
     final canEdit = widget.onEdit != null && !widget.isStreaming;
     final canPin = widget.onTogglePin != null;
-    final action = await showMenu<String>(
+    final action = await showAppBottomSheet<String>(
       context: context,
-      position: RelativeRect.fromLTRB(
-        left, top, box.width - left - menuWidth, box.height - top - menuHeight,
-      ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      items: [
-        const PopupMenuItem(
-          value: 'copy',
-          height: 44,
-          child: Row(
-            children: [
-              Icon(Icons.copy_outlined, size: 20),
-              SizedBox(width: 12),
-              Text('复制'),
-            ],
-          ),
+      builder: (context) => SheetScaffold(
+        title: '消息操作',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _actionTile(context, Icons.copy_outlined, '复制', 'copy'),
+            if (canEdit)
+              _actionTile(context, Icons.edit_outlined, '编辑重发', 'edit'),
+            if (canPin)
+              _actionTile(
+                context,
+                message.pinned ? Icons.push_pin_outlined : Icons.push_pin,
+                message.pinned ? '取消钉住' : '钉住',
+                'pin',
+                iconColor: message.pinned
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+          ],
         ),
-        if (canEdit)
-          const PopupMenuItem(
-            value: 'edit',
-            height: 44,
-            child: Row(
-              children: [
-                Icon(Icons.edit_outlined, size: 20),
-                SizedBox(width: 12),
-                Text('编辑重发'),
-              ],
-            ),
-          ),
-        if (canPin)
-          PopupMenuItem(
-            value: 'pin',
-            height: 44,
-            child: Row(
-              children: [
-                Icon(
-                  message.pinned
-                      ? Icons.push_pin_outlined
-                      : Icons.push_pin,
-                  size: 20,
-                  color: message.pinned
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
-                const SizedBox(width: 12),
-                Text(message.pinned ? '取消钉住' : '钉住'),
-              ],
-            ),
-          ),
-      ],
+      ),
     );
     if (!context.mounted || action == null) return;
 
@@ -548,98 +514,56 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
   }
 
-  /// 助手消息长按菜单：锚点式（微信/桌面右键菜单风格，与长按会话卡片
-  /// 菜单同形态）——复制全文 / 选择文字 / 钉住 / 导出为文档
-  ///
-  /// [pressPosition] = 长按点全局坐标，菜单锚定该处弹出
+  /// action sheet 单行操作项（I3 统一样式）
+  Widget _actionTile(BuildContext context, IconData icon, String label,
+      String value,
+      {Color? iconColor}) {
+    final theme = Theme.of(context);
+    return ListTile(
+      leading: Icon(icon, size: 22, color: iconColor ?? theme.colorScheme.onSurface),
+      title: Text(label, style: theme.textTheme.bodyLarge),
+      onTap: () {
+        Haptics.light();
+        Navigator.pop(context, value);
+      },
+    );
+  }
+
+  /// 助手消息长按菜单（I3）：底部 action sheet——复制全文 / 选择文字 /
+  /// 引用 / 重答 / 钉住 / 导出为文档
   Future<void> _showMessageActions(
       BuildContext context, ChatMessage message, Offset pressPosition) async {
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox;
-    final box = overlay.size;
-    // 菜单估算尺寸：5 项（44 高）+ divider ≈ 238 高，宽约 170
-    const menuWidth = 170.0;
-    const menuHeight = 238.0;
-    var left = pressPosition.dx;
-    var top = pressPosition.dy;
-    if (left + menuWidth > box.width) left = box.width - menuWidth - 8;
-    if (top + menuHeight > box.height) top = box.height - menuHeight - 8;
     final canPin = widget.onTogglePin != null;
     final canQuote = widget.onQuote != null && !widget.isStreaming;
-    final action = await showMenu<String>(
+    final canRegen = widget.onRegenerate != null && !widget.isStreaming;
+    final action = await showAppBottomSheet<String>(
       context: context,
-      position: RelativeRect.fromLTRB(
-        left, top, box.width - left - menuWidth, box.height - top - menuHeight,
+      builder: (context) => SheetScaffold(
+        title: '消息操作',
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _actionTile(context, Icons.copy_outlined, '复制全文', 'copy'),
+            _actionTile(context, Icons.highlight_alt, '选择文字', 'select'),
+            if (canQuote)
+              _actionTile(
+                  context, Icons.format_quote_outlined, '引用', 'quote'),
+            if (canRegen)
+              _actionTile(context, Icons.refresh_outlined, '重答', 'regen'),
+            if (canPin)
+              _actionTile(
+                context,
+                message.pinned ? Icons.push_pin_outlined : Icons.push_pin,
+                message.pinned ? '取消钉住' : '钉住',
+                'pin',
+                iconColor: message.pinned
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+              ),
+            _actionTile(context, Icons.ios_share, '导出并分享', 'export'),
+          ],
+        ),
       ),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      items: [
-        const PopupMenuItem(
-          value: 'copy',
-          height: 44,
-          child: Row(
-            children: [
-              Icon(Icons.copy_outlined, size: 20),
-              SizedBox(width: 12),
-              Text('复制全文'),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'select',
-          height: 44,
-          child: Row(
-            children: [
-              Icon(Icons.highlight_alt, size: 20),
-              SizedBox(width: 12),
-              Text('选择文字'),
-            ],
-          ),
-        ),
-        if (canQuote)
-          const PopupMenuItem(
-            value: 'quote',
-            height: 44,
-            child: Row(
-              children: [
-                Icon(Icons.format_quote_outlined, size: 20),
-                SizedBox(width: 12),
-                Text('引用'),
-              ],
-            ),
-          ),
-        if (canPin)
-          PopupMenuItem(
-            value: 'pin',
-            height: 44,
-            child: Row(
-              children: [
-                Icon(
-                  message.pinned
-                      ? Icons.push_pin_outlined
-                      : Icons.push_pin,
-                  size: 20,
-                  color: message.pinned
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
-                const SizedBox(width: 12),
-                Text(message.pinned ? '取消钉住' : '钉住'),
-              ],
-            ),
-          ),
-        const PopupMenuDivider(),
-        const PopupMenuItem(
-          value: 'export',
-          height: 44,
-          child: Row(
-            children: [
-              Icon(Icons.ios_share, size: 20),
-              SizedBox(width: 12),
-              Text('导出并分享'),
-            ],
-          ),
-        ),
-      ],
     );
     if (!context.mounted || action == null) return;
 
@@ -661,6 +585,11 @@ class _MessageBubbleState extends State<MessageBubble> {
 
     if (action == 'quote') {
       widget.onQuote?.call();
+      return;
+    }
+
+    if (action == 'regen') {
+      widget.onRegenerate?.call();
       return;
     }
 
