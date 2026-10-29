@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -118,6 +117,9 @@ class _HomeInputBarState extends State<HomeInputBar> {
     super.dispose();
   }
 
+  /// 上一次输入是否以「/」开头（斜杠面板边沿触发用）
+  bool _slashWasActive = false;
+
   /// 输入变化：空闲态防抖存草稿（聊天态草稿在切换/发送时机存，不逐键写）；
   /// 输入「/」唤起斜杠命令面板（I12）
   void _onInputChanged(String text) {
@@ -128,16 +130,26 @@ class _HomeInputBarState extends State<HomeInputBar> {
         context.read<SettingsService>().setIdleDraft(text.trim());
       });
     }
-    // I12 斜杠命令：输入以「/」开头（单独一个 / 或 / 后跟筛选词）时唤起面板。
-    // 面板打开期间输入框继续可编辑（筛选词实时传入），pop 后按需处理
-    if (text.startsWith('/')) {
-      _openSlashCommands(text);
+    // I12 斜杠命令：**边沿触发**——只在「无 / → 有 /」跳变时唤起面板。
+    // 电平触发（startsWith 就弹）会导致删除时每删一个 / 都重弹一次
+    // （用户验收反馈：删 / 不应弹，只有输入 / 才弹）。面板自带搜索框，
+    // 输入框文本不参与过滤。
+    final slashActive = text.startsWith('/');
+    if (slashActive && !_slashWasActive) {
+      _openSlashCommands();
     }
+    _slashWasActive = slashActive;
   }
 
   /// I12 斜杠命令面板：快捷短语填入（Skill 切换走输入栏 tag，不进面板）
-  Future<void> _openSlashCommands(String query) async {
+  Future<void> _openSlashCommands() async {
     final settings = context.read<SettingsService>();
+
+    // 先收键盘再弹面板：否则面板先顶到键盘上沿，随后模态路由抢走
+    // 焦点、键盘收起，面板跟着回落一截——「弹出又回退」很丑
+    // （用户验收反馈）。unfocus 后键盘 250ms 内收起，面板从底部
+    // 平滑滑入，无二次跳动。
+    widget.focusNode.unfocus();
 
     final result = await showAppBottomSheet<String>(
       context: context,
@@ -156,9 +168,12 @@ class _HomeInputBarState extends State<HomeInputBar> {
         ..text = result;
       widget.controller.selection =
           TextSelection.collapsed(offset: result.length);
+      _slashWasActive = false; // 短语无 / 前缀，重置边沿状态
       return;
     }
-    // 点遮罩关闭：保留输入框原样（用户可能继续输入）
+    // 点遮罩关闭：保留输入框原样（用户可能继续输入）。此时文本仍以
+    // / 开头，_slashWasActive 保持 true——继续删 / 不会重弹（边沿
+    // 触发语义：只有「无 → 有」跳变才弹）。
   }
 
   /// 文件附件沙箱目录（应用文档目录/attachments）
