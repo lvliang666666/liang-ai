@@ -577,6 +577,162 @@ void main() {
     });
   });
 
+  group('E5 流式中断恢复', () {
+    test('流式开始即落库占位（interrupted=1）——App 被杀可识别', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      // 占位落库是 fire-and-forget：让一拍事件循环等它进队完成
+      await Future.delayed(Duration.zero);
+      // 占位在流式开始时已落库（不等收尾）
+      final during = await db.getMessages('s1');
+      expect(during.length, 2);
+      expect(during.last.role, 'assistant');
+      expect(during.last.interrupted, isTrue,
+          reason: '占位标记：进程被杀后启动扫描能识别未收尾');
+
+      // 模拟 App 被杀：直接重建 provider 读库（不 emit 收尾事件）
+      final p2 = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+          id: 's1',
+          title: '新对话',
+          createdAt: 1000,
+          updatedAt: 1000,
+        ),
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+      await p2.loadMessages();
+      expect(p2.lastRoundInterrupted, isTrue,
+          reason: '启动扫描：占位未收尾 → 恢复中断态');
+      p2.dispose();
+    });
+
+    test('正常收尾：占位覆写为完整内容，interrupted 复位', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('完整回答'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      final msgs = await db.getMessages('s1');
+      expect(msgs.length, 2);
+      expect(msgs.last.content, '完整回答');
+      expect(msgs.last.interrupted, isFalse);
+
+      // 重启扫描：正常收尾不误报
+      final p2 = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+          id: 's1',
+          title: '新对话',
+          createdAt: 1000,
+          updatedAt: 1000,
+        ),
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+      await p2.loadMessages();
+      expect(p2.lastRoundInterrupted, isFalse);
+      p2.dispose();
+    });
+
+    test('断流收尾：半截内容落库带中断标记，重启可续传', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('收到一半'));
+      api.emit(const SseInterrupted());
+      await Future.delayed(Duration.zero);
+
+      final msgs = await db.getMessages('s1');
+      expect(msgs.last.content, '收到一半');
+      expect(msgs.last.interrupted, isTrue);
+
+      // 重启扫描：恢复中断态
+      final p2 = ChatProvider(
+        database: db,
+        api: api,
+        session: ChatSession(
+          id: 's1',
+          title: '新对话',
+          createdAt: 1000,
+          updatedAt: 1000,
+        ),
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+      await p2.loadMessages();
+      expect(p2.lastRoundInterrupted, isTrue);
+      p2.dispose();
+    });
+
+    test('空占位取消：占位删除，不留幽灵消息', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      // 未收到任何内容就取消
+      provider.stopGeneration();
+      api.emitError(DioException(
+          requestOptions: RequestOptions(path: '/'),
+          type: DioExceptionType.cancel));
+      await Future.delayed(Duration.zero);
+
+      final msgs = await db.getMessages('s1');
+      expect(msgs.length, 1, reason: '空占位应删除，只留 user 消息');
+      expect(msgs.single.role, 'user');
+    });
+
+    test('中断态发新消息：放弃续传，中断态复位', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('你好');
+      api.emit(const SseDeltaContent('收到一半'));
+      api.emit(const SseInterrupted());
+      await Future.delayed(Duration.zero);
+      expect(provider.lastRoundInterrupted, isTrue);
+
+      // 直接发新消息（不走续传）
+      await provider.sendMessage('换个话题');
+      expect(provider.lastRoundInterrupted, isFalse);
+      api.emit(const SseDeltaContent('好的'));
+      api.emit(const SseDone());
+      // 两拍：第二轮占位落库 + 收尾覆写都要进队完成
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      // DB：半截消息保留原样 + 新 user + 新 assistant
+      final msgs = await db.getMessages('s1');
+      expect(msgs.length, 4);
+      expect(msgs[1].content, '收到一半');
+      expect(msgs[1].interrupted, isTrue);
+      expect(msgs[2].content, '换个话题');
+      expect(msgs[3].content, '好的');
+      expect(msgs[3].interrupted, isFalse);
+    });
+
+    test('工具轮落库：interrupted 复位（完整产物非半截）', () async {
+      await provider.loadMessages();
+      await provider.sendMessage('查时间');
+      // 真实时序：工具分片 → finish_reason=tool_calls
+      api.emit(const SseToolCallDelta(
+        index: 0,
+        id: 'call_1',
+        name: 'get_current_time',
+        argumentsFragment: '',
+      ));
+      api.emit(const SseToolCallsFinished());
+      await Future.delayed(Duration.zero);
+
+      // 工具轮 assistant 消息（含 tool_calls）落库，不带中断标记
+      final msgs = await db.getMessages('s1');
+      final toolMsg =
+          msgs.firstWhere((m) => m.role == 'assistant' && m.toolCalls.isNotEmpty);
+      expect(toolMsg.interrupted, isFalse);
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+    });
+  });
+
   group('F4 智能路由', () {
     /// 建一个开了智能路由的 provider（复用 setUp 的 db/api）
     ChatProvider routedProvider() => ChatProvider(

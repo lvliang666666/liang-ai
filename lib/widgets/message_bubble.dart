@@ -440,6 +440,14 @@ class _MessageBubbleState extends State<MessageBubble> {
                     message.content.isEmpty &&
                     message.reasoning.isEmpty)
                   const _TypingIndicator(),
+                // E5：中断且无任何内容（App 被杀时的空占位）——不渲染
+                // 空气泡正文，只显示「已中断」提示
+                if (widget.interrupted &&
+                    !isStreaming &&
+                    message.content.isEmpty &&
+                    message.reasoning.isEmpty &&
+                    message.toolCalls.isEmpty)
+                  const SizedBox(height: 2),
                 // I10 断流续传胶囊：连接中断 · 点击续传
                 //（onResume 为 null = 无续传能力，不显示）
                 if (widget.interrupted &&

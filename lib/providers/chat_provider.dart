@@ -238,6 +238,13 @@ class ChatProvider extends ChangeNotifier {
   Future<void> loadMessages() async {
     _messages = await _db.getMessages(_session.id);
     _contextSummary = await _db.getContextSummary(_session.id);
+    // E5：启动扫描——最后一条 assistant 消息带中断标记（App 被杀时
+    // 占位未收尾 / 断流落库的半截），恢复中断态供 UI 显示续传胶囊
+    if (_messages.isNotEmpty) {
+      final last = _messages.last;
+      _lastRoundInterrupted =
+          last.role == 'assistant' && last.interrupted;
+    }
     _notify();
   }
 
@@ -249,6 +256,9 @@ class ChatProvider extends ChangeNotifier {
     }
 
     _errorMessage = '';
+    // E5：中断态下直接发新消息 = 放弃续传（被中断的半截消息保留原样，
+    // 不再是「最后一条 assistant」，启动扫描不会误报）
+    _lastRoundInterrupted = false;
     final now = DateTime.now().millisecondsSinceEpoch;
 
     // F4 智能路由：按本条消息内容决策推理档位（开关关闭时为 null，
@@ -356,6 +366,8 @@ class ChatProvider extends ChangeNotifier {
     if (idx >= 0) {
       _messages = _messages.sublist(0, idx);
     }
+    // E5：截断即离开中断态（被中断的半截消息已随截断删除）
+    _lastRoundInterrupted = false;
 
     // 2. 前情摘要失效检查：边界消息被删则摘要作废（DB + 内存）
     final summary = _contextSummary;
@@ -400,6 +412,8 @@ class ChatProvider extends ChangeNotifier {
     }
     final userIdx = _messages.indexWhere((m) => m.id == lastUserId);
     _messages = _messages.sublist(0, userIdx + 1);
+    // E5：重答即离开中断态（被中断的半截消息已删除）
+    _lastRoundInterrupted = false;
 
     // 前情摘要失效检查：边界消息被删则摘要作废（与 editAndResend 同规则）
     final summary = _contextSummary;
@@ -445,17 +459,22 @@ class ChatProvider extends ChangeNotifier {
       // 超上限保护：最后一轮注入系统提示强制模型总结
       final forceSummary = iteration == _maxLoopIterations - 1;
 
-      // 创建本轮流式 assistant 消息
+      // 创建本轮流式 assistant 消息（E5：interrupted 预置 true——
+      // 占位即「未收尾」，正常收尾时覆写复位）
       _streamingMessage = ChatMessage(
         id: _genId(),
         sessionId: _session.id,
         role: 'assistant',
+        interrupted: true,
         createdAt: DateTime.now().millisecondsSinceEpoch,
       );
       _status = ChatStatus.thinking;
       _thinkingStart ??= DateTime.now();
       // I10：首轮记生成起点（工具轮跨轮累计，不重置）
       _generationStart ??= DateTime.now();
+      // E5：流式开始即落库占位（interrupted=1）——App 被杀时消息已在
+      // DB，启动扫描能识别「未收尾」；正常收尾时覆写为完整内容
+      _persistQuietly(_db.insertMessage(_streamingMessage!));
       _notify();
 
       // 发起流式请求（Agent system prompt 插入消息头部）
@@ -579,8 +598,10 @@ class ChatProvider extends ChangeNotifier {
     _toolCallAccumulators.clear();
 
     // 2. 当前 assistant 消息（含 tool_calls + 已收 content/reasoning）落库
+    //（E5 占位覆写：interrupted 复位——工具调用是完整产物，非半截）
     final assistantMsg = _streamingMessage!;
     assistantMsg.toolCalls = calls;
+    assistantMsg.interrupted = false;
     _stampTokenUsage(assistantMsg);
     await _db.insertMessage(assistantMsg);
     _messages = [..._messages, assistantMsg];
@@ -664,17 +685,28 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// 正常结束：落库 assistant 消息
+  ///
+  /// 同步改状态 + fire-and-forget 落库（与旧版语义一致：调用方在
+  /// completer 完成后立即读内存态；DB 断言经同一队列天然有序）。
+  /// 落库带容错：dispose 后 DB 已关时静默（E5 占位残留无害，重启
+  /// 扫描会把它标中断，用户重答即清）。
   void _finishStreaming() {
     final msg = _streamingMessage;
     if (msg != null) {
-      // 空消息（取消时刚创建、未收到任何内容）不落库
       if (msg.content.isNotEmpty ||
           msg.reasoning.isNotEmpty ||
           msg.toolCalls.isNotEmpty) {
         _stampTokenUsage(msg);
         _stampDurations(msg);
-        _db.insertMessage(msg);
+        // E5 占位覆写：正常收尾 = interrupted 复位（toMap 写 0，
+        // ConflictAlgorithm.replace 覆盖占位的 1）
+        msg.interrupted = false;
+        _persistQuietly(_db.insertMessage(msg));
         _messages = [..._messages, msg];
+      } else {
+        // 空消息（取消时刚创建、未收到任何内容）：E5 占位已落库，
+        // 删除之，否则启动扫描会误报「已中断」
+        _persistQuietly(_db.deleteMessage(msg.id));
       }
     }
     _streamingMessage = null;
@@ -685,6 +717,14 @@ class ChatProvider extends ChangeNotifier {
     _generationStart = null;
     _lastRoundInterrupted = false;
     _notify();
+  }
+
+  /// fire-and-forget 落库的统一容错：失败只 debugPrint（dispose 后
+  /// DB 已关是正常时序，绝不让异常逃到 zone 炸测试/崩溃）
+  void _persistQuietly(Future<void> future) {
+    future.catchError((Object e) {
+      debugPrint('ChatProvider 落库失败（已忽略）：$e');
+    });
   }
 
   /// 断流收尾（I10）：保留已收内容落库 + 标记中断态
@@ -698,7 +738,8 @@ class ChatProvider extends ChangeNotifier {
         (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
       _stampTokenUsage(msg);
       _stampDurations(msg);
-      _db.insertMessage(msg);
+      msg.interrupted = true; // E5：中断消息持久标记（重启后仍可识别）
+      _persistQuietly(_db.insertMessage(msg));
       _messages = [..._messages, msg];
     }
     _streamingMessage = null;
@@ -736,7 +777,8 @@ class ChatProvider extends ChangeNotifier {
     if (msg != null && (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
       _stampTokenUsage(msg);
       _stampDurations(msg);
-      _db.insertMessage(msg);
+      msg.interrupted = true; // E5：错误半截消息同样标中断（可重答）
+      _persistQuietly(_db.insertMessage(msg));
       _messages = [..._messages, msg];
     }
     _streamingMessage = null;
