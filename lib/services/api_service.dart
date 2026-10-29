@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../models/provider_profile.dart';
+import 'diagnostic_log.dart';
 import 'sse_parser.dart';
 
 /// API 调用异常（带用户可读信息）
@@ -48,6 +49,7 @@ class ApiService {
     List<Map<String, Object?>>? tools,
   }) async* {
     final parser = SseParser(reasoningField: profile.dialect.reasoningField);
+    final stopwatch = Stopwatch()..start();
     try {
       final response = await _dio.post<ResponseBody>(
         '/chat/completions',
@@ -61,6 +63,11 @@ class ApiService {
           temperature: temperature,
           tools: tools,
         ),
+      );
+      DiagnosticLog.logApiError(
+        kind: 'connected',
+        elapsedMs: stopwatch.elapsedMilliseconds,
+        model: model,
       );
 
       final stream = response.data!.stream
@@ -85,6 +92,13 @@ class ApiService {
       if (!parser.isDone) yield const SseInterrupted();
     } on DioException catch (e) {
       if (e.type == DioExceptionType.cancel) rethrow; // 停止生成，由上层处理
+      // E4 诊断：只记元数据（状态码/类型/耗时），正文与 Key 永不落盘
+      DiagnosticLog.logApiError(
+        kind: e.type.name,
+        statusCode: e.response?.statusCode,
+        elapsedMs: stopwatch.elapsedMilliseconds,
+        model: model,
+      );
       throw ApiException(_mapError(e, profile), statusCode: e.response?.statusCode);
     }
   }

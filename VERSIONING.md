@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.16.1**（2026-10-29 发布）
+**当前版本：v2.17.0**（2026-10-29 发布）
+
+v2.17.0 在 v2.16.1 基础上新增（feat/memory-layers-diagnostics 分支，roadmap M3+E4 → MINOR）：
+
+- **M3 记忆分层/衰减/冲突消解**：记忆池从「一锅粥」变「三层楼」——画像（稳定身份：城市/职业/技术栈，不衰减）、偏好（风格喜好，不衰减）、事件（带时间性，30 天衰减）。DB v17：memories 加 layer 列（默认 event，老数据自动归事件层）；注入配额 置顶不限 → 画像≤5 → 偏好≤5 → 事件≤10，衰减事件不再注入但保留（面板可见可删）；衰减基线取最新记忆时间戳（自洽，不受时钟漂移影响）。冲突消解：提取 prompt 增【分层】【冲突】节 + 现有记忆样本（前 10 条），模型可回 layer/replaces 字段——replaces 归一化精确匹配旧条后归档（tag 前缀「已取代 ·」，内容保留可追溯），幻觉 replaces 静默跳过。UI：记忆卡片层级徽章（画像/偏好/事件三色）+ 层级筛选 chips
+- **E4 本地诊断日志**：「为什么回答中断了」有据可查——DiagnosticLog 环形 buffer 500 条（内存即时查）+ 按天滚动文件 diag_YYYYMMDD.log（保留 3 天，启动清理过期）；脱敏铁律：Bearer/sk- Key 形态打码，API 错误只记元数据（状态码/类型/耗时/模型），正文与 Key 永不落盘；崩溃钩子 FlutterError.onError + PlatformDispatcher.onError 链式（先落盘再走原处理器）；ApiService 记 connected/DioException 元数据；设置页备份 tab 增「诊断日志」入口（查看/分享/清空，仅存本机）
+- 834 项测试全绿（新增 35：M3 服务 10 + 提取 6 + 页面 2 + DB 2 + E4 15）；flutter analyze 零 error/warning（53 条 info 持平）
+
+### v2.16.1（2026-10-29）
 
 v2.16.1 在 v2.16.0 基础上修复（main 直接提交，验收反馈 → PATCH）：
 

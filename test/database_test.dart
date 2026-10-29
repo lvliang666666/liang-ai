@@ -804,5 +804,87 @@ void main() {
       await upgraded.close();
       await databaseFactory.deleteDatabase(dbPath);
     });
+
+    test('v16 老库迁移到 v17：memories 加 layer 列（M3）', () async {
+      // 手写 v16 历史 schema（memories 无 layer 列），升级走生产 onUpgrade
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v16_to_v17_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 16),
+      );
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          pinned INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('memories', {
+        'id': 'mem1',
+        'content': '用户喜欢简洁回答',
+        'tag': '偏好',
+        'source_skill': null,
+        'pinned': 0,
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // 老数据 layer 默认 'event'（NULL 语义由模型层兜底，DB 层 NOT NULL DEFAULT）
+      final rows = await upgraded.query('memories');
+      expect(rows.single['layer'], 'event');
+      expect(Memory.fromMap(rows.single).layer, Memory.layerEvent);
+      expect(Memory.fromMap(rows.single).content, '用户喜欢简洁回答');
+
+      // 新列可写可读（画像层）
+      await upgraded.update(
+        'memories',
+        {'layer': Memory.layerProfile},
+        where: 'id = ?',
+        whereArgs: ['mem1'],
+      );
+      final updated = (await upgraded.query('memories')).first;
+      expect(Memory.fromMap(updated).layer, Memory.layerProfile);
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
+
+    test('v17 新装库：memories 表含 layer 列且默认 event', () async {
+      final db = await openTestDb();
+      final cols = await db.rawQuery('PRAGMA table_info(memories)');
+      final layerCol = cols.where((c) => c['name'] == 'layer').toList();
+      expect(layerCol, isNotEmpty, reason: 'v17 新装库 memories 必须有 layer 列');
+      expect(layerCol.single['dflt_value'], "'event'");
+
+      // 模型 roundtrip：layer 字段透传
+      final m = Memory(
+        id: 'm1',
+        content: '用户在上海做后端开发',
+        layer: Memory.layerProfile,
+        createdAt: 1,
+        updatedAt: 1,
+      );
+      await db.insert('memories', m.toMap());
+      final row = (await db.query('memories')).single;
+      final parsed = Memory.fromMap(row);
+      expect(parsed.layer, Memory.layerProfile);
+      await db.close();
+    });
   });
 }

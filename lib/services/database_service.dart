@@ -23,7 +23,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 16;
+  static const int dbVersion = 17;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -263,6 +263,18 @@ class DatabaseService {
       // 不进备份 restore 清空、deleteSession 级联删）
       await _createSessionSummariesTable(db);
     }
+    if (oldVersion < 17 && newVersion >= 17) {
+      // v16 → v17：记忆分层（M3）——memories 加 layer 列
+      //（profile=核心画像 / preference=偏好 / event=事件，NULL = 老数据
+      // 视作 event；事件层带时间衰减，画像/偏好层不衰减）
+      // 跨多版本直升时 memories 表由 v7 步新建、已含 layer（列存在性守卫）
+      final cols = await db.rawQuery('PRAGMA table_info(memories)');
+      final hasLayer = cols.any((c) => c['name'] == 'layer');
+      if (!hasLayer) {
+        await db.execute(
+            "ALTER TABLE memories ADD COLUMN layer TEXT NOT NULL DEFAULT 'event'");
+      }
+    }
   }
 
   /// FTS5 检索底座表（F1）：bigram 自管索引
@@ -354,6 +366,7 @@ class DatabaseService {
         tag TEXT,
         source_skill TEXT,
         pinned INTEGER,
+        layer TEXT NOT NULL DEFAULT 'event',
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
       )

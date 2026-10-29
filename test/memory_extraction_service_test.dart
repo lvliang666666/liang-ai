@@ -1,4 +1,5 @@
 import 'package:ai_chat_app/models/chat_message.dart';
+import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
@@ -208,6 +209,23 @@ void main() {
       expect(list, isNotNull);
       expect(list!.single.content, '有效');
     });
+
+    test('M3：layer/replaces 字段解析（合法值保留，非法值丢弃）', () {
+      final list = MemoryExtractionService.parseCandidates(
+          '{"memories": ['
+          '{"content": "用户现在在深圳工作", "layer": "profile", "replaces": "用户在上海工作"},'
+          '{"content": "用户喜欢详细回答", "layer": "不合法的层"},'
+          '{"content": "普通事件", "replaces": "  "}]}');
+      expect(list, isNotNull);
+      expect(list!.length, 3);
+      // 合法 layer + replaces 保留
+      expect(list[0].layer, 'profile');
+      expect(list[0].replaces, '用户在上海工作');
+      // 非法 layer 丢弃（null = MemoryService 自动分类）
+      expect(list[1].layer, isNull);
+      // 空白 replaces 丢弃
+      expect(list[2].replaces, isNull);
+    });
   });
 
   group('extractAndSave：端到端', () {
@@ -337,6 +355,89 @@ void main() {
       expect(saved, 1);
       final all = await memory.getAll();
       expect(all.length, 1); // 去重生效：仍是 1 条
+    });
+
+    test('M3 冲突消解：replaces 命中现有记忆 → 旧条归档 + 新条入库', () async {
+      final old = await memory.save('用户在上海工作', tag: '背景');
+      api.responses.add(
+          '{"memories": [{"content": "用户在深圳工作", "layer": "profile", '
+          '"replaces": "用户在上海工作"}]}');
+
+      final saved = await service.extractAndSave(
+        messages: [user('我最近搬到深圳了，换了份工作'), assistant('恭喜')],
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+
+      expect(saved, 1);
+      final all = await memory.getAll();
+      expect(all.length, 2); // 旧条归档保留 + 新条入库
+      // 新条：profile 层
+      final fresh = all.firstWhere((m) => m.content == '用户在深圳工作');
+      expect(fresh.layer, Memory.layerProfile);
+      // 旧条：已归档（tag 加「已取代」前缀），原文保留可溯源
+      final archived = all.firstWhere((m) => m.id == old.id);
+      expect(archived.isArchived, isTrue);
+      expect(archived.content, '用户在上海工作'); // 原文不动
+      expect(archived.tag, startsWith('已取代'));
+    });
+
+    test('M3 冲突消解：replaces 找不到对应记忆（幻觉）→ 静默跳过归档', () async {
+      api.responses.add(
+          '{"memories": [{"content": "用户喜欢喝咖啡", "replaces": "不存在的旧记忆"}]}');
+
+      final saved = await service.extractAndSave(
+        messages: [user('我喜欢喝咖啡'), assistant('好的')],
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+
+      expect(saved, 1); // 新条照常入库
+      final all = await memory.getAll();
+      expect(all.length, 1); // 无归档行产生
+      expect(all.single.isArchived, isFalse);
+    });
+
+    test('M3：prompt 附带现有记忆样本（供冲突判断）', () async {
+      await memory.save('用户在上海工作');
+      api.responses.add('{"memories": []}');
+
+      await service.extractAndSave(
+        messages: [user('你好'), assistant('你好呀')],
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+
+      final systemMsg = api.lastMessages!.first['content'] as String;
+      expect(systemMsg, contains('【现有记忆】'));
+      expect(systemMsg, contains('用户在上海工作'));
+    });
+
+    test('M3：无现有记忆时 prompt 不带样本段', () async {
+      api.responses.add('{"memories": []}');
+
+      await service.extractAndSave(
+        messages: [user('你好'), assistant('你好呀')],
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+
+      final systemMsg = api.lastMessages!.first['content'] as String;
+      expect(systemMsg, isNot(contains('【现有记忆】')));
+    });
+
+    test('M3：候选带 layer 时按显式层入库（不走自动分类）', () async {
+      api.responses.add(
+          '{"memories": [{"content": "用户最近在准备考试", "layer": "event"}]}');
+
+      await service.extractAndSave(
+        messages: [user('我在准备考试'), assistant('加油')],
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+      );
+
+      final all = await memory.getAll();
+      expect(all.single.layer, Memory.layerEvent);
     });
 
     test('超长候选截断到 maxMemoryLength', () async {
