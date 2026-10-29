@@ -15,6 +15,7 @@ import '../services/api_service.dart';
 import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_service.dart';
+import '../services/smart_router.dart';
 import '../services/sse_parser.dart';
 import '../services/tool_registry.dart';
 import '../services/tools/builtin_tools.dart';
@@ -34,6 +35,7 @@ class ChatProvider extends ChangeNotifier {
     List<ToolHandler> toolCatalog = builtinTools,
     MemoryService? memory,
     ContextSummaryService? summaryService,
+    bool smartRouting = false,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -44,6 +46,7 @@ class ChatProvider extends ChangeNotifier {
         _memory = memory,
         _summaryService = summaryService ??
             ContextSummaryService(api: api, database: database),
+        _smartRoutingEnabled = smartRouting,
         _tools = _buildRegistry(skill, toolCatalog);
 
   final DatabaseService _db;
@@ -245,6 +248,12 @@ class ChatProvider extends ChangeNotifier {
     _errorMessage = '';
     final now = DateTime.now().millisecondsSinceEpoch;
 
+    // F4 智能路由：按本条消息内容决策推理档位（开关关闭时为 null，
+    // _effectiveEffort 走原有 Skill/会话优先级，行为不变）
+    _smartRouteEffort = _smartRoutingEnabled
+        ? SmartRouter.route(content, hasAttachments: _pendingAttachments.isNotEmpty)
+        : null;
+
     // 1. 落库 user 消息（含待发送附件，随后清空队列）
     final userMsg = ChatMessage(
       id: _genId(),
@@ -358,6 +367,54 @@ class ChatProvider extends ChangeNotifier {
 
     // 3. 以新文本重新发送（sendMessage 落库新 user 消息 + 启动 loop）
     await sendMessage(content);
+  }
+
+  /// 重答（I3）：删除该 assistant 消息及其后全部消息，复用原 user
+  /// 消息重新生成
+  ///
+  /// 长按菜单「重答」入口：对最后一条 assistant 回答不满意时一键
+  /// 重跑。截断 = DB 删除 + 内存同步（复用 [resumeLastGeneration]
+  /// 的孤儿清理语义）；user 消息不重插，直接走 loop 启动段。
+  Future<void> regenerateFrom(ChatMessage assistantMsg) async {
+    if (isStreaming || assistantMsg.isUser) return;
+
+    // 找该 assistant 消息之前最近的一条 user 消息（重答锚点）
+    final idx = _messages.indexWhere((m) => m.id == assistantMsg.id);
+    if (idx < 0) return;
+    String? lastUserId;
+    for (var i = idx - 1; i >= 0; i--) {
+      if (_messages[i].isUser) {
+        lastUserId = _messages[i].id;
+        break;
+      }
+    }
+    if (lastUserId == null) return;
+
+    // 删除该 assistant 消息及其后全部消息（含 tool 结果等中间产物）
+    final orphans = _messages.skip(idx).toList();
+    for (final m in orphans) {
+      await _db.deleteMessage(m.id);
+    }
+    final userIdx = _messages.indexWhere((m) => m.id == lastUserId);
+    _messages = _messages.sublist(0, userIdx + 1);
+
+    // 前情摘要失效检查：边界消息被删则摘要作废（与 editAndResend 同规则）
+    final summary = _contextSummary;
+    if (summary != null) {
+      final boundaryGone = _messages.every((m) =>
+          m.id != summary.firstKeptId && m.createdAt < summary.firstKeptAt);
+      if (boundaryGone) {
+        await _db.deleteContextSummary(_session.id);
+        _contextSummary = null;
+      }
+    }
+
+    // 重新生成（user 消息复用原条，直接走 loop 启动段）
+    await _refreshMemoryText();
+    _toolResults = [];
+    unawaited(_runLoop().catchError((Object e) {
+      debugPrint('ChatProvider loop 后台异常（已忽略）：$e');
+    }));
   }
 
   /// agentic loop：请求 → 流式收包 →（工具调用？执行 → 再请求）→ 收尾
@@ -808,7 +865,12 @@ class ChatProvider extends ChangeNotifier {
   ///
   /// 会话 effort 是用户在聊天中可手动调整的值；Skill 预设只在
   /// 会话仍为初始默认值时生效，用户手动改过则以用户为准。
+  /// F4 智能路由开启时：按本轮消息内容规则决策，覆盖以上全部
+  /// （路由是「这一条消息该用多大力气」的即时判断，优先级最高）。
   String get _effectiveEffort {
+    if (_smartRouteEffort != null) {
+      return _smartRouteEffort!;
+    }
     final skillEffort = _skill?.effort;
     if (skillEffort != null && _session.effort == 'max') {
       // 会话未手动调整过（保持默认 max），采用 Skill 预设
@@ -816,6 +878,12 @@ class ChatProvider extends ChangeNotifier {
     }
     return _session.effort;
   }
+
+  /// F4 智能路由的本轮决策结果（null = 未启用或非路由决策）
+  String? _smartRouteEffort;
+
+  /// F4 智能路由开关（宿主从 SettingsService 传入；默认关）
+  bool _smartRoutingEnabled;
 
   /// 生效的温度：Skill 预设优先（会话级温度暂未开放手动调整）
   double get _effectiveTemperature => _skill?.temperature ?? 0.7;

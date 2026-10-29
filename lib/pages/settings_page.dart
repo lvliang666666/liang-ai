@@ -18,6 +18,7 @@ import '../providers/theme_provider.dart';
 import '../services/backup_service.dart';
 import '../services/database_service.dart';
 import '../services/settings_service.dart';
+import '../services/skill_parser.dart';
 import '../theme/app_theme_id.dart';
 import 'http_tool_panel.dart';
 import 'memory_page.dart';
@@ -232,6 +233,16 @@ class _SettingsPageState extends State<SettingsPage> {
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('新建'),
               ),
+              const SizedBox(width: 8),
+              IconButton.outlined(
+                tooltip: '从分享码导入',
+                onPressed: () {
+                  Haptics.light();
+                  _unfocusSkillSearch();
+                  _importFromShareCode(context);
+                },
+                icon: const Icon(Icons.paste, size: 20),
+              ),
             ],
           ),
         ),
@@ -314,7 +325,18 @@ class _SettingsPageState extends State<SettingsPage> {
                                       _confirmDuplicateSkill(context, a);
                                     },
                                   )
-                                else
+                                else ...[
+                                  // T3 分享码：复制为可粘贴导入的文本
+                                  IconButton(
+                                    icon: const Icon(Icons.ios_share,
+                                        size: 20),
+                                    tooltip: '复制为分享码',
+                                    onPressed: () {
+                                      Haptics.medium();
+                                      _unfocusSkillSearch();
+                                      _copySkillShareCode(context, a);
+                                    },
+                                  ),
                                   IconButton(
                                     icon: const Icon(Icons.delete_outline,
                                         size: 20),
@@ -325,6 +347,7 @@ class _SettingsPageState extends State<SettingsPage> {
                                       _confirmDeleteSkill(context, a);
                                     },
                                   ),
+                                ],
                               ],
                             ),
                           ),
@@ -377,6 +400,71 @@ class _SettingsPageState extends State<SettingsPage> {
       await context.read<SkillProvider>().duplicate(skill);
       if (context.mounted) {
         showAppToast(context, '已复制为「${skill.name} 副本」');
+      }
+    }
+  }
+
+  /// T3 复制 Skill 为分享码（YAML front matter + 正文整段文本）
+  Future<void> _copySkillShareCode(BuildContext context, Skill skill) async {
+    await Clipboard.setData(
+        ClipboardData(text: SkillParser.toShareCode(skill)));
+    if (context.mounted) {
+      showAppToast(context, '分享码已复制，粘贴给他人即可导入');
+    }
+  }
+
+  /// T3 从分享码导入：弹窗粘贴文本 → 解析入库
+  Future<void> _importFromShareCode(BuildContext context) async {
+    final controller = TextEditingController();
+    final raw = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('从分享码导入'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('粘贴他人分享的 Skill 分享码（以 --- 开头的文本）'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              maxLines: 6,
+              autofocus: true,
+              decoration: const InputDecoration(
+                hintText: '---\nname: …\n---\n提示词正文…',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context);
+            },
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Haptics.light();
+              Navigator.pop(context, controller.text);
+            },
+            child: const Text('导入'),
+          ),
+        ],
+      ),
+    );
+    if (raw == null || raw.trim().isEmpty || !context.mounted) return;
+
+    try {
+      final skill =
+          await context.read<SkillProvider>().importFromShareCode(raw);
+      if (context.mounted) {
+        showAppToast(context, '已导入「${skill.name}」');
+      }
+    } catch (e) {
+      if (context.mounted) {
+        showAppToast(context, '导入失败：分享码格式不正确');
       }
     }
   }
@@ -768,6 +856,23 @@ class _SettingsPageState extends State<SettingsPage> {
           onChanged: (v) {
             Haptics.selection();
             setState(() => _settings.setContextCompression(v));
+          },
+        ),
+        const SizedBox(height: 16),
+        Text('智能路由', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('按消息自动选推理档位'),
+          subtitle: const Text(
+            '开启后每条消息自动判断该用多大力气：含「深入/推理/证明/'
+            '代码」等词走深度推理，短寒暄走轻量推理，其余均衡。'
+            '覆盖上方手动档位与 Skill 预设',
+          ),
+          value: _settings.smartRouting,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setSmartRouting(v));
           },
         ),
       ],

@@ -29,6 +29,7 @@ class ChatMessageList extends StatefulWidget {
     required this.onDelete,
     this.onEditMessage,
     this.onQuoteMessage,
+    this.onRegenerateMessage,
   });
 
   /// 会话身份 key：AnimatedSwitcher 据此判断是否播过渡
@@ -42,6 +43,9 @@ class ChatMessageList extends StatefulWidget {
 
   /// 引用追问（I5：assistant 消息长按菜单「引用」入口；null = 无引用能力）
   final ValueChanged<ChatMessage>? onQuoteMessage;
+
+  /// 重答（I3：assistant 消息长按菜单「重答」入口；null = 无重答能力）
+  final ValueChanged<ChatMessage>? onRegenerateMessage;
 
   @override
   State<ChatMessageList> createState() => ChatMessageListState();
@@ -343,6 +347,11 @@ class ChatMessageListState extends State<ChatMessageList> {
                                 // I5 引用追问：仅 assistant 消息且宿主有引用能力
                                 onQuote: !msg.isUser && widget.onQuoteMessage != null
                                     ? () => widget.onQuoteMessage!(msg)
+                                    : null,
+                                // I3 重答：仅 assistant 消息且宿主有重答能力
+                                onRegenerate: !msg.isUser &&
+                                        widget.onRegenerateMessage != null
+                                    ? () => widget.onRegenerateMessage!(msg)
                                     : null,
                               ),
                             ],

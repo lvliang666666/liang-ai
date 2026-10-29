@@ -235,6 +235,8 @@ class _HomePageState extends State<HomePage> {
       model: s.model?.isNotEmpty == true ? s.model! : profile.defaultModel,
       skill: skill,
       memory: MemoryService(database: db),
+      // F4 智能路由开关（设置页控制；关 = 手动档位行为不变）
+      smartRouting: context.read<SettingsService>().smartRouting,
       toolCatalog: [
         ...builtinTools,
         for (final t in httpTools) HttpToolHandler(t),
@@ -780,9 +782,13 @@ class _HomePageState extends State<HomePage> {
                                   chatKey: ValueKey(_chat!.session.id),
                                   chat: _chat!,
                                   onDelete: _deleteCurrentChat,
-                                  // I4 编辑重发 / I5 引用追问入口
+                                  // I4 编辑重发 / I5 引用追问 / I3 重答入口
                                   onEditMessage: _enterEditMode,
                                   onQuoteMessage: _enterQuoteMode,
+                                  onRegenerateMessage: (msg) {
+                                    Haptics.light();
+                                    _chat?.regenerateFrom(msg);
+                                  },
                                 ),
                               ),
                       ),

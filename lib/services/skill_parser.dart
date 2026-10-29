@@ -112,6 +112,54 @@ class SkillParser {
         .toList();
     return names;
   }
+
+  // ===== T3 Skill 分享码 =====
+
+  /// Skill 序列化为分享码文本（YAML front matter + 正文，与资产 .md 同构）
+  ///
+  /// 分享码 = 一段纯文本，粘贴即导入（T3）。字段缺省策略与解析对称：
+  /// temperature/effort 为 null 不输出；toolNames null 不输出（=全部）、
+  /// [] 输出 `tools: none`、非空逗号连接。
+  static String toShareCode(Skill skill) {
+    final buf = StringBuffer('---\n');
+    buf.writeln('name: ${skill.name}');
+    buf.writeln('icon: ${skill.icon}');
+    if (skill.description.isNotEmpty) {
+      buf.writeln('description: ${skill.description}');
+    }
+    if (skill.temperature != null) {
+      buf.writeln('temperature: ${skill.temperature}');
+    }
+    if (skill.effort != null) {
+      buf.writeln('effort: ${skill.effort}');
+    }
+    if (skill.toolNames != null) {
+      buf.writeln(
+          'tools: ${skill.toolNames!.isEmpty ? 'none' : skill.toolNames!.join(', ')}');
+    }
+    buf.writeln('---');
+    buf.write(skill.prompt);
+    return buf.toString();
+  }
+
+  /// 从分享码文本解析为可入库的自定义 Skill（T3 导入）
+  ///
+  /// 复用 [parse]（front matter 规范一致）；[id] 由调用方生成。
+  /// name 缺省用「导入的 Skill」；isBuiltin 恒 false。
+  static Skill fromShareCode(String id, String raw) {
+    final r = parse(raw);
+    return Skill(
+      id: id,
+      name: (r.name == null || r.name!.trim().isEmpty) ? '导入的 Skill' : r.name!,
+      icon: r.icon ?? '🤖',
+      description: r.description ?? '',
+      prompt: r.prompt,
+      temperature: r.temperature,
+      effort: r.effort,
+      toolNames: r.toolNames,
+      isBuiltin: false,
+    );
+  }
 }
 
 /// 解析结果
