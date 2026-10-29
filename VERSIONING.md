@@ -8,7 +8,17 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.16.0**（2026-10-29 发布）
+**当前版本：v2.16.1**（2026-10-29 发布）
+
+v2.16.1 在 v2.16.0 基础上修复（main 直接提交，验收反馈 → PATCH）：
+
+- **斜杠面板回退跳动根治**（6693fd9）：unfocus 不够——键盘收起动画 ~250ms 与面板入场重叠，AnimatedPadding 跟随 viewInsets 先顶键盘上沿再回落；修复=`_openSlashCommands` unfocus 后轮询 viewInsets 直到归零（32ms 步进 600ms 上限防慢 IME），键盘完全收起才弹面板；等待期间「/」被删则放弃弹出并重置边沿状态
+- **斜杠边沿触发**（6693fd9）：`_slashWasActive` 状态只在「无 / → 有 /」跳变弹面板，删除时每删一个 / 不再重弹（原电平触发 bug）
+- **Sheet 键盘顶满屏被通知栏遮挡（系统性修复）**（5e82fb4）：SheetKeyboardInset 键盘在场时内容上限额外取 `屏高 − 键盘 − 状态栏`，面板顶边钳制在状态栏下沿；无键盘时不生效，既有布局零改动。所有 Sheet 一次性受益（搜索短语/搜索 Agent 等），message_outline_sheet 此前 45% 手工规避成为历史。同类问题在多个项目复现，lessons 已沉淀 `D:\LvProject\lessons\2026-10-29-flutter-sheet-keyboard-statusbar-overflow.md`
+- **Skill→Agent 全局改名**（c693fcd）：6 lib + 5 测试文件 git mv、65 标识符全量替换、assets/skills/→assets/agents/、UI 字符串全量。刻意保留：DB 物理表名 skills/列 skill_id/source_skill（老库零迁移）、备份 JSON key 'skills'（旧备份可导入）、存储键 recent_agent_ids
+- 799 项测试全绿（sheet_keyboard_inset 9 用例含状态栏保护两例）；flutter analyze 零 error/warning
+
+### v2.16.0（2026-10-29）
 
 v2.16.0 在 v2.15.0 基础上新增（feat/outline-slash-commands 分支，roadmap I8+I12 → MINOR）：
 
@@ -477,6 +487,7 @@ Tag 命名：`v<版本号>`（如 `v1.0.0`、`v1.1.0`），打在 release 提交
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v2.16.1 | 2026-10-29 | 验收反馈修复：斜杠面板回退跳动根治（弹前轮询键盘归零）+ 边沿触发防删 / 重弹 + Sheet 键盘顶满屏被通知栏遮挡系统性修复（键盘在场时内容上限 = 屏高−键盘−状态栏）+ Skill→Agent 全局改名（DB 物理名不动） |
 | v2.6.2 | 2026-10-24 | 快捷操作开关即时生效（SettingsService 继承 ChangeNotifier + notifyListeners）+ 选择工具条跟手「完成」+ 批量复制（contextMenuBuilder 定制，复制保留选区） |
 | v2.6.1 | 2026-10-23 | 真机反馈修复：横滑复制真机失效（RawGestureDetector 注入设备 gestureSettings，slop 对等后气泡先认领）+ 选择文字豆包式重做（SelectionArea 包 GptMarkdown，渲染保留 + 系统工具条） |
 | v2.6.0 | 2026-10-23 | 快捷操作开关（设置页 tag，开=双向横滑复制/关=无横滑）+ 选择文字原地化（SelectableText，v2.6.1 已重做）+ 用户右滑复制定版 |
