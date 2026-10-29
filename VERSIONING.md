@@ -8,7 +8,16 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.17.0**（2026-10-29 发布）
+**当前版本：v2.18.0**（2026-10-29 发布）
+
+v2.18.0 在 v2.17.0 基础上新增（feat/capsule-collapse-ci 分支，roadmap I9+E11+E7 → MINOR）：
+
+- **I9 胶囊行滚动收纳**：下滑看历史时 tags 行（Agent/模型/档位/token）自动收起（AnimatedSize 200ms），上滑回底部展开——小屏回看长回答不再被胶囊行挤占视野。信号链：ChatMessageList._onScroll 方向判定（offset 增大且离底部 >120px 收起 / 减小展开）→ capsuleCollapsed ValueNotifier → HomeInputBar 消费；流式贴底跳转（offset 单调递减）不误触；空闲态不接信号常显
+- **E11 性能检查点三件套**：①流式气泡 key 隔离回归测试——历史气泡 GlobalKey 按 id putIfAbsent 登记，流式重建时元素身份不变（Markdown 全量重渲染只发生在最后一个气泡），reverse 列表 DFS 顺序在头部插入后变化故按集合比对；②会话列表 ListView.builder + 游标分页——抽屉两处 ListView(children:) 改 builder 惰性构建，常规列表首屏 50 条 +「加载更多」步进追加，搜索态不裁剪（必须命中全部）；DB 层保持全量查询（备份全量导出与主页 id 直查两个不变量不动）；③release.sh 加 --split-per-abi——arm64 独立包 28.2MB vs 通用包 85.6MB（缩 67%），aapt 校验适配 ABI versionCode 公式（arm64 = 2×1000 + buildNo）
+- **E7 CI 门禁**：GitHub Actions push/PR 到 main 触发——Flutter 锁 3.44.9 stable、pub 缓存按 lock 哈希、analyze 零 error/warning 门禁 + test 全绿门禁（与发版脚本同标准）
+- 850 项测试全绿（新增 7：分页边界/步进/搜索不限/分组顺序/交互回归 + key 隔离 1）；flutter analyze 零 error/warning（53 条 info 持平）
+
+### v2.17.0（2026-10-29）
 
 v2.17.0 在 v2.16.1 基础上新增（feat/memory-layers-diagnostics 分支，roadmap M3+E4 → MINOR）：
 
