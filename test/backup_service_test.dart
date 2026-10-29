@@ -5,7 +5,7 @@ import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/http_tool.dart';
 import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
-import 'package:ai_chat_app/models/skill.dart';
+import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/services/backup_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:ai_chat_app/services/settings_service.dart';
@@ -59,7 +59,7 @@ void main() {
       content: '回复',
       createdAt: 2,
     ));
-    await db.insertSkill(Skill(
+    await db.insertAgent(Agent(
       id: 'sk1',
       name: '架构师',
       prompt: '你是架构师',
@@ -178,8 +178,8 @@ void main() {
       final msgs = await db.getMessages('s1');
       expect(msgs.length, 2);
       expect(msgs.first.promptTokens, 10);
-      final skill = await db.getSkill('sk1');
-      expect(skill!.prompt, '你是架构师');
+      final agent = await db.getAgent('sk1');
+      expect(agent!.prompt, '你是架构师');
       final mem = await db.getAllMemories();
       expect(mem.first.content, '用户喜欢简洁');
       final tools = await db.getAllHttpTools();

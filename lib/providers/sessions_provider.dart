@@ -22,11 +22,11 @@ class SessionsProvider extends ChangeNotifier {
 
   /// 创建新会话并返回
   ///
-  /// [skillId] 选中的 Skill（null = 默认助手）；
+  /// [agentId] 选中的 Agent（null = 默认助手）；
   /// [providerId]/[model] 主页打开即聊时预选的供应商与模型（null = 用默认）。
   Future<ChatSession> createSession(
     String effort, {
-    String? skillId,
+    String? agentId,
     String? providerId,
     String? model,
   }) async {
@@ -37,7 +37,7 @@ class SessionsProvider extends ChangeNotifier {
       createdAt: now,
       updatedAt: now,
       effort: effort,
-      skillId: skillId,
+      agentId: agentId,
       providerId: providerId,
       model: model,
     );

@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// I12 斜杠命令测试：短语 KV 存取 / 面板过滤 / 交互回调
 ///
-/// v2.16.0 验收反馈后面板收窄为「快捷短语」单一功能（Skill 切换
+/// v2.16.0 验收反馈后面板收窄为「快捷短语」单一功能（Agent 切换
 /// 走输入栏 tag 入口，不进面板），filter 只处理短语。
 void main() {
   group('SettingsService 斜杠短语 KV', () {

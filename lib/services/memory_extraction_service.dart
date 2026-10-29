@@ -145,7 +145,7 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
     required List<ChatMessage> messages,
     required ProviderProfile profile,
     required String model,
-    String? sourceSkill,
+    String? sourceAgent,
     String? sessionTitle,
   }) async {
     if (!shouldExtract(messages)) return 0;
@@ -177,7 +177,7 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
       if (content.length > maxMemoryLength) {
         content = content.substring(0, maxMemoryLength);
       }
-      await _memory.save(content, tag: c.tag, sourceSkill: sourceSkill);
+      await _memory.save(content, tag: c.tag, sourceAgent: sourceAgent);
       saved++;
     }
     return saved;

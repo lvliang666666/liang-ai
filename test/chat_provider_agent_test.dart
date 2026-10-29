@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
-import 'package:ai_chat_app/models/skill.dart';
+import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
@@ -28,18 +28,18 @@ void main() {
     db.close();
   });
 
-  ChatProvider makeProvider({Skill? skill}) => ChatProvider(
+  ChatProvider makeProvider({Agent? agent}) => ChatProvider(
         database: DatabaseService.instance,
         api: ApiService(baseUrl: 'http://127.0.0.1:1', apiKey: 'test'),
         session: ChatSession(id: 's1', title: 't', createdAt: 1, updatedAt: 1),
         profile: ProviderProfile.builtinCompany(),
         model: 'glm5.1',
-        skill: skill,
+        agent: agent,
       );
 
   group('消息组装逻辑（system prompt 插入规则）', () {
-    test('Skill prompt 插入头部，历史消息保持顺序', () {
-      final skill = Skill(id: 'a', name: 'N', prompt: '你是架构师');
+    test('Agent prompt 插入头部，历史消息保持顺序', () {
+      final agent = Agent(id: 'a', name: 'N', prompt: '你是架构师');
       final messages = [
         ChatMessage(
             id: 'm1',
@@ -55,7 +55,7 @@ void main() {
             createdAt: 2),
       ];
 
-      final result = buildApiMessagesForTest(skill, messages);
+      final result = buildApiMessagesForTest(agent, messages);
 
       expect(result.length, 3);
       expect(result[0]['role'], 'system');
@@ -65,7 +65,7 @@ void main() {
       expect(result[2]['role'], 'assistant');
     });
 
-    test('无 Skill：不含 system 消息', () {
+    test('无 Agent：不含 system 消息', () {
       final messages = [
         ChatMessage(
             id: 'm1',
@@ -79,35 +79,35 @@ void main() {
       expect(result[0]['role'], 'user');
     });
 
-    test('Skill prompt 为空：不插入 system', () {
-      final skill = Skill(id: 'a', name: 'N', prompt: '');
-      final result = buildApiMessagesForTest(skill, const []);
+    test('Agent prompt 为空：不插入 system', () {
+      final agent = Agent(id: 'a', name: 'N', prompt: '');
+      final result = buildApiMessagesForTest(agent, const []);
       expect(result, isEmpty);
     });
   });
 
-  group('Skill 参数覆盖规则', () {
-    test('会话为默认 max 时，Skill 预设 effort 生效', () {
-      final skill = Skill(id: 'a', name: 'N', prompt: 'p', effort: 'low');
-      expect(effectiveEffortForTest(skill, 'max'), 'low');
+  group('Agent 参数覆盖规则', () {
+    test('会话为默认 max 时，Agent 预设 effort 生效', () {
+      final agent = Agent(id: 'a', name: 'N', prompt: 'p', effort: 'low');
+      expect(effectiveEffortForTest(agent, 'max'), 'low');
     });
 
     test('用户手动改过会话 effort 时，以用户为准', () {
-      final skill = Skill(id: 'a', name: 'N', prompt: 'p', effort: 'low');
-      expect(effectiveEffortForTest(skill, 'high'), 'high');
+      final agent = Agent(id: 'a', name: 'N', prompt: 'p', effort: 'low');
+      expect(effectiveEffortForTest(agent, 'high'), 'high');
     });
 
-    test('Skill 无 effort 预设时用会话值', () {
-      final skill = Skill(id: 'a', name: 'N', prompt: 'p');
-      expect(effectiveEffortForTest(skill, 'high'), 'high');
+    test('Agent 无 effort 预设时用会话值', () {
+      final agent = Agent(id: 'a', name: 'N', prompt: 'p');
+      expect(effectiveEffortForTest(agent, 'high'), 'high');
     });
 
-    test('温度：Skill 预设优先，无预设用默认 0.7', () {
+    test('温度：Agent 预设优先，无预设用默认 0.7', () {
       expect(
-        Skill(id: 'a', name: 'N', prompt: 'p', temperature: 0.3).temperature,
+        Agent(id: 'a', name: 'N', prompt: 'p', temperature: 0.3).temperature,
         0.3,
       );
-      expect(Skill(id: 'a', name: 'N', prompt: 'p').temperature, isNull);
+      expect(Agent(id: 'a', name: 'N', prompt: 'p').temperature, isNull);
     });
   });
 
@@ -121,13 +121,13 @@ void main() {
 
     test('toolNames [] → 无工具', () {
       final registry =
-          buildRegistryForTest(Skill(id: 's', name: 'N', prompt: 'p', toolNames: const []), builtinTools);
+          buildRegistryForTest(Agent(id: 's', name: 'N', prompt: 'p', toolNames: const []), builtinTools);
       expect(registry.names, isEmpty);
     });
 
     test('toolNames 子集 → 只含声明工具（目录中不存在的名字忽略）', () {
       final registry = buildRegistryForTest(
-        Skill(id: 's', name: 'N', prompt: 'p',
+        Agent(id: 's', name: 'N', prompt: 'p',
             toolNames: const ['calculate', 'no_such_tool']),
         builtinTools,
       );
@@ -135,29 +135,29 @@ void main() {
     });
   });
 
-  group('setSkill 切换', () {
-    test('切换后 skill getter 更新且落库', () async {
+  group('setAgent 切换', () {
+    test('切换后 agent getter 更新且落库', () async {
       final provider = makeProvider();
 
-      final skill = Skill(id: 'a2', name: 'Y', prompt: 'p2');
-      await provider.setSkill(skill);
-      expect(provider.skill?.id, 'a2');
+      final agent = Agent(id: 'a2', name: 'Y', prompt: 'p2');
+      await provider.setAgent(agent);
+      expect(provider.agent?.id, 'a2');
 
-      await provider.setSkill(null);
-      expect(provider.skill, isNull);
+      await provider.setAgent(null);
+      expect(provider.agent, isNull);
       provider.dispose();
     });
 
-    test('切换到无工具 Skill 后注册表重建为空', () async {
+    test('切换到无工具 Agent 后注册表重建为空', () async {
       final provider = makeProvider();
-      // 默认（无 Skill）：全部工具
+      // 默认（无 Agent）：全部工具
       expect(provider.toolCount, builtinTools.length);
 
-      await provider.setSkill(Skill(
+      await provider.setAgent(Agent(
           id: 'none', name: '无工具', prompt: 'p', toolNames: const []));
       expect(provider.toolCount, 0);
 
-      await provider.setSkill(null);
+      await provider.setAgent(null);
       expect(provider.toolCount, builtinTools.length);
       provider.dispose();
     });
@@ -166,8 +166,8 @@ void main() {
 
 /// 复刻 ChatProvider._buildApiMessages 的组装规则（保持同步验证）
 List<Map<String, Object?>> buildApiMessagesForTest(
-    Skill? skill, List<ChatMessage> messages) {
-  final prompt = skill?.prompt;
+    Agent? agent, List<ChatMessage> messages) {
+  final prompt = agent?.prompt;
   return [
     if (prompt != null && prompt.isNotEmpty)
       {'role': 'system', 'content': prompt},
@@ -176,18 +176,18 @@ List<Map<String, Object?>> buildApiMessagesForTest(
 }
 
 /// 复刻 ChatProvider._effectiveEffort 的覆盖规则
-String effectiveEffortForTest(Skill? skill, String sessionEffort) {
-  final skillEffort = skill?.effort;
-  if (skillEffort != null && sessionEffort == 'max') {
-    return skillEffort;
+String effectiveEffortForTest(Agent? agent, String sessionEffort) {
+  final agentEffort = agent?.effort;
+  if (agentEffort != null && sessionEffort == 'max') {
+    return agentEffort;
   }
   return sessionEffort;
 }
 
 /// 复刻 ChatProvider._buildRegistry 的构建规则
-ToolRegistry buildRegistryForTest(Skill? skill, List<ToolHandler> catalog) {
+ToolRegistry buildRegistryForTest(Agent? agent, List<ToolHandler> catalog) {
   final registry = ToolRegistry();
-  final allowed = skill?.toolNames;
+  final allowed = agent?.toolNames;
   if (allowed == null) {
     registry.registerAll(catalog);
   } else {

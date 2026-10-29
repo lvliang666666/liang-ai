@@ -1,4 +1,4 @@
-/// 记忆模型：AI 长期记住的用户偏好/事实（全局共享记忆池，跨会话跨 Skill）
+/// 记忆模型：AI 长期记住的用户偏好/事实（全局共享记忆池，跨会话跨 Agent）
 ///
 /// 纯本地 SQLite 存储（memories 表，DB v7），零隐私外泄。
 class Memory {
@@ -14,8 +14,8 @@ class Memory {
   /// [archiveTag] 为滚动压缩生成的归档摘要行）
   String? tag;
 
-  /// 记录来源 Skill 名（溯源用，可空）
-  String? sourceSkill;
+  /// 记录来源 Agent 名（溯源用，可空）
+  String? sourceAgent;
 
   /// 用户置顶（永久记忆）：注入排最前、不占注入名额、不参与滚动压缩
   bool pinned;
@@ -27,7 +27,7 @@ class Memory {
     required this.id,
     required this.content,
     this.tag,
-    this.sourceSkill,
+    this.sourceAgent,
     this.pinned = false,
     required this.createdAt,
     required this.updatedAt,
@@ -37,7 +37,7 @@ class Memory {
         'id': id,
         'content': content,
         'tag': tag,
-        'source_skill': sourceSkill,
+        'source_skill': sourceAgent,
         'pinned': pinned ? 1 : 0,
         'created_at': createdAt,
         'updated_at': updatedAt,
@@ -47,7 +47,7 @@ class Memory {
         id: map['id'] as String,
         content: (map['content'] as String?) ?? '',
         tag: map['tag'] as String?,
-        sourceSkill: map['source_skill'] as String?,
+        sourceAgent: map['source_skill'] as String?,
         pinned: ((map['pinned'] as int?) ?? 0) != 0,
         createdAt: (map['created_at'] as int?) ?? 0,
         updatedAt: (map['updated_at'] as int?) ?? 0,
@@ -59,7 +59,7 @@ class Memory {
   Memory copyWith({
     String? content,
     String? tag,
-    String? sourceSkill,
+    String? sourceAgent,
     bool? pinned,
     int? updatedAt,
   }) =>
@@ -67,7 +67,7 @@ class Memory {
         id: id,
         content: content ?? this.content,
         tag: tag ?? this.tag,
-        sourceSkill: sourceSkill ?? this.sourceSkill,
+        sourceAgent: sourceAgent ?? this.sourceAgent,
         pinned: pinned ?? this.pinned,
         createdAt: createdAt,
         updatedAt: updatedAt ?? this.updatedAt,

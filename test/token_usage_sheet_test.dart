@@ -4,7 +4,7 @@ import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/message_attachment.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
-import 'package:ai_chat_app/models/skill.dart';
+import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/pages/payload_lens_page.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
@@ -234,21 +234,21 @@ void main() {
 
   group('PayloadLensPage（F5 上下文透视镜）', () {
     testWidgets('头部元信息：模型/档位/温度/工具数/消息数/估算输入', (tester) async {
-      final skill = Skill(id: 'a', name: '架构师', prompt: '你是架构师');
-      final withSkill = ChatProvider(
+      final agent = Agent(id: 'a', name: '架构师', prompt: '你是架构师');
+      final withAgent = ChatProvider(
         database: db,
         api: api,
         session: session,
         profile: ProviderProfile.builtinCompany(),
         model: 'glm5.1',
-        skill: skill,
+        agent: agent,
       );
       await tester.runAsync(() async {
         await db.insertMessage(message('m1', 'user', '你好', at: 1000));
-        await withSkill.loadMessages();
+        await withAgent.loadMessages();
       });
 
-      await tester.pumpWidget(wrap(PayloadLensPage(chat: withSkill)));
+      await tester.pumpWidget(wrap(PayloadLensPage(chat: withAgent)));
       await tester.pump();
 
       expect(find.text('下一轮请求将发送'), findsOneWidget);
@@ -256,29 +256,29 @@ void main() {
       expect(find.text('档位 max'), findsOneWidget);
       expect(find.text('温度 0.7'), findsOneWidget);
       expect(find.textContaining('工具'), findsOneWidget);
-      // system(Skill prompt) + user = 2 条
+      // system(Agent prompt) + user = 2 条
       expect(find.text('消息 2 条'), findsOneWidget);
       expect(find.textContaining('估算输入'), findsOneWidget);
 
-      withSkill.dispose();
+      withAgent.dispose();
     });
 
     testWidgets('消息卡片：system/user 角色徽章 + 内容预览', (tester) async {
-      final skill = Skill(id: 'a', name: 'N', prompt: '你是架构师');
-      final withSkill = ChatProvider(
+      final agent = Agent(id: 'a', name: 'N', prompt: '你是架构师');
+      final withAgent = ChatProvider(
         database: db,
         api: api,
         session: session,
         profile: ProviderProfile.builtinCompany(),
         model: 'glm5.1',
-        skill: skill,
+        agent: agent,
       );
       await tester.runAsync(() async {
         await db.insertMessage(message('m1', 'user', '帮我设计登录接口', at: 1000));
-        await withSkill.loadMessages();
+        await withAgent.loadMessages();
       });
 
-      await tester.pumpWidget(wrap(PayloadLensPage(chat: withSkill)));
+      await tester.pumpWidget(wrap(PayloadLensPage(chat: withAgent)));
       await tester.pump();
 
       expect(find.text('system'), findsOneWidget);
@@ -286,25 +286,25 @@ void main() {
       expect(find.text('你是架构师'), findsOneWidget);
       expect(find.text('帮我设计登录接口'), findsOneWidget);
 
-      withSkill.dispose();
+      withAgent.dispose();
     });
 
-    testWidgets('点卡片开全文 Sheet：Skill prompt 全文可见', (tester) async {
-      final skill = Skill(id: 'a', name: 'N', prompt: '你是架构师，请严谨回答');
-      final withSkill = ChatProvider(
+    testWidgets('点卡片开全文 Sheet：Agent prompt 全文可见', (tester) async {
+      final agent = Agent(id: 'a', name: 'N', prompt: '你是架构师，请严谨回答');
+      final withAgent = ChatProvider(
         database: db,
         api: api,
         session: session,
         profile: ProviderProfile.builtinCompany(),
         model: 'glm5.1',
-        skill: skill,
+        agent: agent,
       );
       await tester.runAsync(() async {
         await db.insertMessage(message('m1', 'user', '你好', at: 1000));
-        await withSkill.loadMessages();
+        await withAgent.loadMessages();
       });
 
-      await tester.pumpWidget(wrap(PayloadLensPage(chat: withSkill)));
+      await tester.pumpWidget(wrap(PayloadLensPage(chat: withAgent)));
       await tester.pump();
 
       await tester.tap(find.text('你是架构师，请严谨回答'));
@@ -313,7 +313,7 @@ void main() {
       expect(find.text('消息 #1 全文'), findsOneWidget);
       expect(find.text('你是架构师，请严谨回答'), findsNWidgets(2));
 
-      withSkill.dispose();
+      withAgent.dispose();
     });
 
     testWidgets('多模态消息：图片附件显示 [图片] 占位', (tester) async {

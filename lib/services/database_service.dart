@@ -10,11 +10,11 @@ import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
 import '../models/session_summary.dart';
-import '../models/skill.dart';
+import '../models/agent.dart';
 import 'fts_service.dart';
 import 'secure_key_store.dart';
 
-/// 本地数据库服务：sessions / messages / skills / providers / memories /
+/// 本地数据库服务：sessions / messages / agents / providers / memories /
 /// http_tools / context_summaries 七表
 class DatabaseService {
   DatabaseService._();
@@ -160,7 +160,7 @@ class DatabaseService {
     if (oldVersion < 2 && newVersion >= 2) {
       // v1 → v2：sessions 加 agent_id 列 + 新建 agents 表
       await db.execute('ALTER TABLE sessions ADD COLUMN agent_id TEXT');
-      await _createAgentsTable(db);
+      await _createAgentsTableV2(db);
     }
     if (oldVersion < 3 && newVersion >= 3) {
       // v2 → v3：messages 加 attachments 列（JSON 数组，旧消息默认空）
@@ -298,7 +298,8 @@ class DatabaseService {
     ''');
   }
 
-  static Future<void> _createAgentsTable(Database db) async {
+  /// v2 建表（无 tools 列；v6 迁移用，保持历史 schema 原样）
+  static Future<void> _createAgentsTableV2(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
@@ -313,6 +314,7 @@ class DatabaseService {
     ''');
   }
 
+  /// skills 表（v6 起的 Agent 存储；表名沿用 skills 避免迁移风险）
   static Future<void> _createSkillsTable(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS skills (
@@ -467,12 +469,12 @@ class DatabaseService {
     );
   }
 
-  /// 更新会话绑定的 Skill（null = 解绑，回到默认助手）
-  Future<void> updateSessionSkill(String id, String? skillId) async {
+  /// 更新会话绑定的 Agent（null = 解绑，回到默认助手）
+  Future<void> updateSessionAgent(String id, String? agentId) async {
     final db = await database;
     await db.update(
       'sessions',
-      {'skill_id': skillId},
+      {'skill_id': agentId},
       where: 'id = ?',
       whereArgs: [id],
     );
@@ -689,39 +691,39 @@ class DatabaseService {
     );
   }
 
-  // ===== Skills =====
+  // ===== Agents =====
 
-  Future<void> insertSkill(Skill skill) async {
+  Future<void> insertAgent(Agent agent) async {
     final db = await database;
-    await db.insert('skills', skill.toMap(),
+    await db.insert('skills', agent.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
-  /// 全部 Skill（内置在前，自定义在后，各按名称排序）
-  Future<List<Skill>> getAllSkills() async {
+  /// 全部 Agent（内置在前，自定义在后，各按名称排序）
+  Future<List<Agent>> getAllAgents() async {
     final db = await database;
     final rows = await db.query(
       'skills',
       orderBy: 'is_builtin DESC, name ASC',
     );
-    return rows.map(Skill.fromMap).toList();
+    return rows.map(Agent.fromMap).toList();
   }
 
-  Future<Skill?> getSkill(String id) async {
+  Future<Agent?> getAgent(String id) async {
     final db = await database;
     final rows =
         await db.query('skills', where: 'id = ?', whereArgs: [id], limit: 1);
-    return rows.isEmpty ? null : Skill.fromMap(rows.first);
+    return rows.isEmpty ? null : Agent.fromMap(rows.first);
   }
 
-  Future<void> updateSkill(Skill skill) async {
+  Future<void> updateAgent(Agent agent) async {
     final db = await database;
-    await db.update('skills', skill.toMap(),
-        where: 'id = ?', whereArgs: [skill.id]);
+    await db.update('skills', agent.toMap(),
+        where: 'id = ?', whereArgs: [agent.id]);
   }
 
-  /// 删除自定义 Skill；同时解绑引用它的会话（避免悬挂引用）
-  Future<void> deleteSkill(String id) async {
+  /// 删除自定义 Agent；同时解绑引用它的会话（避免悬挂引用）
+  Future<void> deleteAgent(String id) async {
     final db = await database;
     await db.transaction((txn) async {
       await txn.update('sessions', {'skill_id': null},
@@ -730,8 +732,8 @@ class DatabaseService {
     });
   }
 
-  /// 内置 Skill 是否已入库（首次启动种子判断）
-  Future<bool> hasBuiltinSkills() async {
+  /// 内置 Agent 是否已入库（首次启动种子判断）
+  Future<bool> hasBuiltinAgents() async {
     final db = await database;
     final rows = await db.query('skills',
         where: 'is_builtin = 1', limit: 1);

@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/chat_message.dart';
 import '../../models/chat_session.dart';
-import '../../providers/skill_provider.dart';
+import '../../providers/agent_provider.dart';
 import '../../services/database_service.dart';
 import '../../utils/haptics.dart';
 import '../pressable.dart';
@@ -19,7 +19,7 @@ class SessionDrawerPanel extends StatefulWidget {
   const SessionDrawerPanel({
     super.key,
     required this.sessions,
-    required this.skillsProvider,
+    required this.agentsProvider,
     required this.loaded,
     required this.batchMode,
     required this.removingIds,
@@ -32,7 +32,7 @@ class SessionDrawerPanel extends StatefulWidget {
   });
 
   final List<ChatSession> sessions;
-  final SkillProvider skillsProvider;
+  final AgentProvider agentsProvider;
   final bool loaded;
 
   /// 批量管理模式开关（主页长按菜单触发进入）
@@ -468,7 +468,7 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
               ListTile(
                 dense: true,
                 leading: Text(
-                  widget.skillsProvider.byId(s.skillId)?.icon ?? '💬',
+                  widget.agentsProvider.byId(s.agentId)?.icon ?? '💬',
                   style: const TextStyle(fontSize: 18),
                 ),
                 title: Text(
@@ -572,7 +572,7 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
                                       : theme.colorScheme.onSurfaceVariant,
                                 )
                               : Text(
-                                  widget.skillsProvider.byId(s.skillId)?.icon ??
+                                  widget.agentsProvider.byId(s.agentId)?.icon ??
                                       '💬',
                                   style: const TextStyle(fontSize: 18),
                                 ),

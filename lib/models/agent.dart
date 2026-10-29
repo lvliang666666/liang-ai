@@ -1,10 +1,10 @@
 import 'dart:convert';
 
-/// Skill 模型：prompt + 工具子集 + 参数 的组合包（类 GPTs）
+/// Agent 模型：prompt + 工具子集 + 参数 的组合包（类 GPTs）
 ///
-/// 一个 Skill 声明自己的系统提示词、允许调用的内置工具、温度/推理档位预设。
+/// 一个 Agent 声明自己的系统提示词、允许调用的内置工具、温度/推理档位预设。
 /// v1.7.0 起完全取代旧 Agent 体系（一套系统）。
-class Skill {
+class Agent {
   final String id;
 
   /// 显示名（如：技术架构师）
@@ -28,14 +28,14 @@ class Skill {
   /// 允许调用的内置工具名列表
   ///
   /// - null = 全部内置工具（默认；迁移来的老数据、未声明 tools 的资产）
-  /// - [] = 无工具（纯提示词 Skill）
+  /// - [] = 无工具（纯提示词 Agent）
   /// - 非空 = 指定子集
   List<String>? toolNames;
 
-  /// 内置 Skill 不可删除，只可复制后修改
+  /// 内置 Agent 不可删除，只可复制后修改
   final bool isBuiltin;
 
-  Skill({
+  Agent({
     required this.id,
     required this.name,
     this.icon = '🤖',
@@ -59,7 +59,7 @@ class Skill {
         'is_builtin': isBuiltin ? 1 : 0,
       };
 
-  factory Skill.fromMap(Map<String, dynamic> map) => Skill(
+  factory Agent.fromMap(Map<String, dynamic> map) => Agent(
         id: map['id'] as String,
         name: map['name'] as String,
         icon: (map['icon'] as String?) ?? '🤖',
@@ -84,8 +84,8 @@ class Skill {
     return null;
   }
 
-  /// 复制为可编辑的自定义 Skill（内置 Skill "另存为" 用）
-  Skill copyAsCustom(String newId) => Skill(
+  /// 复制为可编辑的自定义 Agent（内置 Agent "另存为" 用）
+  Agent copyAsCustom(String newId) => Agent(
         id: newId,
         name: '$name 副本',
         icon: icon,

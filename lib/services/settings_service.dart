@@ -126,24 +126,24 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
-  // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
+  // ===== 最近使用的 Agent（LRU，最多 recentAgentLimit 个） =====
+  // 存储键沿用 recent_agent_ids：v6 迁移后 Agent id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续
-  static const _kRecentSkillIds = 'recent_agent_ids';
-  static const recentSkillLimit = 3;
+  static const _kRecentAgentIds = 'recent_agent_ids';
+  static const recentAgentLimit = 3;
 
-  /// 最近使用的 skillId 列表（index 0 = 最近使用）
-  List<String> get recentSkillIds =>
-      _prefs.getStringList(_kRecentSkillIds) ?? [];
+  /// 最近使用的 agentId 列表（index 0 = 最近使用）
+  List<String> get recentAgentIds =>
+      _prefs.getStringList(_kRecentAgentIds) ?? [];
 
-  /// 记录一次 Skill 使用：提到最前，去重，截断到上限
-  Future<void> touchRecentSkill(String skillId) async {
-    final list = recentSkillIds..remove(skillId);
-    list.insert(0, skillId);
-    if (list.length > recentSkillLimit) {
-      list.removeRange(recentSkillLimit, list.length);
+  /// 记录一次 Agent 使用：提到最前，去重，截断到上限
+  Future<void> touchRecentAgent(String agentId) async {
+    final list = recentAgentIds..remove(agentId);
+    list.insert(0, agentId);
+    if (list.length > recentAgentLimit) {
+      list.removeRange(recentAgentLimit, list.length);
     }
-    await _prefs.setStringList(_kRecentSkillIds, list);
+    await _prefs.setStringList(_kRecentAgentIds, list);
   }
 
   // ===== 斜杠命令自定义短语（I12：输入「/」唤起的快捷短语） =====

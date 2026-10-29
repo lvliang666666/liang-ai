@@ -1,49 +1,49 @@
 import 'package:flutter/material.dart';
 
-import '../../providers/skill_provider.dart';
+import '../../providers/agent_provider.dart';
 import '../../utils/haptics.dart';
-import '../../models/skill.dart' as skill_model;
+import '../../models/agent.dart' as agent_model;
 import '../app_bottom_sheet.dart';
 
-/// Skill 选择弹窗内容：搜索 + 最近使用 + 全部折叠
+/// Agent 选择弹窗内容：搜索 + 最近使用 + 全部折叠
 ///
 /// [includeDefault] = true 时（主页 agent tag 用）顶部多一个「默认助手」选项，
-/// 返回哨兵 Skill（id='__default__'，isBuiltin=true）；回调改为传 Skill 对象。
-class SkillPickerSheet extends StatefulWidget {
-  const SkillPickerSheet({
+/// 返回哨兵 Agent（id='__default__'，isBuiltin=true）；回调改为传 Agent 对象。
+class AgentPickerSheet extends StatefulWidget {
+  const AgentPickerSheet({
     super.key,
-    required this.skills,
+    required this.agents,
     required this.recentIds,
     required this.onSelected,
     this.includeDefault = false,
     this.selectedId,
   });
 
-  final SkillProvider skills;
+  final AgentProvider agents;
 
-  /// 最近使用的 skillId（index 0 = 最近）
+  /// 最近使用的 agentId（index 0 = 最近）
   final List<String> recentIds;
-  final ValueChanged<skill_model.Skill?> onSelected;
+  final ValueChanged<agent_model.Agent?> onSelected;
 
   /// 主页 agent tag 模式：顶部显示「默认助手」选项
   final bool includeDefault;
 
-  /// 当前选中的 skillId（主页 agent tag 回显用）
+  /// 当前选中的 agentId（主页 agent tag 回显用）
   final String? selectedId;
 
   @override
-  State<SkillPickerSheet> createState() => _SkillPickerSheetState();
+  State<AgentPickerSheet> createState() => _AgentPickerSheetState();
 }
 
-/// 「默认助手」哨兵 Skill（includeDefault 模式下选中返回它）
-skill_model.Skill get defaultAssistantSkill => skill_model.Skill(
+/// 「默认助手」哨兵 Agent（includeDefault 模式下选中返回它）
+agent_model.Agent get defaultAssistantAgent => agent_model.Agent(
       id: '__default__',
       name: '默认助手',
       prompt: '',
       isBuiltin: true,
     );
 
-class _SkillPickerSheetState extends State<SkillPickerSheet> {
+class _AgentPickerSheetState extends State<AgentPickerSheet> {
   String _query = '';
   bool _showAll = false;
 
@@ -59,7 +59,7 @@ class _SkillPickerSheetState extends State<SkillPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final all = widget.skills.skills;
+    final all = widget.agents.agents;
 
     // 搜索过滤
     final q = _query.trim().toLowerCase();
@@ -71,15 +71,15 @@ class _SkillPickerSheetState extends State<SkillPickerSheet> {
                 a.description.toLowerCase().contains(q))
             .toList();
 
-    // 最近使用：按 LRU 顺序取存在的 Skill；无历史时随机取 3 个
-    final recent = <skill_model.Skill>[];
+    // 最近使用：按 LRU 顺序取存在的 Agent；无历史时随机取 3 个
+    final recent = <agent_model.Agent>[];
     if (widget.recentIds.isEmpty) {
       recent.addAll(all);
       recent.shuffle();
       if (recent.length > 3) recent.length = 3;
     } else {
       for (final id in widget.recentIds) {
-        final a = widget.skills.byId(id);
+        final a = widget.agents.byId(id);
         if (a != null) recent.add(a);
       }
     }
@@ -102,7 +102,7 @@ class _SkillPickerSheetState extends State<SkillPickerSheet> {
 
     return SheetKeyboardInset(
       child: SheetScaffold(
-        title: '选择 Skill',
+        title: '选择 Agent',
         onClose: () => Navigator.pop(context),
         header: Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -111,7 +111,7 @@ class _SkillPickerSheetState extends State<SkillPickerSheet> {
             onChanged: (v) => setState(() => _query = v),
             decoration: InputDecoration(
               isDense: true,
-              hintText: '搜索 Skill',
+              hintText: '搜索 Agent',
               prefixIcon: const Icon(Icons.search, size: 20),
               contentPadding:
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -133,7 +133,7 @@ class _SkillPickerSheetState extends State<SkillPickerSheet> {
                     : null,
                 onTap: () {
                   Haptics.selection();
-                  widget.onSelected(defaultAssistantSkill);
+                  widget.onSelected(defaultAssistantAgent);
                 },
               ),
             // ===== 最近使用（搜索时隐藏） =====
@@ -179,14 +179,14 @@ class _SkillPickerSheetState extends State<SkillPickerSheet> {
               ),
               const Divider(height: 16),
             ],
-            // ===== 全部 Skill =====
+            // ===== 全部 Agent =====
             if (q.isEmpty)
               ListTile(
                 leading: Icon(
                   _showAll ? Icons.expand_less : Icons.expand_more,
                   color: theme.colorScheme.primary,
                 ),
-                title: Text('全部 Skill（${all.length}）',
+                title: Text('全部 Agent（${all.length}）',
                     style: theme.textTheme.titleSmall),
                 onTap: () {
                   Haptics.light();
@@ -228,12 +228,12 @@ class _SkillPickerSheetState extends State<SkillPickerSheet> {
                           color: theme.colorScheme.onSurfaceVariant)),
                 ),
               ),
-            // 空状态：无任何 Skill 时显示（需求：不出现空白面板）
+            // 空状态：无任何 Agent 时显示（需求：不出现空白面板）
             if (all.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(24),
                 child: Center(
-                  child: Text('暂无可用 Skill',
+                  child: Text('暂无可用 Agent',
                       style: theme.textTheme.bodyMedium?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant)),
                 ),

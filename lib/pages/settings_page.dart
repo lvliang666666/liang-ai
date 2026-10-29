@@ -8,21 +8,21 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/provider_profile.dart';
-import '../models/skill.dart';
+import '../models/agent.dart';
 import '../providers/http_tool_provider.dart';
 import '../providers/memory_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
-import '../providers/skill_provider.dart';
+import '../providers/agent_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/backup_service.dart';
 import '../services/database_service.dart';
 import '../services/settings_service.dart';
-import '../services/skill_parser.dart';
+import '../services/agent_parser.dart';
 import '../theme/app_theme_id.dart';
 import 'http_tool_panel.dart';
 import 'memory_page.dart';
-import 'skill_editor_page.dart';
+import 'agent_editor_page.dart';
 import '../theme/app_theme_registry.dart';
 import '../utils/haptics.dart';
 import '../utils/transitions.dart';
@@ -41,16 +41,16 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'Skill 管理', '记忆管理', 'HTTP 工具', 'API 配置', '对话参数', '快捷操作', '备份', '说明'];
+  static const _tabs = ['外观', 'Agent 管理', '记忆管理', 'HTTP 工具', 'API 配置', '对话参数', '快捷操作', '备份', '说明'];
 
   late final SettingsService _settings;
   late final PageController _pageController;
   double _temperature = 0.7;
   String _effort = 'max';
   int _currentTab = 0;
-  String _skillQuery = '';
-  final _skillSearchController = TextEditingController();
-  final _skillSearchFocusNode = FocusNode();
+  String _agentQuery = '';
+  final _agentSearchController = TextEditingController();
+  final _agentSearchFocusNode = FocusNode();
 
   @override
   void initState() {
@@ -64,15 +64,15 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void dispose() {
     _pageController.dispose();
-    _skillSearchController.dispose();
-    _skillSearchFocusNode.dispose();
+    _agentSearchController.dispose();
+    _agentSearchFocusNode.dispose();
     super.dispose();
   }
 
   /// 收起搜索框焦点：弹窗/操作完成后调用，防止焦点残留导致键盘反复弹出
-  void _unfocusSkillSearch() {
-    if (_skillSearchFocusNode.hasFocus) {
-      _skillSearchFocusNode.unfocus();
+  void _unfocusAgentSearch() {
+    if (_agentSearchFocusNode.hasFocus) {
+      _agentSearchFocusNode.unfocus();
     }
   }
 
@@ -133,7 +133,7 @@ class _SettingsPageState extends State<SettingsPage> {
               },
               children: [
                 _buildAppearanceTab(theme),
-                _buildSkillTab(theme),
+                _buildAgentTab(theme),
                 const MemoryPanel(),
                 const HttpToolPanel(),
                 _buildApiTab(theme),
@@ -173,19 +173,19 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ===== Tag 2：Skill 管理 =====
-  Widget _buildSkillTab(ThemeData theme) {
-    final skills = context.watch<SkillProvider>();
-    if (!skills.loaded) {
-      skills.load();
+  // ===== Tag 2：Agent 管理 =====
+  Widget _buildAgentTab(ThemeData theme) {
+    final agents = context.watch<AgentProvider>();
+    if (!agents.loaded) {
+      agents.load();
       return const Center(child: CircularProgressIndicator());
     }
 
     // 搜索过滤（名称/描述，不区分大小写）
-    final query = _skillQuery.trim().toLowerCase();
+    final query = _agentQuery.trim().toLowerCase();
     final filtered = query.isEmpty
-        ? skills.skills
-        : skills.skills
+        ? agents.agents
+        : agents.agents
             .where((a) =>
                 a.name.toLowerCase().contains(query) ||
                 a.description.toLowerCase().contains(query))
@@ -200,22 +200,22 @@ class _SettingsPageState extends State<SettingsPage> {
             children: [
               Expanded(
                 child: TextField(
-                  controller: _skillSearchController,
-                  focusNode: _skillSearchFocusNode,
-                  onChanged: (v) => setState(() => _skillQuery = v),
+                  controller: _agentSearchController,
+                  focusNode: _agentSearchFocusNode,
+                  onChanged: (v) => setState(() => _agentQuery = v),
                   decoration: InputDecoration(
                     isDense: true,
-                    hintText: '搜索 Skill',
+                    hintText: '搜索 Agent',
                     prefixIcon: const Icon(Icons.search, size: 20),
-                    suffixIcon: _skillQuery.isEmpty
+                    suffixIcon: _agentQuery.isEmpty
                         ? null
                         : IconButton(
                             visualDensity: VisualDensity.compact,
                             icon: const Icon(Icons.close, size: 18),
                             onPressed: () {
                               Haptics.light();
-                              _skillSearchController.clear();
-                              setState(() => _skillQuery = '');
+                              _agentSearchController.clear();
+                              setState(() => _agentQuery = '');
                             },
                           ),
                     contentPadding: const EdgeInsets.symmetric(
@@ -227,8 +227,8 @@ class _SettingsPageState extends State<SettingsPage> {
               FilledButton.icon(
                 onPressed: () {
                   Haptics.light();
-                  _unfocusSkillSearch();
-                  _openSkillEditor(context);
+                  _unfocusAgentSearch();
+                  _openAgentEditor(context);
                 },
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('新建'),
@@ -238,7 +238,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 tooltip: '从分享码导入',
                 onPressed: () {
                   Haptics.light();
-                  _unfocusSkillSearch();
+                  _unfocusAgentSearch();
                   _importFromShareCode(context);
                 },
                 icon: const Icon(Icons.paste, size: 20),
@@ -250,7 +250,7 @@ class _SettingsPageState extends State<SettingsPage> {
           child: filtered.isEmpty
               ? Center(
                   child: Text(
-                    query.isEmpty ? '还没有 Skill' : '没有找到「$_skillQuery」',
+                    query.isEmpty ? '还没有 Agent' : '没有找到「$_agentQuery」',
                     style: theme.textTheme.bodyMedium?.copyWith(
                         color: theme.colorScheme.onSurfaceVariant),
                   ),
@@ -311,8 +311,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                   tooltip: a.isBuiltin ? '查看' : '编辑',
                                   onPressed: () {
                                     Haptics.light();
-                                    _unfocusSkillSearch();
-                                    _openSkillEditor(context, skill: a);
+                                    _unfocusAgentSearch();
+                                    _openAgentEditor(context, agent: a);
                                   },
                                 ),
                                 if (a.isBuiltin)
@@ -321,8 +321,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                     tooltip: '复制为自定义',
                                     onPressed: () {
                                       Haptics.medium();
-                                      _unfocusSkillSearch();
-                                      _confirmDuplicateSkill(context, a);
+                                      _unfocusAgentSearch();
+                                      _confirmDuplicateAgent(context, a);
                                     },
                                   )
                                 else ...[
@@ -333,8 +333,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                     tooltip: '复制为分享码',
                                     onPressed: () {
                                       Haptics.medium();
-                                      _unfocusSkillSearch();
-                                      _copySkillShareCode(context, a);
+                                      _unfocusAgentSearch();
+                                      _copyAgentShareCode(context, a);
                                     },
                                   ),
                                   IconButton(
@@ -343,8 +343,8 @@ class _SettingsPageState extends State<SettingsPage> {
                                     tooltip: '删除',
                                     onPressed: () {
                                       Haptics.medium();
-                                      _unfocusSkillSearch();
-                                      _confirmDeleteSkill(context, a);
+                                      _unfocusAgentSearch();
+                                      _confirmDeleteAgent(context, a);
                                     },
                                   ),
                                 ],
@@ -354,10 +354,10 @@ class _SettingsPageState extends State<SettingsPage> {
                         )),
                     const SizedBox(height: 8),
                     Text(
-                      '· 内置 Skill 不可删除，可复制一份后修改\n'
-                      '· Skill = 提示词 + 可用工具 + 参数预设的组合包\n'
+                      '· 内置 Agent 不可删除，可复制一份后修改\n'
+                      '· Agent = 提示词 + 可用工具 + 参数预设的组合包\n'
                       '· 提示词会作为 system 消息注入对话，工具子集决定模型能调用什么\n'
-                      '· 在新建对话或聊天页顶部可切换 Skill',
+                      '· 在新建对话或聊天页顶部可切换 Agent',
                       style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                           height: 1.6),
@@ -369,14 +369,14 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  /// 复制内置 Skill：先确认再执行
-  Future<void> _confirmDuplicateSkill(
-      BuildContext context, Skill skill) async {
+  /// 复制内置 Agent：先确认再执行
+  Future<void> _confirmDuplicateAgent(
+      BuildContext context, Agent agent) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('复制 Skill'),
-        content: Text('将复制「${skill.name}」为自定义 Skill（名为「${skill.name} 副本」），可以随意修改。'),
+        title: const Text('复制 Agent'),
+        content: Text('将复制「${agent.name}」为自定义 Agent（名为「${agent.name} 副本」），可以随意修改。'),
         actions: [
           TextButton(
             onPressed: () {
@@ -396,18 +396,18 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed == true && context.mounted) {
-      _unfocusSkillSearch();
-      await context.read<SkillProvider>().duplicate(skill);
+      _unfocusAgentSearch();
+      await context.read<AgentProvider>().duplicate(agent);
       if (context.mounted) {
-        showAppToast(context, '已复制为「${skill.name} 副本」');
+        showAppToast(context, '已复制为「${agent.name} 副本」');
       }
     }
   }
 
-  /// T3 复制 Skill 为分享码（YAML front matter + 正文整段文本）
-  Future<void> _copySkillShareCode(BuildContext context, Skill skill) async {
+  /// T3 复制 Agent 为分享码（YAML front matter + 正文整段文本）
+  Future<void> _copyAgentShareCode(BuildContext context, Agent agent) async {
     await Clipboard.setData(
-        ClipboardData(text: SkillParser.toShareCode(skill)));
+        ClipboardData(text: AgentParser.toShareCode(agent)));
     if (context.mounted) {
       showAppToast(context, '分享码已复制，粘贴给他人即可导入');
     }
@@ -423,7 +423,7 @@ class _SettingsPageState extends State<SettingsPage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text('粘贴他人分享的 Skill 分享码（以 --- 开头的文本）'),
+            const Text('粘贴他人分享的 Agent 分享码（以 --- 开头的文本）'),
             const SizedBox(height: 12),
             TextField(
               controller: controller,
@@ -457,10 +457,10 @@ class _SettingsPageState extends State<SettingsPage> {
     if (raw == null || raw.trim().isEmpty || !context.mounted) return;
 
     try {
-      final skill =
-          await context.read<SkillProvider>().importFromShareCode(raw);
+      final agent =
+          await context.read<AgentProvider>().importFromShareCode(raw);
       if (context.mounted) {
-        showAppToast(context, '已导入「${skill.name}」');
+        showAppToast(context, '已导入「${agent.name}」');
       }
     } catch (e) {
       if (context.mounted) {
@@ -469,25 +469,25 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// Skill 新建/编辑整页（内置 Skill 只读查看）
-  Future<void> _openSkillEditor(BuildContext context, {Skill? skill}) async {
+  /// Agent 新建/编辑整页（内置 Agent 只读查看）
+  Future<void> _openAgentEditor(BuildContext context, {Agent? agent}) async {
     final saved = await Navigator.push<bool>(
       context,
-      slideUpRoute(SkillEditorPage(skill: skill)),
+      slideUpRoute(AgentEditorPage(agent: agent)),
     );
 
     if (saved != true || !mounted) return;
 
     // 页面关闭后兜底收起焦点：防止编辑页输入框的焦点被框架还给搜索框
-    _unfocusSkillSearch();
+    _unfocusAgentSearch();
   }
 
-  Future<void> _confirmDeleteSkill(BuildContext context, Skill skill) async {
+  Future<void> _confirmDeleteAgent(BuildContext context, Agent agent) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除 Skill'),
-        content: Text('删除「${skill.name}」后，使用它的会话将回到默认助手。确定删除吗？'),
+        title: const Text('删除 Agent'),
+        content: Text('删除「${agent.name}」后，使用它的会话将回到默认助手。确定删除吗？'),
         actions: [
           TextButton(
             onPressed: () {
@@ -507,8 +507,8 @@ class _SettingsPageState extends State<SettingsPage> {
       ),
     );
     if (confirmed == true && context.mounted) {
-      _unfocusSkillSearch();
-      context.read<SkillProvider>().delete(skill.id);
+      _unfocusAgentSearch();
+      context.read<AgentProvider>().delete(agent.id);
     }
   }
 
@@ -867,7 +867,7 @@ class _SettingsPageState extends State<SettingsPage> {
           subtitle: const Text(
             '开启后每条消息自动判断该用多大力气：含「深入/推理/证明/'
             '代码」等词走深度推理，短寒暄走轻量推理，其余均衡。'
-            '覆盖上方手动档位与 Skill 预设',
+            '覆盖上方手动档位与 Agent 预设',
           ),
           value: _settings.smartRouting,
           onChanged: (v) {
@@ -954,7 +954,7 @@ class _SettingsPageState extends State<SettingsPage> {
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
-                '暂无短语。聊天输入框输入「/」可唤起 Skill 与短语面板，'
+                '暂无短语。聊天输入框输入「/」可唤起 Agent 与短语面板，'
                 '高频问法从打字变点选',
                 style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant, height: 1.6),
@@ -1026,7 +1026,7 @@ class _SettingsPageState extends State<SettingsPage> {
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
-            '· 备份包含：会话、消息、Skill、记忆、HTTP 工具、供应商配置（不含 API Key）\n'
+            '· 备份包含：会话、消息、Agent、记忆、HTTP 工具、供应商配置（不含 API Key）\n'
             '· 导出为 JSON 文件，通过系统分享面板发送（微信/网盘/邮件均可）\n'
             '· 导入会**清空并替换**当前全部数据，操作前请先导出一份备份\n'
             '· 导入后建议返回主页再继续聊天',
@@ -1100,7 +1100,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('导入备份'),
-        content: const Text('导入会清空并替换当前全部数据（会话/消息/Skill/记忆/供应商），'
+        content: const Text('导入会清空并替换当前全部数据（会话/消息/Agent/记忆/供应商），'
             '此操作不可撤销。确定继续吗？'),
         actions: [
           TextButton(
@@ -1155,7 +1155,7 @@ class _SettingsPageState extends State<SettingsPage> {
       }
       if (!mounted) return;
       await context.read<SessionsProvider>().refresh();
-      await context.read<SkillProvider>().load();
+      await context.read<AgentProvider>().load();
       await context.read<ProviderProvider>().load();
       await context.read<MemoryProvider>().load();
       await context.read<HttpToolProvider>().load();

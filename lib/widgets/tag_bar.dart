@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 /// 顶部 Tags 栏：横向滑动 + 选中高亮
 ///
-/// 设置页 / Skill 编辑器等分区页面共用的导航条：
+/// 设置页 / Agent 编辑器等分区页面共用的导航条：
 /// 点击 tag 触发 [onTap]，由宿主页面负责切换内容区（PageView 等）。
 class TagBar extends StatelessWidget {
   const TagBar({

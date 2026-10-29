@@ -491,7 +491,7 @@ void main() {
       await provider.sendMessage('你好');
       api.emit(const SseDeltaContent('部分'));
       provider.stopGeneration();
-      // mock 模拟 cancel 错误（与 skill_loop_test 同款）
+      // mock 模拟 cancel 错误（与 agent_loop_test 同款）
       api.emitError(DioException(
           requestOptions: RequestOptions(path: '/'),
           type: DioExceptionType.cancel));

@@ -9,7 +9,7 @@ import '../app_bottom_sheet.dart';
 /// - 短语项：点选回调 [onSelectPhrase]（宿主负责填入输入框）
 /// - 长按短语项删除（[onDeletePhrase] 为空 = 不显示删除入口）
 /// - 搜索框按短语全文过滤（不区分大小写）
-/// - Skill 切换不进本面板（用户验收决策：输入栏 tag 已有 Skill 入口，
+/// - Agent 切换不进本面板（用户验收决策：输入栏 tag 已有 Agent 入口，
 ///   面板职责收窄为「短语快捷填入」单一功能）
 class SlashCommandSheet extends StatefulWidget {
   const SlashCommandSheet({

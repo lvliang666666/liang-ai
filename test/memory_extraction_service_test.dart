@@ -220,7 +220,7 @@ void main() {
         messages: [user('我喜欢简洁回答'), assistant('好的')],
         profile: ProviderProfile.builtinCompany(),
         model: 'glm5.1',
-        sourceSkill: '默认助手',
+        sourceAgent: '默认助手',
         sessionTitle: '偏好设置',
       );
 
@@ -229,7 +229,7 @@ void main() {
       expect(all.length, 2);
       expect(all.map((m) => m.content),
           containsAll(['用户喜欢简洁回答', '用户在上海工作']));
-      expect(all.every((m) => m.sourceSkill == '默认助手'), isTrue);
+      expect(all.every((m) => m.sourceAgent == '默认助手'), isTrue);
     });
 
     test('请求参数：low 档低温 + system prompt 在头部', () async {

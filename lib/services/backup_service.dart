@@ -10,13 +10,13 @@ import '../models/chat_session.dart';
 import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
-import '../models/skill.dart';
+import '../models/agent.dart';
 import 'database_service.dart';
 import 'settings_service.dart';
 
 /// E1 备份/导出：全量数据 → 单个 JSON 文件（分享出去），导入时整库重灌
 ///
-/// 备份内容：sessions + messages + skills + memories + providers + settings。
+/// 备份内容：sessions + messages + agents + memories + providers + settings。
 /// **API Key 永不进备份**（E1 硬性要求）：providers 导出时 apiKey 强制置空，
 /// 导入时同样置空——备份文件泄露不泄露凭据。
 class BackupService {
@@ -38,7 +38,7 @@ class BackupService {
         messages.add(m.toMap());
       }
     }
-    final skills = await _db.getAllSkills();
+    final agents = await _db.getAllAgents();
     final memories = await _db.getAllMemories();
     final providers = await _db.getAllProviders();
     final httpTools = await _db.getAllHttpTools();
@@ -50,7 +50,7 @@ class BackupService {
       'data': {
         'sessions': [for (final s in sessions) s.toMap()],
         'messages': messages,
-        'skills': [for (final s in skills) s.toMap()],
+        'skills': [for (final s in agents) s.toMap()],
         'memories': [for (final m in memories) m.toMap()],
         'http_tools': [for (final t in httpTools) t.toMap()],
         // E1 硬性要求：apiKey 强制置空，凭据绝不进备份文件。
@@ -126,7 +126,7 @@ class BackupService {
         (data['sessions'] as List).whereType<Map<String, dynamic>>().toList();
     final messages =
         (data['messages'] as List).whereType<Map<String, dynamic>>().toList();
-    final skills = (data['skills'] as List? ?? const [])
+    final agents = (data['skills'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
     final memories = (data['memories'] as List? ?? const [])
@@ -157,8 +157,8 @@ class BackupService {
         await txn.insert('messages', ChatMessage.fromMap(m).toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
-      for (final s in skills) {
-        await txn.insert('skills', Skill.fromMap(s).toMap(),
+      for (final s in agents) {
+        await txn.insert('skills', Agent.fromMap(s).toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
       for (final m in memories) {
@@ -183,7 +183,7 @@ class BackupService {
     return BackupStats(
       sessions: sessions.length,
       messages: messages.length,
-      skills: skills.length,
+      skills: agents.length,
       memories: memories.length,
       providers: providers.length,
       httpTools: httpTools.length,

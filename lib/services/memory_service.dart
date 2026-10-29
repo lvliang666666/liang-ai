@@ -7,7 +7,7 @@ import 'database_service.dart';
 
 /// 记忆服务：AI 长期记忆的存取门面
 ///
-/// - 全局共享记忆池（所有 Skill 共用，像同一个助理）
+/// - 全局共享记忆池（所有 Agent 共用，像同一个助理）
 /// - 内容去重：归一化后相同视为同一条，更新时间戳；包含关系合并（短边足够长）
 /// - 容量上限：超过 [maxMemories] 条时滚动压缩——把最旧一批活跃记忆
 ///   合并为一条归档摘要行（tag=[Memory.archiveTag]），而非直接删除，
@@ -39,11 +39,11 @@ class MemoryService {
   /// 存一条记忆（归一化去重 + 包含合并）
   ///
   /// 返回实际落库的记忆（新建或被更新的那条）。
-  Future<Memory> save(String content, {String? tag, String? sourceSkill}) =>
+  Future<Memory> save(String content, {String? tag, String? sourceAgent}) =>
       saveAt(
         content,
         tag: tag,
-        sourceSkill: sourceSkill,
+        sourceAgent: sourceAgent,
         now: DateTime.now().millisecondsSinceEpoch,
       );
 
@@ -51,7 +51,7 @@ class MemoryService {
   Future<Memory> saveAt(
     String content, {
     String? tag,
-    String? sourceSkill,
+    String? sourceAgent,
     required int now,
   }) async {
     final trimmed = content.trim();
@@ -69,7 +69,7 @@ class MemoryService {
       final updated = existing.copyWith(
         content: merged,
         tag: tag,
-        sourceSkill: sourceSkill,
+        sourceAgent: sourceAgent,
         updatedAt: now,
       );
       await _db.updateMemory(updated);
@@ -82,7 +82,7 @@ class MemoryService {
       id: _genId(now),
       content: trimmed,
       tag: tag,
-      sourceSkill: sourceSkill,
+      sourceAgent: sourceAgent,
       createdAt: now,
       updatedAt: now,
     );
@@ -263,7 +263,7 @@ class MemoryService {
       id: _genId(now),
       content: summary,
       tag: Memory.archiveTag,
-      sourceSkill: null,
+      sourceAgent: null,
       createdAt: now,
       updatedAt: now,
     );

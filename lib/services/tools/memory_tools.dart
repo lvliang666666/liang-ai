@@ -4,7 +4,7 @@ import '../tool_registry.dart';
 
 /// 记忆工具三件套：memory_save / memory_search / memory_forget
 ///
-/// 供模型主动存取用户长期记忆（跨会话跨 Skill 生效）。
+/// 供模型主动存取用户长期记忆（跨会话跨 Agent 生效）。
 /// 服务绑定应用数据库单例（测试中经 initForTest 指向内存库），
 /// 因此工具保持 const 构造，可直接进 builtinTools 常量目录。
 ///
@@ -12,13 +12,13 @@ import '../tool_registry.dart';
 
 /// 保存记忆：用户明确表达偏好/事实/背景时调用
 class MemorySaveTool extends ToolHandler {
-  const MemorySaveTool({this.sourceSkill});
+  const MemorySaveTool({this.sourceAgent});
 
-  /// 来源 Skill 名（ChatProvider 构建注册表时注入，溯源用，可空）
+  /// 来源 Agent 名（ChatProvider 构建注册表时注入，溯源用，可空）
   ///
   /// 非 final：const 目录里的实例是共享模板，注册表构建时按当前会话
-  /// 的 Skill 复制并填入来源。
-  final String? sourceSkill;
+  /// 的 Agent 复制并填入来源。
+  final String? sourceAgent;
 
   @override
   String get name => 'memory_save';
@@ -55,7 +55,7 @@ class MemorySaveTool extends ToolHandler {
     final memory = await MemoryService(database: DatabaseService.instance).save(
       content,
       tag: tag is String && tag.trim().isNotEmpty ? tag.trim() : null,
-      sourceSkill: sourceSkill,
+      sourceAgent: sourceAgent,
     );
     return '已记住：${memory.content}'
         '${memory.tag != null ? '（标签：${memory.tag}）' : ''}';
@@ -151,7 +151,7 @@ class SearchHistoryTool extends ToolHandler {
   /// 当前会话 id（ChatProvider 构建注册表时注入，检索时排除）
   ///
   /// 非 final：const 目录里的实例是共享模板，注册表构建时按当前会话
-  /// 复制并填入（与 MemorySaveTool.sourceSkill 同模式）。
+  /// 复制并填入（与 MemorySaveTool.sourceAgent 同模式）。
   final String? currentSessionId;
 
   @override

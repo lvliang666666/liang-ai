@@ -9,7 +9,7 @@ import '../models/chat_session.dart';
 import '../models/context_summary.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
-import '../models/skill.dart';
+import '../models/agent.dart';
 import '../models/tool_call.dart';
 import '../services/api_service.dart';
 import '../services/context_summary_service.dart';
@@ -32,7 +32,7 @@ class ChatProvider extends ChangeNotifier {
     required ChatSession session,
     required ProviderProfile profile,
     required String model,
-    Skill? skill,
+    Agent? agent,
     List<ToolHandler> toolCatalog = builtinTools,
     MemoryService? memory,
     ContextSummaryService? summaryService,
@@ -43,14 +43,14 @@ class ChatProvider extends ChangeNotifier {
         _session = session,
         _profile = profile,
         _model = model,
-        _skill = skill,
+        _agent = agent,
         _toolCatalog = toolCatalog,
         _memory = memory,
         _summaryService = summaryService ??
             ContextSummaryService(api: api, database: database),
         _smartRoutingEnabled = smartRouting,
         _keepaliveNotification = keepaliveNotification,
-        _tools = _buildRegistry(skill, toolCatalog, sessionId: session.id);
+        _tools = _buildRegistry(agent, toolCatalog, sessionId: session.id);
 
   final DatabaseService _db;
   ApiService _api;
@@ -67,34 +67,34 @@ class ChatProvider extends ChangeNotifier {
   /// 当前会话的前情摘要（null = 未压缩过；loadMessages 时从 DB 读）
   ContextSummary? _contextSummary;
 
-  /// 当前会话绑定的 Skill（null = 默认助手，无 system prompt + 全部工具）
-  Skill? _skill;
+  /// 当前会话绑定的 Agent（null = 默认助手，无 system prompt + 全部工具）
+  Agent? _agent;
 
-  /// 工具目录（Skill 工具子集的选取范围）
+  /// 工具目录（Agent 工具子集的选取范围）
   List<ToolHandler> _toolCatalog;
 
-  /// 工具注册表（按 Skill.toolNames 从目录构建；null = 不启用工具；
+  /// 工具注册表（按 Agent.toolNames 从目录构建；null = 不启用工具；
   /// 是否随请求发送还看 profile 能力）
   ToolRegistry? _tools;
 
-  /// 按 Skill 的工具子集声明从目录构建注册表
+  /// 按 Agent 的工具子集声明从目录构建注册表
   ///
   /// toolNames null = 全部目录工具（默认助手/迁移老数据）；
   /// [] = 无工具；非空 = 指定子集（目录中不存在的名字忽略）。
-  /// memory_save 工具按当前 Skill 注入来源名（记忆溯源）；
+  /// memory_save 工具按当前 Agent 注入来源名（记忆溯源）；
   /// search_history 工具注入当前会话 id（检索时排除本会话）。
   static ToolRegistry _buildRegistry(
-      Skill? skill, List<ToolHandler> catalog,
+      Agent? agent, List<ToolHandler> catalog,
       {String? sessionId}) {
     final registry = ToolRegistry();
-    final allowed = skill?.toolNames;
+    final allowed = agent?.toolNames;
     final selected = allowed == null
         ? catalog
         : catalog.where((t) => allowed.contains(t.name)).toList();
     registry.registerAll([
       for (final t in selected)
         t is MemorySaveTool
-            ? MemorySaveTool(sourceSkill: skill?.name)
+            ? MemorySaveTool(sourceAgent: agent?.name)
             : t is SearchHistoryTool
                 ? SearchHistoryTool(currentSessionId: sessionId)
                 : t,
@@ -164,7 +164,7 @@ class ChatProvider extends ChangeNotifier {
 
   // ===== Getters =====
   ChatSession get session => _session;
-  Skill? get skill => _skill;
+  Agent? get agent => _agent;
   List<ChatMessage> get messages => _messages;
   ChatStatus get status => _status;
   String get errorMessage => _errorMessage;
@@ -266,7 +266,7 @@ class ChatProvider extends ChangeNotifier {
     final now = DateTime.now().millisecondsSinceEpoch;
 
     // F4 智能路由：按本条消息内容决策推理档位（开关关闭时为 null，
-    // _effectiveEffort 走原有 Skill/会话优先级，行为不变）
+    // _effectiveEffort 走原有 Agent/会话优先级，行为不变）
     _smartRouteEffort = _smartRoutingEnabled
         ? SmartRouter.route(content, hasAttachments: _pendingAttachments.isNotEmpty)
         : null;
@@ -813,14 +813,14 @@ class ChatProvider extends ChangeNotifier {
     _notify();
   }
 
-  /// 切换会话绑定的 Skill（null = 默认助手）
+  /// 切换会话绑定的 Agent（null = 默认助手）
   ///
-  /// 同步按新 Skill 的工具子集重建注册表，下一轮请求即生效。
-  Future<void> setSkill(Skill? skill) async {
-    if (_skill?.id == skill?.id) return;
-    _skill = skill;
-    _tools = _buildRegistry(skill, _toolCatalog, sessionId: _session.id);
-    await _db.updateSessionSkill(_session.id, skill?.id);
+  /// 同步按新 Agent 的工具子集重建注册表，下一轮请求即生效。
+  Future<void> setAgent(Agent? agent) async {
+    if (_agent?.id == agent?.id) return;
+    _agent = agent;
+    _tools = _buildRegistry(agent, _toolCatalog, sessionId: _session.id);
+    await _db.updateSessionAgent(_session.id, agent?.id);
     _notify();
   }
 
@@ -856,16 +856,16 @@ class ChatProvider extends ChangeNotifier {
     return memory.recentText().then((text) => _memoryText = text);
   }
 
-  /// 组装 API 请求消息：Skill system prompt 在头部 + 记忆注入 + 前情摘要 + 历史
+  /// 组装 API 请求消息：Agent system prompt 在头部 + 记忆注入 + 前情摘要 + 历史
   ///
   /// [forceSummary] 为 true 时（loop 轮数耗尽）追加系统提示强制模型总结。
-  /// 记忆注入：Skill prompt 之后追加一条 system 消息（最近 20 条，
+  /// 记忆注入：Agent prompt 之后追加一条 system 消息（最近 20 条，
   /// 无记忆或未启用记忆服务时不注入）。
   /// F2 压缩：存在前情摘要时，摘要以 system 消息注入，历史只发送
   /// 摘要边界（firstKeptId）之后的原文——早期历史已被压缩进摘要；
   /// 钉住轮（pinnedIds 清单）在边界之前但原文保留，按原顺序捞回。
   List<Map<String, Object?>> _buildApiMessages({bool forceSummary = false}) {
-    final prompt = _skill?.prompt;
+    final prompt = _agent?.prompt;
     final summary = _contextSummary;
     // 摘要边界之后的历史（边界消息被删时按时间兜底）
     final history = summary == null
@@ -921,13 +921,13 @@ class ChatProvider extends ChangeNotifier {
 
   /// F5 上下文透视镜：预览下一轮请求将发送的完整 messages payload
   ///
-  /// 复用 [_buildApiMessages]（Skill system prompt + 记忆注入 + 全部历史），
+  /// 复用 [_buildApiMessages]（Agent system prompt + 记忆注入 + 全部历史），
   /// 只读不落库。附件消息按 toApiMessage 的多模态结构原样展示。
   List<Map<String, Object?>> buildPayloadPreview() => _buildApiMessages();
 
-  /// 生效的推理档位：Skill 预设优先于会话设置
+  /// 生效的推理档位：Agent 预设优先于会话设置
   ///
-  /// 会话 effort 是用户在聊天中可手动调整的值；Skill 预设只在
+  /// 会话 effort 是用户在聊天中可手动调整的值；Agent 预设只在
   /// 会话仍为初始默认值时生效，用户手动改过则以用户为准。
   /// F4 智能路由开启时：按本轮消息内容规则决策，覆盖以上全部
   /// （路由是「这一条消息该用多大力气」的即时判断，优先级最高）。
@@ -935,10 +935,10 @@ class ChatProvider extends ChangeNotifier {
     if (_smartRouteEffort != null) {
       return _smartRouteEffort!;
     }
-    final skillEffort = _skill?.effort;
-    if (skillEffort != null && _session.effort == 'max') {
-      // 会话未手动调整过（保持默认 max），采用 Skill 预设
-      return skillEffort;
+    final agentEffort = _agent?.effort;
+    if (agentEffort != null && _session.effort == 'max') {
+      // 会话未手动调整过（保持默认 max），采用 Agent 预设
+      return agentEffort;
     }
     return _session.effort;
   }
@@ -953,8 +953,8 @@ class ChatProvider extends ChangeNotifier {
   /// 未注入场景不启动前台服务）
   bool _keepaliveNotification;
 
-  /// 生效的温度：Skill 预设优先（会话级温度暂未开放手动调整）
-  double get _effectiveTemperature => _skill?.temperature ?? 0.7;
+  /// 生效的温度：Agent 预设优先（会话级温度暂未开放手动调整）
+  double get _effectiveTemperature => _agent?.temperature ?? 0.7;
 
   /// 思考用时（秒）
   int get thinkingSeconds {

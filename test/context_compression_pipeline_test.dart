@@ -182,7 +182,7 @@ void main() {
       expect(provider.contextSummary!.summary, contains('十个问题'));
       expect(provider.contextSummary!.firstKeptId, 'u5');
 
-      // 聊天请求：system(Skill 无) + 摘要 system + 保留区 10 条 + 新 user
+      // 聊天请求：system(Agent 无) + 摘要 system + 保留区 10 条 + 新 user
       final msgs = api.lastMessages!;
       final summaryMsg = msgs.firstWhere(
         (m) => (m['content'] as String).contains('前情摘要'),

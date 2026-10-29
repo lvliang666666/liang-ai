@@ -12,7 +12,7 @@ import 'package:provider/provider.dart';
 import '../../models/chat_message.dart';
 import '../../models/message_attachment.dart';
 import '../../models/provider_profile.dart';
-import '../../models/skill.dart' as skill_model;
+import '../../models/agent.dart' as agent_model;
 import '../../pages/payload_lens_page.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/theme_provider.dart';
@@ -42,11 +42,11 @@ class HomeInputBar extends StatefulWidget {
     required this.controller,
     required this.focusNode,
     required this.chat,
-    required this.selectedSkill,
+    required this.selectedAgent,
     required this.selectedModel,
     required this.selectedEffort,
     required this.onSendIdle,
-    required this.onPickSkill,
+    required this.onPickAgent,
     required this.onPickModel,
     required this.onPickEffort,
     this.editingMessage,
@@ -60,7 +60,7 @@ class HomeInputBar extends StatefulWidget {
 
   /// 聊天态的 ChatProvider（null = 空闲态）
   final ChatProvider? chat;
-  final skill_model.Skill? selectedSkill;
+  final agent_model.Agent? selectedAgent;
   final (ProviderProfile, String)? selectedModel;
 
   /// 空闲态预选推理档位（effort tag 空闲态也显示）
@@ -68,10 +68,10 @@ class HomeInputBar extends StatefulWidget {
 
   /// 空闲态发送（创建会话），附件随首条消息传入
   final void Function(String text,
-      {String? skillId,
+      {String? agentId,
       (ProviderProfile, String)? modelPick,
       List<MessageAttachment> attachments}) onSendIdle;
-  final VoidCallback onPickSkill;
+  final VoidCallback onPickAgent;
   final VoidCallback onPickModel;
   final VoidCallback onPickEffort;
 
@@ -141,15 +141,32 @@ class _HomeInputBarState extends State<HomeInputBar> {
     _slashWasActive = slashActive;
   }
 
-  /// I12 斜杠命令面板：快捷短语填入（Skill 切换走输入栏 tag，不进面板）
+  /// I12 斜杠命令面板：快捷短语填入（Agent 切换走输入栏 tag，不进面板）
   Future<void> _openSlashCommands() async {
     final settings = context.read<SettingsService>();
 
-    // 先收键盘再弹面板：否则面板先顶到键盘上沿，随后模态路由抢走
-    // 焦点、键盘收起，面板跟着回落一截——「弹出又回退」很丑
-    // （用户验收反馈）。unfocus 后键盘 250ms 内收起，面板从底部
-    // 平滑滑入，无二次跳动。
+    // 先收键盘，**等键盘完全收起后再弹面板**：面板的键盘适配层
+    // （SheetKeyboardInset）会把面板顶到键盘上沿——若键盘还在收起
+    // 动画中就弹面板，面板先顶在高处、随键盘回落一截，「弹出又回
+    // 退」很丑（用户两轮验收反馈）。轮询 viewInsets 直到归零（32ms
+    // 步进，600ms 上限防慢 IME 卡死）；无键盘在场时零等待直接弹。
     widget.focusNode.unfocus();
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      var waited = 0;
+      while (mounted &&
+          MediaQuery.viewInsetsOf(context).bottom > 0 &&
+          waited < 600) {
+        await Future.delayed(const Duration(milliseconds: 32));
+        waited += 32;
+      }
+      if (!mounted) return;
+      // 等待期间「/」可能已被删掉：放弃弹出并重置边沿状态
+      //（否则下次输入 / 会被误判为「有 → 有」而不弹）
+      if (!widget.controller.text.startsWith('/')) {
+        _slashWasActive = false;
+        return;
+      }
+    }
 
     final result = await showAppBottomSheet<String>(
       context: context,
@@ -379,11 +396,11 @@ class _HomeInputBarState extends State<HomeInputBar> {
     final showPlus = !isStreaming && !hasText && showAttachmentButton;
 
     // tags 配置：聊天态取会话绑定值，空闲态取预选值
-    final currentSkill = inChat ? chat.skill : widget.selectedSkill;
+    final currentAgent = inChat ? chat.agent : widget.selectedAgent;
     // label 只放名字（icon 由 tag 的 emoji/icon 字段单独渲染，避免重复）
-    final skillLabel = currentSkill != null ? currentSkill.name : '默认助手';
+    final agentLabel = currentAgent != null ? currentAgent.name : '默认助手';
     // agent tag 图标：具体 agent 用其 emoji，默认助手用内置 icon
-    final skillEmoji = currentSkill?.icon;
+    final agentEmoji = currentAgent?.icon;
     final modelLabel =
         inChat ? chat.model : (widget.selectedModel?.$2 ?? '默认模型');
     // 推理档位：聊天态取会话值，空闲态取预选值（两态都显示）
@@ -398,10 +415,10 @@ class _HomeInputBarState extends State<HomeInputBar> {
           // tags 行：独立于输入框（agent / model / effort）
           ChatTagsBar(tags: [
             ChatTag(
-              emoji: skillEmoji,
-              icon: skillEmoji == null ? Icons.smart_toy_outlined : null,
-              label: skillLabel,
-              onTap: widget.onPickSkill,
+              emoji: agentEmoji,
+              icon: agentEmoji == null ? Icons.smart_toy_outlined : null,
+              label: agentLabel,
+              onTap: widget.onPickAgent,
             ),
             ChatTag(
               icon: Icons.tune,
@@ -588,7 +605,7 @@ class _HomeInputBarState extends State<HomeInputBar> {
       context.read<SettingsService>().setIdleDraft('');
       widget.onSendIdle(
         composed,
-        skillId: widget.selectedSkill?.id,
+        agentId: widget.selectedAgent?.id,
         modelPick: widget.selectedModel,
         attachments: attachments,
       );

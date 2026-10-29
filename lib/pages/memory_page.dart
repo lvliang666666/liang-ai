@@ -9,7 +9,7 @@ import '../widgets/app_toast.dart';
 
 /// 记忆管理面板：查看/搜索/删除/手动添加 AI 长期记忆
 ///
-/// 记忆为全局共享池（所有 Skill 共用），跨会话生效。
+/// 记忆为全局共享池（所有 Agent 共用），跨会话生效。
 /// 嵌入设置页 PageView 作为独立 tag，无自带 Scaffold。
 class MemoryPanel extends StatefulWidget {
   const MemoryPanel({super.key});
@@ -83,7 +83,7 @@ class _MemoryPanelState extends State<MemoryPanel> {
 
     return Column(
       children: [
-        // 搜索框 + 手动添加/清空按钮（与 Skill 管理 tab 同布局）
+        // 搜索框 + 手动添加/清空按钮（与 Agent 管理 tab 同布局）
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
           child: Row(
@@ -239,7 +239,7 @@ class _MemoryPanelState extends State<MemoryPanel> {
                     ...normalList.map((m) => _memoryCard(theme, provider, m)),
                     const SizedBox(height: 8),
                     Text(
-                      '· 记忆全局共享：所有 Skill 的对话都会注入最近 20 条\n'
+                      '· 记忆全局共享：所有 Agent 的对话都会注入最近 20 条\n'
                       '· 置顶记忆永久注入且不参与滚动压缩淘汰\n'
                       '· 聊天中说「记住xxx」AI 会自动保存，「忘掉xxx」会删除\n'
                       '· 记忆仅存本机数据库，不会上传',
@@ -262,11 +262,11 @@ class _MemoryPanelState extends State<MemoryPanel> {
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       child: ListTile(
         title: Text(m.content),
-        subtitle: (m.tag != null || m.sourceSkill != null)
+        subtitle: (m.tag != null || m.sourceAgent != null)
             ? Text(
                 [
                   if (m.tag != null) m.tag!,
-                  if (m.sourceSkill != null) '来自 ${m.sourceSkill}',
+                  if (m.sourceAgent != null) '来自 ${m.sourceAgent}',
                 ].join(' · '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

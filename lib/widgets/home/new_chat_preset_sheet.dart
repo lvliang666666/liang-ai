@@ -1,31 +1,31 @@
 import 'package:flutter/material.dart';
 
 import '../../models/provider_profile.dart';
-import '../../models/skill.dart' as skill_model;
+import '../../models/agent.dart' as agent_model;
 import '../../providers/provider_provider.dart';
-import '../../providers/skill_provider.dart';
+import '../../providers/agent_provider.dart';
 import '../../utils/haptics.dart';
 import '../app_bottom_sheet.dart';
-import 'skill_picker_sheet.dart';
+import 'agent_picker_sheet.dart';
 
-/// 新对话预设弹窗：预选本次对话的 Skill 与模型（力度走 tags 预选，不在此设置）
+/// 新对话预设弹窗：预选本次对话的 Agent 与模型（力度走 tags 预选，不在此设置）
 ///
-/// 确认返回 (Skill?, (ProviderProfile, String)?)——Skill 为哨兵
+/// 确认返回 (Agent?, (ProviderProfile, String)?)——Agent 为哨兵
 /// （id='__default__'）表示默认助手；点遮罩关闭返回 null（不改动预选）。
 class NewChatPresetSheet extends StatefulWidget {
   const NewChatPresetSheet({
     super.key,
-    required this.skills,
+    required this.agents,
     required this.providers,
     required this.recentIds,
-    required this.initialSkill,
+    required this.initialAgent,
     required this.initialModel,
   });
 
-  final SkillProvider skills;
+  final AgentProvider agents;
   final ProviderProvider providers;
   final List<String> recentIds;
-  final skill_model.Skill? initialSkill;
+  final agent_model.Agent? initialAgent;
   final (ProviderProfile, String)? initialModel;
 
   @override
@@ -33,14 +33,14 @@ class NewChatPresetSheet extends StatefulWidget {
 }
 
 class _NewChatPresetSheetState extends State<NewChatPresetSheet> {
-  // 非空：初始为哨兵（默认助手），选择器只返回非空 Skill
-  late skill_model.Skill _skill = widget.initialSkill ?? defaultAssistantSkill;
+  // 非空：初始为哨兵（默认助手），选择器只返回非空 Agent
+  late agent_model.Agent _agent = widget.initialAgent ?? defaultAssistantAgent;
   late (ProviderProfile, String)? _model = widget.initialModel;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final skillLabel = _skill.id == '__default__' ? '默认助手' : _skill.name;
+    final agentLabel = _agent.id == '__default__' ? '默认助手' : _agent.name;
     final modelLabel = _model?.$2 ?? '默认模型';
 
     return SafeArea(
@@ -51,26 +51,26 @@ class _NewChatPresetSheetState extends State<NewChatPresetSheet> {
             padding: const EdgeInsets.all(16),
             child: Text('新对话', style: theme.textTheme.titleMedium),
           ),
-          // Skill 预选
+          // Agent 预选
           ListTile(
-            leading: Text(_skill.icon, style: const TextStyle(fontSize: 24)),
+            leading: Text(_agent.icon, style: const TextStyle(fontSize: 24)),
             title: const Text('助手'),
-            subtitle: Text(skillLabel),
+            subtitle: Text(agentLabel),
             trailing: const Icon(Icons.keyboard_arrow_down),
             onTap: () async {
               Haptics.light();
-              final picked = await showAppBottomSheet<skill_model.Skill?>(
+              final picked = await showAppBottomSheet<agent_model.Agent?>(
                 context: context,
-                builder: (context) => SkillPickerSheet(
-                  skills: widget.skills,
+                builder: (context) => AgentPickerSheet(
+                  agents: widget.agents,
                   recentIds: widget.recentIds,
                   includeDefault: true,
-                  selectedId: _skill.id == '__default__' ? null : _skill.id,
+                  selectedId: _agent.id == '__default__' ? null : _agent.id,
                   onSelected: (s) => Navigator.pop(context, s),
                 ),
               );
               if (picked != null) {
-                setState(() => _skill = picked);
+                setState(() => _agent = picked);
               }
             },
           ),
@@ -150,7 +150,7 @@ class _NewChatPresetSheetState extends State<NewChatPresetSheet> {
               child: FilledButton(
                 onPressed: () {
                   Haptics.medium();
-                  Navigator.pop(context, (_skill, _model));
+                  Navigator.pop(context, (_agent, _model));
                 },
                 child: const Padding(
                   padding: EdgeInsets.symmetric(vertical: 12),

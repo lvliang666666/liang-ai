@@ -1,7 +1,7 @@
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
-import 'package:ai_chat_app/models/skill.dart';
+import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/models/tool_call.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
@@ -107,7 +107,7 @@ void main() {
       // 第二轮请求应携带 tools 定义 + tool 结果消息
       expect(provider.status, ChatStatus.thinking);
       expect(api.lastTools, isNotNull);
-      // 无 Skill = 全部目录工具（stub + 3 个内置）
+      // 无 Agent = 全部目录工具（stub + 3 个内置）
       expect(api.lastTools!.length, 1 + builtinTools.length);
       final toolMsg = api.lastMessages!
           .firstWhere((m) => m['role'] == 'tool');
@@ -286,8 +286,8 @@ void main() {
     });
   });
 
-  group('Skill 工具子集注入', () {
-    test('无 Skill：全部目录工具随请求发送', () async {
+  group('Agent 工具子集注入', () {
+    test('无 Agent：全部目录工具随请求发送', () async {
       await provider.loadMessages();
       await provider.sendMessage('你好');
       api.emit(const SseDone());
@@ -298,7 +298,7 @@ void main() {
       expect(api.lastTools!.length, 1 + builtinTools.length);
     });
 
-    test('Skill toolNames 子集：只发送声明的工具', () async {
+    test('Agent toolNames 子集：只发送声明的工具', () async {
       final subsetProvider = ChatProvider(
         database: db,
         api: api,
@@ -306,7 +306,7 @@ void main() {
             id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
         profile: toolProfile(),
         model: 'm1',
-        skill: Skill(
+        agent: Agent(
             id: 'calc-only',
             name: '只有计算器',
             prompt: 'p',
@@ -325,7 +325,7 @@ void main() {
       subsetProvider.dispose();
     });
 
-    test('Skill toolNames 空：不发送 tools 参数', () async {
+    test('Agent toolNames 空：不发送 tools 参数', () async {
       final noneProvider = ChatProvider(
         database: db,
         api: api,
@@ -333,7 +333,7 @@ void main() {
             id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
         profile: toolProfile(),
         model: 'm1',
-        skill: Skill(
+        agent: Agent(
             id: 'no-tools',
             name: '无工具',
             prompt: 'p',
@@ -349,15 +349,15 @@ void main() {
       noneProvider.dispose();
     });
 
-    test('setSkill 切换后下一轮请求的工具集随之变化', () async {
+    test('setAgent 切换后下一轮请求的工具集随之变化', () async {
       await provider.loadMessages();
       await provider.sendMessage('先看看');
       api.emit(const SseDone());
       await waitUntil(() => provider.status == ChatStatus.idle);
       expect(api.lastTools!.length, 1 + builtinTools.length);
 
-      // 切到只有 stub 的 Skill
-      await provider.setSkill(Skill(
+      // 切到只有 stub 的 Agent
+      await provider.setAgent(Agent(
           id: 'sub', name: '子集', prompt: 'p', toolNames: const ['stub']));
       await provider.sendMessage('再看看');
       api.emit(const SseDone());
@@ -367,7 +367,7 @@ void main() {
           (api.lastTools!.first['function'] as Map)['name'], 'stub');
 
       // 切回默认（null = 全部）
-      await provider.setSkill(null);
+      await provider.setAgent(null);
       await provider.sendMessage('最后看看');
       api.emit(const SseDone());
       await waitUntil(() => provider.status == ChatStatus.idle);
@@ -388,7 +388,7 @@ void main() {
             id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
         profile: toolProfile(),
         model: 'm1',
-        skill: Skill(id: 'sk', name: 'S', prompt: '你是助手'),
+        agent: Agent(id: 'sk', name: 'S', prompt: '你是助手'),
         memory: memory,
       );
       await memProvider.loadMessages();
@@ -397,7 +397,7 @@ void main() {
       await waitUntil(() => memProvider.status == ChatStatus.idle);
 
       final messages = api.lastMessages!;
-      // system 消息两条：Skill prompt + 记忆
+      // system 消息两条：Agent prompt + 记忆
       final systemMsgs =
           messages.where((m) => m['role'] == 'system').toList();
       expect(systemMsgs.length, 2);
@@ -478,7 +478,7 @@ void main() {
       memProvider.dispose();
     });
 
-    test('memory_save 落库带来源 Skill（sourceSkill 激活）', () async {
+    test('memory_save 落库带来源 Agent（sourceAgent 激活）', () async {
       final memory = MemoryService(database: db);
       final memProvider = ChatProvider(
         database: db,
@@ -487,7 +487,7 @@ void main() {
             id: 's1', title: '新对话', createdAt: 1000, updatedAt: 1000),
         profile: toolProfile(),
         model: 'm1',
-        skill: Skill(id: 'sk-tutor', name: '导师', prompt: '你是导师'),
+        agent: Agent(id: 'sk-tutor', name: '导师', prompt: '你是导师'),
         toolCatalog: [const StubTool('工具结果OK'), ...builtinTools],
         memory: memory,
       );
@@ -507,15 +507,15 @@ void main() {
       api.emit(const SseDone());
       await waitUntil(() => memProvider.status == ChatStatus.idle);
 
-      // 落库的记忆带来源 Skill 名
+      // 落库的记忆带来源 Agent 名
       final all = await memory.getAll();
       expect(all.length, 1);
       expect(all.single.content, '用户在备考');
-      expect(all.single.sourceSkill, '导师');
+      expect(all.single.sourceAgent, '导师');
       memProvider.dispose();
     });
 
-    test('无 Skill 时 memory_save 落库 sourceSkill 为空', () async {
+    test('无 Agent 时 memory_save 落库 sourceAgent 为空', () async {
       final memory = MemoryService(database: db);
       final memProvider = ChatProvider(
         database: db,
@@ -543,7 +543,7 @@ void main() {
       await waitUntil(() => memProvider.status == ChatStatus.idle);
 
       final all = await memory.getAll();
-      expect(all.single.sourceSkill, isNull);
+      expect(all.single.sourceAgent, isNull);
       memProvider.dispose();
     });
   });

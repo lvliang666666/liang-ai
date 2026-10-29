@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 /// 标准 Bottom Sheet 骨架（UI 批次 1 统一容器）
 ///
-/// 全 app 的选择面板（Skill/模型/附件/导出格式等）统一走 [showAppBottomSheet]：
+/// 全 app 的选择面板（Agent/模型/附件/导出格式等）统一走 [showAppBottomSheet]：
 /// - 容器：顶部圆角 16，内容最大高度 60% 屏高，可下拉关闭
 /// - 遮罩：rgba(0,0,0,0.4)，点击关闭
 /// - 动效：250ms ease-out 滑入 / 200ms ease-in 滑出（与键盘动画同量级）
@@ -17,11 +17,11 @@ import 'package:flutter/material.dart';
 ///
 /// 用法：
 /// ```dart
-/// final result = await showAppBottomSheet<Skill?>(
+/// final result = await showAppBottomSheet<Agent?>(
 ///   context: context,
-///   title: '选择 Skill',
+///   title: '选择 Agent',
 ///   builder: (context) => SheetScaffold(
-///     title: '选择 Skill',
+///     title: '选择 Agent',
 ///     onClose: () => Navigator.pop(context),
 ///     child: ...列表...,
 ///   ),

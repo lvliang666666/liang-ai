@@ -1,31 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/skill.dart';
+import '../models/agent.dart';
 import '../providers/http_tool_provider.dart';
-import '../providers/skill_provider.dart';
+import '../providers/agent_provider.dart';
 import '../services/tools/builtin_tools.dart';
 import '../utils/haptics.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/tag_bar.dart';
 
-/// Skill 新建/编辑整页（复用设置页 TagBar + PageView 布局）
+/// Agent 新建/编辑整页（复用设置页 TagBar + PageView 布局）
 ///
 /// 分区：基本信息（图标/名称/描述/档位）/ 提示词 / 可用工具。
-/// 内置 Skill 只读查看（字段禁用、无保存按钮）。
+/// 内置 Agent 只读查看（字段禁用、无保存按钮）。
 ///
 /// 工具子集编辑：toolNames null 视为「全部勾选」；保存时写显式列表。
-class SkillEditorPage extends StatefulWidget {
-  const SkillEditorPage({super.key, this.skill});
+class AgentEditorPage extends StatefulWidget {
+  const AgentEditorPage({super.key, this.agent});
 
   /// null = 新建；非 null = 编辑（内置则只读查看）
-  final Skill? skill;
+  final Agent? agent;
 
   @override
-  State<SkillEditorPage> createState() => _SkillEditorPageState();
+  State<AgentEditorPage> createState() => _AgentEditorPageState();
 }
 
-class _SkillEditorPageState extends State<SkillEditorPage> {
+class _AgentEditorPageState extends State<AgentEditorPage> {
   static const _tabs = ['基本信息', '提示词', '可用工具'];
 
   late final bool _isBuiltin;
@@ -43,15 +43,15 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
   @override
   void initState() {
     super.initState();
-    final skill = widget.skill;
-    _isBuiltin = skill?.isBuiltin ?? false;
-    _iconCtrl = TextEditingController(text: skill?.icon ?? '🤖');
-    _nameCtrl = TextEditingController(text: skill?.name ?? '');
-    _descCtrl = TextEditingController(text: skill?.description ?? '');
-    _promptCtrl = TextEditingController(text: skill?.prompt ?? '');
-    _effort = skill?.effort;
+    final agent = widget.agent;
+    _isBuiltin = agent?.isBuiltin ?? false;
+    _iconCtrl = TextEditingController(text: agent?.icon ?? '🤖');
+    _nameCtrl = TextEditingController(text: agent?.name ?? '');
+    _descCtrl = TextEditingController(text: agent?.description ?? '');
+    _promptCtrl = TextEditingController(text: agent?.prompt ?? '');
+    _effort = agent?.effort;
     // 工具勾选初始值：null（全部）展开为全部工具名（内置 + 自定义 HTTP 工具）
-    final declaredTools = skill?.toolNames;
+    final declaredTools = agent?.toolNames;
     final allNames = [
       ...builtinTools.map((t) => t.name),
       ...context.read<HttpToolProvider>().enabledTools.map((t) => t.name),
@@ -113,8 +113,8 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
     final toolNames =
         checkedNames.length == allNames.length ? null : checkedNames;
 
-    final provider = context.read<SkillProvider>();
-    final original = widget.skill;
+    final provider = context.read<AgentProvider>();
+    final original = widget.agent;
     if (original == null) {
       await provider.create(
         name: name,
@@ -125,7 +125,7 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
         toolNames: toolNames,
       );
     } else {
-      await provider.update(Skill(
+      await provider.update(Agent(
         id: original.id,
         name: name,
         icon: _iconCtrl.text.trim(),
@@ -146,9 +146,9 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.skill == null
-            ? '新建 Skill'
-            : (_isBuiltin ? '查看 Skill' : '编辑 Skill')),
+        title: Text(widget.agent == null
+            ? '新建 Agent'
+            : (_isBuiltin ? '查看 Agent' : '编辑 Agent')),
         actions: [
           TextButton(
             onPressed: () {
@@ -265,7 +265,7 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
           decoration: const InputDecoration(
             labelText: '系统提示词（System Prompt）',
             alignLabelWithHint: true,
-            hintText: '定义这个 Skill 的身份、语气、行为准则…',
+            hintText: '定义这个 Agent 的身份、语气、行为准则…',
           ),
         ),
       ],
@@ -280,7 +280,7 @@ class _SkillEditorPageState extends State<SkillEditorPage> {
       children: [
         Text('可用工具', style: theme.textTheme.titleSmall),
         Text(
-          '勾选该 Skill 允许模型调用的工具（全不勾 = 无工具）',
+          '勾选该 Agent 允许模型调用的工具（全不勾 = 无工具）',
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),

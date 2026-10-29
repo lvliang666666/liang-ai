@@ -8,13 +8,13 @@ import 'providers/http_tool_provider.dart';
 import 'providers/memory_provider.dart';
 import 'providers/provider_provider.dart';
 import 'providers/sessions_provider.dart';
-import 'providers/skill_provider.dart';
+import 'providers/agent_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/database_service.dart';
 import 'services/memory_service.dart';
 import 'services/secure_key_store.dart';
 import 'services/settings_service.dart';
-import 'services/skill_service.dart';
+import 'services/agent_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -81,8 +81,8 @@ class AiChatApp extends StatelessWidget {
           create: (_) => ThemeProvider(settings: settings),
         ),
         ChangeNotifierProvider(
-          create: (_) => SkillProvider(
-            service: SkillService(database: DatabaseService.instance),
+          create: (_) => AgentProvider(
+            service: AgentService(database: DatabaseService.instance),
           ),
         ),
         ChangeNotifierProvider(

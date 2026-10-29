@@ -1,27 +1,27 @@
-import 'package:ai_chat_app/models/skill.dart';
-import 'package:ai_chat_app/pages/skill_editor_page.dart';
+import 'package:ai_chat_app/models/agent.dart';
+import 'package:ai_chat_app/pages/agent_editor_page.dart';
 import 'package:ai_chat_app/providers/http_tool_provider.dart';
-import 'package:ai_chat_app/providers/skill_provider.dart';
+import 'package:ai_chat_app/providers/agent_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
-import 'package:ai_chat_app/services/skill_service.dart';
+import 'package:ai_chat_app/services/agent_service.dart';
 import 'package:ai_chat_app/services/tools/builtin_tools.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
-/// 假 SkillProvider：不碰真实 DB（sqflite_ffi 异步 IO 在 widget 测试
+/// 假 AgentProvider：不碰真实 DB（sqflite_ffi 异步 IO 在 widget 测试
 /// fake async 环境推不动，pop 永远等不到），create/update 同步完成并
 /// 记录调用参数供断言。
-class _FakeSkillProvider extends SkillProvider {
-  _FakeSkillProvider()
+class _FakeAgentProvider extends AgentProvider {
+  _FakeAgentProvider()
       // create/update 已覆写，service 永不被调用，传单例占位即可
-      : super(service: SkillService(database: DatabaseService.instance));
+      : super(service: AgentService(database: DatabaseService.instance));
 
-  final List<Skill> created = [];
-  final List<Skill> updated = [];
+  final List<Agent> created = [];
+  final List<Agent> updated = [];
 
   @override
-  Future<Skill> create({
+  Future<Agent> create({
     required String name,
     required String prompt,
     String icon = '🤖',
@@ -30,7 +30,7 @@ class _FakeSkillProvider extends SkillProvider {
     String? effort,
     List<String>? toolNames,
   }) async {
-    final skill = Skill(
+    final agent = Agent(
       id: 'fake-${created.length}',
       name: name,
       icon: icon,
@@ -40,21 +40,21 @@ class _FakeSkillProvider extends SkillProvider {
       effort: effort,
       toolNames: toolNames,
     );
-    created.add(skill);
-    return skill;
+    created.add(agent);
+    return agent;
   }
 
   @override
-  Future<void> update(Skill skill) async {
-    updated.add(skill);
+  Future<void> update(Agent agent) async {
+    updated.add(agent);
   }
 }
 
 void main() {
-  late _FakeSkillProvider provider;
+  late _FakeAgentProvider provider;
 
   setUp(() {
-    provider = _FakeSkillProvider();
+    provider = _FakeAgentProvider();
   });
 
   tearDown(() {
@@ -63,7 +63,7 @@ void main() {
 
   Widget wrap(Widget child) => MultiProvider(
         providers: [
-          ChangeNotifierProvider<SkillProvider>.value(value: provider),
+          ChangeNotifierProvider<AgentProvider>.value(value: provider),
           // T1：编辑器工具列表会读 HttpToolProvider（测试无自定义工具）
           ChangeNotifierProvider<HttpToolProvider>(
             create: (_) => HttpToolProvider(
@@ -73,15 +73,15 @@ void main() {
         child: MaterialApp(home: child),
       );
 
-  /// 内置 Skill（只读查看用例）
-  Skill builtinSkill() => Skill(
+  /// 内置 Agent（只读查看用例）
+  Agent builtinAgent() => Agent(
         id: 'builtin-1',
         name: '默认助手',
         prompt: '内置提示词',
         isBuiltin: true,
       );
 
-  group('SkillEditorPage', () {
+  group('AgentEditorPage', () {
     testWidgets('新建默认全勾：直接保存 → toolNames == null', (tester) async {
       // 13 个工具超出默认测试窗口高度，ListView 懒构建导致部分条目
       // 不在树中——放大窗口让全部条目可见
@@ -89,11 +89,11 @@ void main() {
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.reset);
 
-      await tester.pumpWidget(wrap(const SkillEditorPage()));
+      await tester.pumpWidget(wrap(const AgentEditorPage()));
 
       // 填名称（基本信息分区）
       await tester.enterText(
-          find.widgetWithText(TextField, '名称'), '测试 Skill');
+          find.widgetWithText(TextField, '名称'), '测试 Agent');
       await tester.pump();
 
       // 切到提示词分区填写（PageView 未缓存页不在树中，需先切页）
@@ -121,21 +121,21 @@ void main() {
       await tester.pumpAndSettle();
 
       // pop 回来了
-      expect(find.byType(SkillEditorPage), findsNothing);
+      expect(find.byType(AgentEditorPage), findsNothing);
 
       // create 调用参数：toolNames == null（全勾语义）
       expect(provider.created, hasLength(1));
       final created = provider.created.single;
-      expect(created.name, '测试 Skill');
+      expect(created.name, '测试 Agent');
       expect(created.toolNames, isNull);
       expect(created.prompt, '你是测试');
     });
 
     testWidgets('新建去勾一个工具：保存 → toolNames 为显式子集', (tester) async {
-      await tester.pumpWidget(wrap(const SkillEditorPage()));
+      await tester.pumpWidget(wrap(const AgentEditorPage()));
 
       await tester.enterText(
-          find.widgetWithText(TextField, '名称'), '子集 Skill');
+          find.widgetWithText(TextField, '名称'), '子集 Agent');
       await tester.pump();
 
       // 切到提示词分区填写
@@ -155,7 +155,7 @@ void main() {
       await tester.tap(find.text('保存'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(SkillEditorPage), findsNothing);
+      expect(find.byType(AgentEditorPage), findsNothing);
 
       expect(provider.created, hasLength(1));
       final created = provider.created.single;
@@ -165,7 +165,7 @@ void main() {
     });
 
     testWidgets('名称留空点保存：不 pop，仍在编辑页', (tester) async {
-      await tester.pumpWidget(wrap(const SkillEditorPage()));
+      await tester.pumpWidget(wrap(const AgentEditorPage()));
 
       // 只填提示词，名称留空（先切到提示词分区）
       await tester.tap(find.text('提示词'));
@@ -180,7 +180,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 400));
 
       // 未 pop：编辑页还在
-      expect(find.byType(SkillEditorPage), findsOneWidget);
+      expect(find.byType(AgentEditorPage), findsOneWidget);
       // 提示了名称错误（Toast 走 Overlay，文案在 post-frame 帧才上屏）
       expect(find.text('名称不能为空'), findsOneWidget);
       // 未触发 create
@@ -190,13 +190,13 @@ void main() {
       await tester.pump(const Duration(seconds: 4));
     });
 
-    testWidgets('编辑自定义 Skill：保存走 update，保留原 id', (tester) async {
-      final original = Skill(
+    testWidgets('编辑自定义 Agent：保存走 update，保留原 id', (tester) async {
+      final original = Agent(
         id: 'custom-1',
         name: '旧名字',
         prompt: '旧提示词',
       );
-      await tester.pumpWidget(wrap(SkillEditorPage(skill: original)));
+      await tester.pumpWidget(wrap(AgentEditorPage(agent: original)));
       await tester.pumpAndSettle();
 
       // 改名称
@@ -206,7 +206,7 @@ void main() {
       await tester.tap(find.text('保存'));
       await tester.pumpAndSettle();
 
-      expect(find.byType(SkillEditorPage), findsNothing);
+      expect(find.byType(AgentEditorPage), findsNothing);
       expect(provider.updated, hasLength(1));
       final saved = provider.updated.single;
       expect(saved.id, 'custom-1'); // 编辑保留原 id
@@ -214,12 +214,12 @@ void main() {
       expect(provider.created, isEmpty); // 不走 create
     });
 
-    testWidgets('内置 Skill：只读查看，无保存按钮', (tester) async {
-      await tester.pumpWidget(wrap(SkillEditorPage(skill: builtinSkill())));
+    testWidgets('内置 Agent：只读查看，无保存按钮', (tester) async {
+      await tester.pumpWidget(wrap(AgentEditorPage(agent: builtinAgent())));
       await tester.pumpAndSettle();
 
       // 标题为查看
-      expect(find.text('查看 Skill'), findsOneWidget);
+      expect(find.text('查看 Agent'), findsOneWidget);
       // 无保存按钮
       expect(find.text('保存'), findsNothing);
       // 名称输入框禁用
@@ -241,7 +241,7 @@ void main() {
       // 取消退出
       await tester.tap(find.text('取消'));
       await tester.pumpAndSettle();
-      expect(find.byType(SkillEditorPage), findsNothing);
+      expect(find.byType(AgentEditorPage), findsNothing);
     });
   });
 }

@@ -1,8 +1,8 @@
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
-import 'package:ai_chat_app/providers/skill_provider.dart';
+import 'package:ai_chat_app/providers/agent_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
-import 'package:ai_chat_app/services/skill_service.dart';
+import 'package:ai_chat_app/services/agent_service.dart';
 import 'package:ai_chat_app/widgets/home/session_drawer_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,17 +28,17 @@ void main() {
   databaseFactory = databaseFactoryFfi;
 
   late DatabaseService db;
-  late SkillProvider skills;
+  late AgentProvider agents;
 
   setUp(() async {
     final inMemory = await openTestDb();
     db = DatabaseService.instance;
     await db.initForTest(inMemory);
     SharedPreferences.setMockInitialValues({});
-    skills = SkillProvider(
-      service: SkillService(database: db),
+    agents = AgentProvider(
+      service: AgentService(database: db),
     );
-    await skills.load();
+    await agents.load();
   });
 
   tearDown(() async {
@@ -68,7 +68,7 @@ void main() {
   }) async {
     await tester.pumpWidget(wrap(SessionDrawerPanel(
       sessions: sessions,
-      skillsProvider: skills,
+      agentsProvider: agents,
       loaded: true,
       batchMode: ValueNotifier(false),
       removingIds: const {},

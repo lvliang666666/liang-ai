@@ -8,12 +8,12 @@ import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
-import '../models/skill.dart' as skill_model;
+import '../models/agent.dart' as agent_model;
 import '../providers/chat_provider.dart';
 import '../providers/http_tool_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
-import '../providers/skill_provider.dart';
+import '../providers/agent_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_extraction_service.dart';
@@ -33,7 +33,7 @@ import '../widgets/home/home_input_bar.dart';
 import '../widgets/home/message_outline_sheet.dart';
 import '../widgets/home/new_chat_preset_sheet.dart';
 import '../widgets/home/session_drawer_panel.dart';
-import '../widgets/home/skill_picker_sheet.dart';
+import '../widgets/home/agent_picker_sheet.dart';
 import 'settings_page.dart';
 
 /// 首页：DeepSeek 风格单页架构——主页即聊天页
@@ -67,7 +67,7 @@ class _HomePageState extends State<HomePage> {
   ChatProvider? _chat;
 
   // 空闲态的预选状态（tags 行展示与切换）
-  skill_model.Skill? _selectedSkill; // null = 默认助手
+  agent_model.Agent? _selectedAgent; // null = 默认助手
   (ProviderProfile, String)? _selectedModel; // null = 用默认供应商默认模型
 
   // 空闲态预选推理档位（effort tag 空闲态也显示）
@@ -83,8 +83,8 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     context.read<SessionsProvider>().loadSessions();
-    // 启动即加载 Skill 列表：否则 tags 行的 Skill 图标在首次懒加载前显示兜底 emoji
-    context.read<SkillProvider>().load();
+    // 启动即加载 Agent 列表：否则 tags 行的 Agent 图标在首次懒加载前显示兜底 emoji
+    context.read<AgentProvider>().load();
     // 聚焦根治：键盘收起（ViewInsets 归零）时自动退出聚焦。
     // 场景：用户点输入框聚焦 → 点 tag 弹层（键盘收起）→ 弹层关闭后
     // FocusScope 会把焦点还给输入框并重新弹键盘——监听键盘收起主动
@@ -124,7 +124,7 @@ class _HomePageState extends State<HomePage> {
     final messages = List<ChatMessage>.of(chat.messages);
     final profile = chat.profile;
     final model = chat.model;
-    final skillName = chat.skill?.name;
+    final agentName = chat.agent?.name;
     final sessionTitle = chat.session.title;
     final sessionId = chat.session.id;
     unawaited(() async {
@@ -138,7 +138,7 @@ class _HomePageState extends State<HomePage> {
             messages: messages,
             profile: profile,
             model: model,
-            sourceSkill: skillName,
+            sourceAgent: agentName,
             sessionTitle: sessionTitle,
           );
         }
@@ -172,7 +172,7 @@ class _HomePageState extends State<HomePage> {
 
   /// 打开即聊：发送首条消息时才创建会话，主页原地进入聊天态
   Future<void> _startChat(String text,
-      {String? skillId,
+      {String? agentId,
       (ProviderProfile, String)? modelPick,
       List<MessageAttachment> attachments = const []}) async {
     Haptics.light();
@@ -180,14 +180,14 @@ class _HomePageState extends State<HomePage> {
 
     final settings = context.read<SettingsService>();
     // 记录最近使用（LRU），供下次选择页展示
-    if (skillId != null) {
-      await settings.touchRecentSkill(skillId);
+    if (agentId != null) {
+      await settings.touchRecentAgent(agentId);
       if (!mounted) return;
     }
     final sessions = context.read<SessionsProvider>();
     final session = await sessions.createSession(
       _selectedEffort, // 空闲态预选档位随会话创建
-      skillId: skillId,
+      agentId: agentId,
       providerId: modelPick?.$1.id,
       model: modelPick?.$2,
     );
@@ -246,8 +246,8 @@ class _HomePageState extends State<HomePage> {
       profile = profiles.first;
     }
 
-    final skill = context.read<SkillProvider>().byId(s.skillId);
-    // T1：内置工具 + 用户自定义 HTTP 工具合并进目录（Skill 白名单统一纳管）
+    final agent = context.read<AgentProvider>().byId(s.agentId);
+    // T1：内置工具 + 用户自定义 HTTP 工具合并进目录（Agent 白名单统一纳管）
     final httpTools = context.read<HttpToolProvider>().enabledTools;
     final chat = ChatProvider(
       database: db,
@@ -255,7 +255,7 @@ class _HomePageState extends State<HomePage> {
       session: s,
       profile: profile,
       model: s.model?.isNotEmpty == true ? s.model! : profile.defaultModel,
-      skill: skill,
+      agent: agent,
       memory: MemoryService(database: db),
       // F4 智能路由开关（设置页控制；关 = 手动档位行为不变）
       smartRouting: context.read<SettingsService>().smartRouting,
@@ -304,7 +304,7 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// 新增对话：预设弹窗（预选 skill/model）→ 仅点「开始新对话」才退出当前聊天态
+  /// 新增对话：预设弹窗（预选 agent/model）→ 仅点「开始新对话」才退出当前聊天态
   ///
   /// 两态统一：都直接弹预设弹窗（聊天态初始值取当前会话配置，新对话从
   /// 当前设置延续）；点遮罩关闭/取消 = 回到点新建之前的状态，
@@ -313,26 +313,26 @@ class _HomePageState extends State<HomePage> {
     Haptics.light();
     _unfocus();
 
-    // 预设交互页：预选本次新对话的 skill / model（力度不加，走 tags 预选）
-    final skillsProvider = context.read<SkillProvider>();
-    if (!skillsProvider.loaded) await skillsProvider.load();
+    // 预设交互页：预选本次新对话的 agent / model（力度不加，走 tags 预选）
+    final agentsProvider = context.read<AgentProvider>();
+    if (!agentsProvider.loaded) await agentsProvider.load();
     if (!mounted) return;
     final providersProvider = context.read<ProviderProvider>();
     if (!providersProvider.loaded) await providersProvider.load();
     if (!mounted) return;
 
     final chat = _chat;
-    final preset = await showModalBottomSheet<(skill_model.Skill?, (ProviderProfile, String)?)>(
+    final preset = await showModalBottomSheet<(agent_model.Agent?, (ProviderProfile, String)?)>(
       context: context,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (context) => NewChatPresetSheet(
-        skills: skillsProvider,
+        agents: agentsProvider,
         providers: providersProvider,
-        recentIds: context.read<SettingsService>().recentSkillIds,
-        initialSkill: chat?.skill ?? _selectedSkill,
+        recentIds: context.read<SettingsService>().recentAgentIds,
+        initialAgent: chat?.agent ?? _selectedAgent,
         initialModel: chat != null ? (chat.profile, chat.model) : _selectedModel,
       ),
     );
@@ -340,13 +340,13 @@ class _HomePageState extends State<HomePage> {
     if (preset == null || !mounted) return;
 
     // 仅确认「开始新对话」才应用预选并退出当前聊天态
-    final (skill, model) = preset;
+    final (agent, model) = preset;
     setState(() {
-      _selectedSkill = skill?.id == '__default__' ? null : skill;
+      _selectedAgent = agent?.id == '__default__' ? null : agent;
       _selectedModel = model;
     });
-    if (_selectedSkill != null) {
-      await context.read<SettingsService>().touchRecentSkill(_selectedSkill!.id);
+    if (_selectedAgent != null) {
+      await context.read<SettingsService>().touchRecentAgent(_selectedAgent!.id);
       if (!mounted) return;
     }
 
@@ -655,7 +655,7 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sessions = context.watch<SessionsProvider>();
-    final skillsProvider = context.watch<SkillProvider>();
+    final agentsProvider = context.watch<AgentProvider>();
 
     final allSessions = sessions.sessions;
 
@@ -666,7 +666,7 @@ class _HomePageState extends State<HomePage> {
         key: _drawerKey,
         drawer: SessionDrawerPanel(
           sessions: allSessions,
-          skillsProvider: skillsProvider,
+          agentsProvider: agentsProvider,
           loaded: sessions.loaded,
           batchMode: _drawerBatchMode,
           removingIds: _removingSessionIds,
@@ -838,11 +838,11 @@ class _HomePageState extends State<HomePage> {
                         controller: _inputController,
                         focusNode: _inputFocusNode,
                         chat: _chat,
-                        selectedSkill: _selectedSkill,
+                        selectedAgent: _selectedAgent,
                         selectedModel: _selectedModel,
                         selectedEffort: _selectedEffort,
                         onSendIdle: _startChat,
-                        onPickSkill: _pickSkillForHome,
+                        onPickAgent: _pickAgentForHome,
                         onPickModel: _pickModelForHome,
                         onPickEffort: _pickEffortForHome,
                         // I4 编辑态 / I5 引用态
@@ -917,37 +917,37 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
-  /// 主页 agent tag：空闲态改预选 / 聊天态改当前会话 Skill
-  Future<void> _pickSkillForHome() async {
+  /// 主页 agent tag：空闲态改预选 / 聊天态改当前会话 Agent
+  Future<void> _pickAgentForHome() async {
     Haptics.light();
     // 打开面板前收起键盘（需求：点「+」/tag 后键盘先收起，面板再滑出）
     FocusManager.instance.primaryFocus?.unfocus();
-    final skills = context.read<SkillProvider>();
-    if (!skills.loaded) await skills.load();
+    final agents = context.read<AgentProvider>();
+    if (!agents.loaded) await agents.load();
     if (!mounted) return;
 
-    // 聊天态：当前会话的 Skill 为选中项
+    // 聊天态：当前会话的 Agent 为选中项
     final chat = _chat;
-    final currentId = chat != null ? chat.skill?.id : _selectedSkill?.id;
+    final currentId = chat != null ? chat.agent?.id : _selectedAgent?.id;
 
-    final result = await showAppBottomSheet<skill_model.Skill?>(
+    final result = await showAppBottomSheet<agent_model.Agent?>(
       context: context,
-      builder: (context) => SkillPickerSheet(
-        skills: skills,
-        recentIds: context.read<SettingsService>().recentSkillIds,
+      builder: (context) => AgentPickerSheet(
+        agents: agents,
+        recentIds: context.read<SettingsService>().recentAgentIds,
         includeDefault: true,
         selectedId: currentId,
         onSelected: (s) => Navigator.pop(context, s),
       ),
     );
     if (result == null || !mounted) return; // 点遮罩关闭不改动
-    // 哨兵 Skill（id='__default__'）= 默认助手 = null
+    // 哨兵 Agent（id='__default__'）= 默认助手 = null
     final picked = result.id == '__default__' ? null : result;
     if (chat != null) {
-      await chat.setSkill(picked);
+      await chat.setAgent(picked);
       if (mounted) context.read<SessionsProvider>().refresh();
     } else {
-      setState(() => _selectedSkill = picked);
+      setState(() => _selectedAgent = picked);
     }
   }
 

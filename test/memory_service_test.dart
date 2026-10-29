@@ -36,7 +36,7 @@ void main() {
         id: 'm1',
         content: '用户喜欢简洁回答',
         tag: '偏好',
-        sourceSkill: '默认助手',
+        sourceAgent: '默认助手',
         createdAt: 1000,
         updatedAt: 2000,
       );
@@ -44,16 +44,16 @@ void main() {
       expect(restored.id, 'm1');
       expect(restored.content, '用户喜欢简洁回答');
       expect(restored.tag, '偏好');
-      expect(restored.sourceSkill, '默认助手');
+      expect(restored.sourceAgent, '默认助手');
       expect(restored.createdAt, 1000);
       expect(restored.updatedAt, 2000);
     });
 
-    test('可空字段容错：tag/sourceSkill 为 null', () {
+    test('可空字段容错：tag/sourceAgent 为 null', () {
       final m = Memory(id: 'm1', content: 'x', createdAt: 1, updatedAt: 1);
       final restored = Memory.fromMap(m.toMap());
       expect(restored.tag, isNull);
-      expect(restored.sourceSkill, isNull);
+      expect(restored.sourceAgent, isNull);
     });
 
     test('copyWith 更新部分字段', () {
@@ -80,9 +80,9 @@ void main() {
     });
 
     test('save 带标签与来源', () async {
-      final m = await service.save('用户在上海', tag: '背景', sourceSkill: '导师');
+      final m = await service.save('用户在上海', tag: '背景', sourceAgent: '导师');
       expect(m.tag, '背景');
-      expect(m.sourceSkill, '导师');
+      expect(m.sourceAgent, '导师');
       expect((await service.getAll()).first.tag, '背景');
     });
 
@@ -95,7 +95,7 @@ void main() {
       expect(await service.count(), 1); // 没有新增
     });
 
-    test('save 去重后 tag/sourceSkill 以新值为准', () async {
+    test('save 去重后 tag/sourceAgent 以新值为准', () async {
       await service.saveAt('事实A', tag: '旧标签', now: 1000);
       final updated = await service.saveAt('事实A', tag: '新标签', now: 2000);
       expect(updated.tag, '新标签');

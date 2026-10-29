@@ -158,7 +158,7 @@ class _HttpToolPanelState extends State<HttpToolPanel> {
                     Text(
                       '· 工具 = URL 模板 + 参数定义 + 响应截取规则\n'
                       '· 模型按参数定义填参，{param} 占位符自动替换\n'
-                      '· 在 Skill 编辑器的「可用工具」里按 Skill 授权\n'
+                      '· 在 Agent 编辑器的「可用工具」里按 Agent 授权\n'
                       '· 请求超时 15 秒，响应超长自动截断',
                       style: theme.textTheme.bodySmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
@@ -184,7 +184,7 @@ class _HttpToolPanelState extends State<HttpToolPanel> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除工具'),
-        content: Text('删除「${tool.name}」后，引用它的 Skill 将无法再调用该工具。确定删除吗？'),
+        content: Text('删除「${tool.name}」后，引用它的 Agent 将无法再调用该工具。确定删除吗？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -490,7 +490,7 @@ class _HttpToolEditorPageState extends State<HttpToolEditorPage> {
               '· {param} 占位符会被模型填的参数替换（URL 和请求体都支持）\n'
               '· 参数定义决定模型怎么填参（JSON Schema properties 段）\n'
               '· 响应截取路径用点号逐层取值，数组用数字下标（data.items.0.name）\n'
-              '· 保存后在 Skill 编辑器的「可用工具」里授权给 Skill',
+              '· 保存后在 Agent 编辑器的「可用工具」里授权给 Agent',
               style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
             ),
           ),

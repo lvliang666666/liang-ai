@@ -1,7 +1,7 @@
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/http_tool.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
-import 'package:ai_chat_app/models/skill.dart';
+import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
@@ -302,7 +302,7 @@ void main() {
     });
 
     ChatProvider makeProvider({
-      Skill? skill,
+      Agent? agent,
       required List<HttpTool> httpTools,
     }) =>
         ChatProvider(
@@ -312,7 +312,7 @@ void main() {
               id: 's1', title: 't', createdAt: 1, updatedAt: 1),
           profile: ProviderProfile.builtinCompany(),
           model: 'glm5.1',
-          skill: skill,
+          agent: agent,
           // 复刻 home_page 的目录组装：只取启用中的工具
           toolCatalog: [
             ...builtinTools,
@@ -339,9 +339,9 @@ void main() {
       provider.dispose();
     });
 
-    test('Skill 白名单可纳管自定义工具（toolNames 子集）', () {
+    test('Agent 白名单可纳管自定义工具（toolNames 子集）', () {
       final provider = makeProvider(
-        skill: Skill(
+        agent: Agent(
             id: 'sk',
             name: 'S',
             prompt: 'p',
