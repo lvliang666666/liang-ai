@@ -8,6 +8,7 @@ import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:ai_chat_app/services/sse_parser.dart';
 import 'package:ai_chat_app/widgets/home/chat_message_list.dart';
+import 'package:ai_chat_app/widgets/message_bubble.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -272,6 +273,65 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 200));
       });
       await tester.pumpAndSettle();
+    });
+  });
+
+  group('E11 性能检查点：流式气泡 key 隔离', () {
+    testWidgets('历史气泡 key 稳定：流式增长只重建最后一个', (tester) async {
+      await pumpList(tester, messages: 4);
+      final state = tester.state<ChatMessageListState>(
+          find.byType(ChatMessageList));
+
+      // 历史气泡的 GlobalKey 按 id 登记（流式重建时元素身份不变，
+      // State 不销毁重建——Markdown 全量重渲染只发生在最后一个气泡）
+      final keysBefore = tester
+          .widgetList<MessageBubble>(find.byType(MessageBubble))
+          .map((b) => b.key)
+          .toList();
+      expect(keysBefore.length, 4);
+      // 每个气泡 key 都是独立 GlobalKey（非 ValueKey/无 key）
+      for (final k in keysBefore) {
+        expect(k, isA<GlobalKey>());
+      }
+      // id → key 一一对应（_bubbleKey 的 putIfAbsent 语义）
+      final distinctKeys = keysBefore.toSet();
+      expect(distinctKeys.length, 4, reason: '每条消息一个独立 GlobalKey');
+
+      // 驱动一轮流式：历史气泡 key 集合不变（只追加流式气泡自己的 key）
+      await tester.runAsync(() async {
+        await provider.sendMessage('你好');
+        api.emit(const SseDeltaContent('回答'));
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      });
+      await tester.pump();
+
+      final keysAfter = tester
+          .widgetList<MessageBubble>(find.byType(MessageBubble))
+          .map((b) => b.key)
+          .toList();
+      // 4 历史 + 1 user「你好」+ 1 流式 assistant 占位 = 6
+      expect(keysAfter.length, 6, reason: '流式气泡上屏后共 6 个气泡');
+      // 历史气泡 key 与流式前完全一致（同一 GlobalKey 实例）——
+      // 元素身份保持，State 复用。reverse 列表 DFS 遍历顺序在头部
+      // 插入后会变化，故按集合比对而非位置比对。
+      final beforeSet = keysBefore.toSet();
+      for (final k in beforeSet) {
+        expect(keysAfter.contains(k), isTrue,
+            reason: '历史气泡 key 必须是同一个 GlobalKey 实例');
+      }
+      // 新增的两个 key（user + 流式占位）不与历史重复，且互不相同
+      final newKeys = keysAfter.where((k) => !beforeSet.contains(k)).toSet();
+      expect(newKeys.length, 2, reason: '只新增 user + 流式占位两个 key');
+      expect(identical(keysAfter[4], keysAfter[5]), isFalse);
+
+      // 收尾：结束流式（呼吸点动画会让 pumpAndSettle 超时）
+      await tester.runAsync(() async {
+        api.emit(const SseUsage(promptTokens: 10, completionTokens: 5));
+        api.emit(const SseDone());
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pumpAndSettle();
+      expect(state.scrollController.offset, 0);
     });
   });
 
