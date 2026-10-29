@@ -850,6 +850,9 @@ class _HomePageState extends State<HomePage> {
                         onCancelEdit: _exitEditMode,
                         quotedMessage: _quotedMessage,
                         onCancelQuote: _exitQuoteMode,
+                        // I9 胶囊行收纳：聊天态随消息列表滚动方向收起/展开
+                        capsuleCollapsed:
+                            _chatAreaKey.currentState?.capsuleCollapsed,
                       ),
                     ),
                   ],
