@@ -67,9 +67,9 @@ void main() {
       onClose: () {},
       onDeleteSelected: (_) async {},
       onOpenChat: onOpenChat ?? (_) {},
-      onOpenMessage: (_, __) {},
+      onOpenMessage: (_, _) {},
       onOpenSettings: () {},
-      onShowActions: (_, __, ___, ____) {},
+      onShowActions: (_, _, _, _) {},
     )));
     await tester.pump();
   }
