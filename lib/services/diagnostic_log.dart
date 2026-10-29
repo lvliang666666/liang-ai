@@ -63,6 +63,7 @@ class DiagnosticLog {
   static void reset() {
     _buffer.clear();
     _dir = null;
+    _writeQueue = Future.value();
   }
 
   /// 记一条日志（内存 + 异步落盘）
@@ -157,10 +158,16 @@ class DiagnosticLog {
   }
 
   /// 追加落盘（fire-and-forget：失败静默，绝不影响主流程）
+  ///
+  /// 写队列串行化：两条 log 的落盘并发执行时，writeAsString(append)
+  /// 对不存在的文件各自 create——后完成者覆盖先完成者（丢行）。
+  /// 队列保证同目录写操作按调用顺序执行，行序与 buffer 一致。
+  static Future<void> _writeQueue = Future.value();
+
   static void _appendToFile(LogEntry entry) {
     final dir = _dir;
     if (dir == null) return;
-    unawaited(() async {
+    _writeQueue = _writeQueue.then((_) async {
       try {
         final date = entry.timestamp;
         final name =
@@ -169,7 +176,7 @@ class DiagnosticLog {
         await file.writeAsString(entry.toLine(),
             mode: FileMode.append, flush: false);
       } catch (_) {}
-    }());
+    });
   }
 
   /// 清理超过保留期的日志文件
