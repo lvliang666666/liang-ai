@@ -8,7 +8,16 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.12.0**（2026-10-28 发布）
+**当前版本：v2.13.0**（2026-10-29 发布）
+
+v2.13.0 在 v2.12.0 基础上新增（feat/quick-wins-2 分支，roadmap T3+F4+I3 → MINOR）：
+
+- **T3 Skill 分享码**：SkillParser 新增 toShareCode/fromShareCode（YAML front matter + 正文，与内置资产 .md 同构，往返一致）；Skill 管理页自定义 Skill 加「复制为分享码」按钮，搜索框旁加「从分享码导入」入口（粘贴弹窗解析入库，格式错误 Toast 提示）；SkillProvider.importFromShareCode
+- **F4 智能路由规则版**：SmartRouter 纯函数规则引擎——max 触发词（深入/推理/证明/代码/为什么等 24 词）短路 → 短消息（≤12 字）且无工具意图走 low → 默认 high；附件消息直接 max；斜杠命令不判 low。设置页「对话参数」加开关（**默认关**，升级用户行为不变）；开启后每条消息发送时决策本轮 effort，优先级最高（覆盖 Skill 预设与会话手动档位）
+- **I3 长按菜单升级**：user/assistant 气泡长按从锚点 showMenu 改为底部 action sheet（与 Skill 选择/附件面板统一形态）；assistant 菜单新增「重答」——regenerateFrom 删除该回答及其后全部消息，复用原 user 消息重新生成（前情摘要边界失效检查与编辑重发同规则）；流式中重答/引用隐藏
+- 710 项测试全绿（新增 26：分享码 6 + 路由 8 + provider 集成 4 + action sheet UI 8）；flutter analyze 零 error/warning（52 条 info 持平）
+
+### v2.12.0（2026-10-28）
 
 v2.12.0 在 v2.11.3 基础上新增（feat/generation-status 分支，roadmap I10 → MINOR）：
 
