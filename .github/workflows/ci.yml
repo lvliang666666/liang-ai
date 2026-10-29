@@ -53,24 +53,26 @@ jobs:
 
       - name: Analyze（零 error/warning 门禁）
         run: |
-          # flutter analyze 对 info 级问题也返回非零码（53 info → exit 1），
-          # bash -e 会在 grep 门禁前中止步骤——吞掉退出码，门禁交给 grep
-          flutter analyze > analyze_output.txt || true
-          # 完成性校验：输出必须含「issues found」收尾，防止 analyze 崩溃
-          # （如依赖解析失败）时门禁静默通过
+          # 两个已踩过的坑：
+          # ① flutter analyze 有 info 也返回非零码——bash -e 会在 grep 门禁
+          #    前中止步骤，必须吞掉退出码，门禁交给 grep
+          # ② 「N issues found」summary 行走 stderr——只重定向 stdout 时
+          #    文件里没有它，完成性校验扑空，必须 2>&1
+          flutter analyze > analyze_output.txt 2>&1 || true
+          # 完成性校验：必须有 summary 收尾（analyze 崩溃时无此行 → 门禁失败）
           grep -q "issues found" analyze_output.txt || {
             echo "::error::flutter analyze 未正常完成"
             cat analyze_output.txt
             exit 1
           }
-          # analyze 行格式为「   error - 消息」：级别词在前、短横在后；
-          # 旧模式 ^\s*-\s*(error|warning) 锚定后先要短横，永远匹配不到
-          if grep -qE '^[[:space:]]*(error|warning)[[:space:]]*-' analyze_output.txt; then
+          # 级别词在行首（「   error • 消息」/「   error - 消息」——分隔符
+          # 平台相关：Linux runner 用 •，Windows 用 -，只锚定级别词+空白）
+          if grep -qE '^[[:space:]]*(error|warning)([[:space:]]|$)' analyze_output.txt; then
             echo "::error::flutter analyze 有 error/warning"
-            cat analyze_output.txt
+            grep -E '^[[:space:]]*(error|warning)([[:space:]]|$)' analyze_output.txt
             exit 1
           fi
-          echo "analyze 通过（info 级 $(grep -cE '^[[:space:]]*info[[:space:]]*-' analyze_output.txt || true) 条）"
+          echo "analyze 通过（info 级 $(grep -cE '^[[:space:]]*info([[:space:]]|$)' analyze_output.txt || true) 条）"
 
       - name: Test（全绿门禁）
         run: flutter test --reporter expanded

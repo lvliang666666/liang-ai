@@ -107,7 +107,11 @@ else
   info "版本号决策：v${VERSION}+${BUILD_NO} → v${NEW_VERSION}+${NEW_BUILD}（${BUMP}）"
   # ① 验证全绿
   info "① analyze + test 全绿"
-  /d/flutter/bin/flutter analyze 2>&1 | grep -qE "^[ ]*-[ ]*(error|warning)" && die "analyze 有 error/warning，先修完再发版"
+  # analyze 有 info 也返回非零码——pipefail 下会吞掉 grep 命中，先落文件再 grep；
+  # 级别词在行首（「   error - 消息」），分隔符平台相关只锚定级别词+空白
+  /d/flutter/bin/flutter analyze > /tmp/analyze_release.txt 2>&1 || true
+  grep -q "issues found" /tmp/analyze_release.txt || die "analyze 未正常完成：$(cat /tmp/analyze_release.txt | tail -5)"
+  grep -qE "^[[:space:]]*(error|warning)([[:space:]]|$)" /tmp/analyze_release.txt && die "analyze 有 error/warning，先修完再发版"
   ok "analyze 零 error/warning"
   /d/flutter/bin/flutter test || die "测试未全绿"
   # ② 版本号 bump
