@@ -53,13 +53,24 @@ jobs:
 
       - name: Analyze（零 error/warning 门禁）
         run: |
-          flutter analyze > analyze_output.txt
-          if grep -qE '^\s*-\s*(error|warning)' analyze_output.txt; then
+          # flutter analyze 对 info 级问题也返回非零码（53 info → exit 1），
+          # bash -e 会在 grep 门禁前中止步骤——吞掉退出码，门禁交给 grep
+          flutter analyze > analyze_output.txt || true
+          # 完成性校验：输出必须含「issues found」收尾，防止 analyze 崩溃
+          # （如依赖解析失败）时门禁静默通过
+          grep -q "issues found" analyze_output.txt || {
+            echo "::error::flutter analyze 未正常完成"
+            cat analyze_output.txt
+            exit 1
+          }
+          # analyze 行格式为「   error - 消息」：级别词在前、短横在后；
+          # 旧模式 ^\s*-\s*(error|warning) 锚定后先要短横，永远匹配不到
+          if grep -qE '^[[:space:]]*(error|warning)[[:space:]]*-' analyze_output.txt; then
             echo "::error::flutter analyze 有 error/warning"
             cat analyze_output.txt
             exit 1
           fi
-          echo "analyze 通过（info 级 $(grep -cE '^\s*-\s*info' analyze_output.txt || true) 条）"
+          echo "analyze 通过（info 级 $(grep -cE '^[[:space:]]*info[[:space:]]*-' analyze_output.txt || true) 条）"
 
       - name: Test（全绿门禁）
         run: flutter test --reporter expanded
