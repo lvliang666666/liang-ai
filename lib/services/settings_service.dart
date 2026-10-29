@@ -146,6 +146,36 @@ class SettingsService extends ChangeNotifier {
     await _prefs.setStringList(_kRecentSkillIds, list);
   }
 
+  // ===== 斜杠命令自定义短语（I12：输入「/」唤起的快捷短语） =====
+  // LRU 上限防膨胀；短语为纯文本，点选后整条填入输入框
+  static const _kSlashPhrases = 'slash_phrases';
+  static const slashPhraseLimit = 20;
+
+  /// 自定义短语列表（index 0 = 最近使用）
+  List<String> get slashPhrases =>
+      _prefs.getStringList(_kSlashPhrases) ?? [];
+
+  /// 添加短语：去重提到最前，超限淘汰最久未用
+  Future<void> addSlashPhrase(String phrase) async {
+    final trimmed = phrase.trim();
+    if (trimmed.isEmpty) return;
+    final list = slashPhrases..remove(trimmed);
+    list.insert(0, trimmed);
+    if (list.length > slashPhraseLimit) {
+      list.removeRange(slashPhraseLimit, list.length);
+    }
+    await _prefs.setStringList(_kSlashPhrases, list);
+    notifyListeners();
+  }
+
+  /// 删除短语（不存在时静默）
+  Future<void> removeSlashPhrase(String phrase) async {
+    final list = slashPhrases;
+    if (!list.remove(phrase)) return;
+    await _prefs.setStringList(_kSlashPhrases, list);
+    notifyListeners();
+  }
+
   // ===== 会话草稿（I6：按会话 ID 存取输入框未发送内容） =====
   // key 前缀 + 会话 id；空闲态（新对话）用固定键 [idleDraftKey]。
   // LRU 上限防膨胀：超限时淘汰最久未写的草稿。

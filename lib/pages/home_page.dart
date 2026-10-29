@@ -30,6 +30,7 @@ import '../widgets/chat_input_bar.dart';
 import '../widgets/gesture_drawer.dart';
 import '../widgets/home/chat_message_list.dart';
 import '../widgets/home/home_input_bar.dart';
+import '../widgets/home/message_outline_sheet.dart';
 import '../widgets/home/new_chat_preset_sheet.dart';
 import '../widgets/home/session_drawer_panel.dart';
 import '../widgets/home/skill_picker_sheet.dart';
@@ -744,15 +745,26 @@ class _HomePageState extends State<HomePage> {
                               _openDrawer();
                             },
                           ),
-                          // 聊天态：header 显示会话标题
+                          // 聊天态：header 显示会话标题（I8 点击弹消息大纲）
                           Expanded(
                             child: _chat != null
-                                ? Text(
-                                    _chat!.session.title,
-                                    textAlign: TextAlign.center,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.titleMedium,
+                                ? Tooltip(
+                                    message: '消息大纲',
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(8),
+                                      onTap: _showMessageOutline,
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 6),
+                                        child: Text(
+                                          _chat!.session.title,
+                                          textAlign: TextAlign.center,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.titleMedium,
+                                        ),
+                                      ),
+                                    ),
                                   )
                                 : const SizedBox(),
                           ),
@@ -876,6 +888,33 @@ class _HomePageState extends State<HomePage> {
     } else {
       setState(() => _selectedEffort = selected);
     }
+  }
+
+  /// I8 消息大纲：点击 header 会话标题弹出目录浮层
+  ///
+  /// 以每条 user 提问为目录项，点击条目关闭浮层并滚动定位到该消息
+  /// （复用 I7 的 scrollToMessage 管线：reverse 列表定位 + 临时高亮）。
+  /// 空会话（无提问）不弹浮层。
+  Future<void> _showMessageOutline() async {
+    final chat = _chat;
+    if (chat == null) return;
+    final entries = MessageOutlineSheet.outlineEntries(chat.displayMessages);
+    if (entries.isEmpty) {
+      Haptics.light();
+      showAppToast(context, '还没有提问，发送第一条消息后可查看大纲');
+      return;
+    }
+    Haptics.light();
+    final selected = await showMessageOutlineSheet(
+      context,
+      chat.displayMessages,
+    );
+    if (selected == null || !mounted) return;
+    // 等浮层关闭动画走完再定位，避免同帧布局竞争
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _chatAreaKey.currentState?.scrollToMessage(selected.id);
+    });
   }
 
   /// 主页 agent tag：空闲态改预选 / 聊天态改当前会话 Skill
