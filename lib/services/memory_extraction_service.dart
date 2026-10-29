@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 
 import '../models/chat_message.dart';
+import '../models/memory.dart';
 import '../models/provider_profile.dart';
 import 'api_service.dart';
 import 'memory_service.dart';
@@ -40,20 +41,25 @@ class MemoryExtractionService {
   static const maxMemoryLength = 200;
 
   /// 强约束提取 system prompt：只输出 JSON
+  ///
+  /// M3 冲突消解：prompt 附带现有记忆样本（最多 10 条），要求模型在
+  /// 新信息与旧记忆矛盾时输出 replaces（旧记忆原文）——旧条归档不删除。
   static const _systemPrompt = '''
 你是记忆提取器。分析对话记录，提取值得长期记住的用户信息。
 
 【提取】用户的偏好、重要事实、长期背景、习惯（如喜欢的回答风格、所在城市、职业、技术栈、称呼）。
 【不提取】闲聊寒暄、一次性任务、助手的回答内容、没有明确依据的推测。
 【格式】每条记忆是一句话事实（50 字以内），以「用户」开头（如「用户喜欢简洁回答」）。
+【分层】layer 字段给每条记忆分类：profile=稳定身份（城市/职业/技术栈）、preference=偏好（喜欢的风格/习惯）、event=带时间性的事件（最近在做什么）。不确定用 event。
+【冲突】若新信息与「现有记忆」矛盾（如搬家了/换工作了），在新条目加 replaces 字段，值为被取代的旧记忆原文（一字不差）。没有矛盾就不加该字段。
 【输出】只输出 JSON，禁止输出任何其他文字：
-{"memories": [{"content": "一句话事实", "tag": "偏好"}]}
-tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的信息时输出 {"memories": []}''';
+{"memories": [{"content": "一句话事实", "tag": "偏好", "layer": "preference", "replaces": "被取代的旧记忆原文"}]}
+tag 只能取：偏好/背景/习惯/其他，可省略；layer 只能取 profile/preference/event，可省略；replaces 可省略。没有值得记住的信息时输出 {"memories": []}''';
 
   /// 解析失败后的回喂重试指令（只重试一次，防死循环）
   static const _retryPrompt = '''
 上面的输出不是合法 JSON。重新输出：只输出 JSON（格式：
-{"memories": [{"content": "一句话事实", "tag": "偏好"}]}），
+{"memories": [{"content": "一句话事实", "tag": "偏好", "layer": "preference", "replaces": "被取代的旧记忆原文"}]}），
 没有可提取的信息输出 {"memories": []}，禁止输出任何其他文字。''';
 
   /// 会话是否值得提取：至少一条非空 user 消息 + 一条非空 assistant 回复
@@ -133,6 +139,14 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
             tag: item['tag'] is String && (item['tag'] as String).trim().isNotEmpty
                 ? (item['tag'] as String).trim()
                 : null,
+            layer: item['layer'] is String &&
+                    Memory.validLayers.contains(item['layer'] as String)
+                ? item['layer'] as String
+                : null,
+            replaces: item['replaces'] is String &&
+                    (item['replaces'] as String).trim().isNotEmpty
+                ? (item['replaces'] as String).trim()
+                : null,
           ),
     ];
   }
@@ -141,6 +155,7 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
   ///
   /// 提取请求走会话同款供应商与模型（low 档低温）；解析失败回喂重试
   /// 一次；入库走 [MemoryService.save]（去重/合并/容量压缩内置）。
+  /// M3：prompt 附带现有记忆样本供冲突消解；候选带 replaces 时旧条归档。
   Future<int> extractAndSave({
     required List<ChatMessage> messages,
     required ProviderProfile profile,
@@ -151,9 +166,14 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
     if (!shouldExtract(messages)) return 0;
     final conversation =
         buildConversationText(messages, sessionTitle: sessionTitle);
+    final existingSample = await _existingMemoriesSample();
+
+    final systemWithSample = existingSample.isEmpty
+        ? _systemPrompt
+        : '$_systemPrompt\n\n【现有记忆】（供冲突判断；replaces 值必须取自这里）\n$existingSample';
 
     final first = await _requestJson(profile, model, [
-      {'role': 'system', 'content': _systemPrompt},
+      {'role': 'system', 'content': systemWithSample},
       {'role': 'user', 'content': conversation},
     ]);
     if (first == null) return 0; // 网络失败：静默放弃
@@ -161,7 +181,7 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
     if (candidates == null) {
       // 解析失败：回喂重试一次（把坏输出喂回去要求纠正）
       final second = await _requestJson(profile, model, [
-        {'role': 'system', 'content': _systemPrompt},
+        {'role': 'system', 'content': systemWithSample},
         {'role': 'user', 'content': conversation},
         {'role': 'assistant', 'content': first},
         {'role': 'user', 'content': _retryPrompt},
@@ -177,10 +197,42 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
       if (content.length > maxMemoryLength) {
         content = content.substring(0, maxMemoryLength);
       }
-      await _memory.save(content, tag: c.tag, sourceAgent: sourceAgent);
+      // 冲突消解：replaces 原文 → 归一化匹配现有记忆 id（找不到静默跳过）
+      final replacesId = c.replaces == null
+          ? null
+          : await _resolveReplacesId(c.replaces!);
+      await _memory.save(
+        content,
+        tag: c.tag,
+        sourceAgent: sourceAgent,
+        layer: c.layer,
+        replaces: replacesId,
+      );
       saved++;
     }
     return saved;
+  }
+
+  /// 现有记忆样本（注入 prompt 供冲突判断）：活跃记忆前 10 条原文
+  Future<String> _existingMemoriesSample() async {
+    final all = await _memory.getAll();
+    final active = all.where((m) => !m.isArchived).take(10).toList();
+    if (active.isEmpty) return '';
+    return [
+      for (final m in active) '- ${m.content}',
+    ].join('\n');
+  }
+
+  /// replaces 原文 → 现有记忆 id（归一化精确匹配；找不到返回 null 静默跳过）
+  Future<String?> _resolveReplacesId(String original) async {
+    final norm = MemoryService.normalize(original);
+    if (norm.isEmpty) return null;
+    final all = await _memory.getAll();
+    for (final m in all) {
+      if (m.isArchived) continue;
+      if (MemoryService.normalize(m.content) == norm) return m.id;
+    }
+    return null;
   }
 
   /// 发起一次提取请求并收集完整输出；失败（网络/服务端错误）返回 null
@@ -218,8 +270,19 @@ tag 只能取：偏好/背景/习惯/其他，可省略。没有值得记住的�
 
 /// 提取出的单条记忆候选
 class MemoryCandidate {
-  const MemoryCandidate({required this.content, this.tag});
+  const MemoryCandidate({
+    required this.content,
+    this.tag,
+    this.layer,
+    this.replaces,
+  });
 
   final String content;
   final String? tag;
+
+  /// M3 分层（profile/preference/event；null = MemoryService 自动分类）
+  final String? layer;
+
+  /// M3 冲突消解：被本条取代的旧记忆原文（null = 无冲突）
+  final String? replaces;
 }

@@ -376,6 +376,165 @@ void main() {
     });
   });
 
+  group('M3 分层与衰减', () {
+    test('classifyLayer：偏好关键词 → preference', () {
+      expect(MemoryService.classifyLayer('用户喜欢简洁回答'),
+          Memory.layerPreference);
+      expect(MemoryService.classifyLayer('希望代码多写注释'),
+          Memory.layerPreference);
+      expect(MemoryService.classifyLayer('讨厌啰嗦的解释'),
+          Memory.layerPreference);
+    });
+
+    test('classifyLayer：画像关键词 → profile', () {
+      expect(MemoryService.classifyLayer('用户在上海做后端开发'),
+          Memory.layerProfile);
+      expect(MemoryService.classifyLayer('用户是学生，专业是计算机'),
+          Memory.layerProfile);
+      expect(MemoryService.classifyLayer('用户的技术栈是 Flutter 和 Dart'),
+          Memory.layerProfile);
+    });
+
+    test('classifyLayer：无关键词 → event（默认层）', () {
+      expect(MemoryService.classifyLayer('用户最近在准备一场考试'),
+          Memory.layerEvent);
+      expect(MemoryService.classifyLayer('普通内容'), Memory.layerEvent);
+    });
+
+    test('saveAt 显式 layer 合法时优先；非法值走自动分类', () async {
+      final explicit =
+          await service.saveAt('内容甲', layer: Memory.layerProfile, now: 1);
+      expect(explicit.layer, Memory.layerProfile);
+
+      final invalid =
+          await service.saveAt('喜欢简洁', layer: '不存在的层', now: 2);
+      expect(invalid.layer, Memory.layerPreference); // 自动分类兜底
+    });
+
+    test('recentText 分层配额：画像 5 + 偏好 5 + 事件 10', () async {
+      // 灌 8 画像 + 8 偏好 + 15 事件（各超配额），全部未置顶
+      for (var i = 1; i <= 8; i++) {
+        await service.saveAt('用户是画像$i号工程师', layer: Memory.layerProfile,
+            now: i);
+      }
+      for (var i = 1; i <= 8; i++) {
+        await service.saveAt('用户喜欢风格$i简洁', layer: Memory.layerPreference,
+            now: 100 + i);
+      }
+      for (var i = 1; i <= 15; i++) {
+        await service.saveAt('事件$i发生了', layer: Memory.layerEvent,
+            now: 1000 + i);
+      }
+
+      final text = await service.recentText();
+      final lines = text.split('\n').skip(1).toList(); // 去标题行
+      // 总条数 = 5 + 5 + 10 = 20（配额封顶）
+      expect(lines.length, 20);
+      // 各层条数：画像 5 / 偏好 5 / 事件 10
+      int countLayer(String kw) => lines.where((l) => l.contains(kw)).length;
+      expect(countLayer('画像'), 5);
+      expect(countLayer('风格'), 5);
+      expect(countLayer('事件'), 10);
+    });
+
+    test('recentText 事件衰减：比最新记忆旧 30 天以上的事件不注入', () async {
+      final day = 24 * 60 * 60 * 1000;
+      // 基准：最新记忆 updatedAt = 100 * day
+      await service.saveAt('最新事件', layer: Memory.layerEvent,
+          now: 100 * day);
+      // 29 天前的事件：存活
+      await service.saveAt('近期事件', layer: Memory.layerEvent,
+          now: 100 * day - 29 * day);
+      // 31 天前的事件：衰减
+      await service.saveAt('陈旧事件', layer: Memory.layerEvent,
+          now: 100 * day - 31 * day);
+      // 画像/偏好层不衰减：100 天前的照样注入
+      await service.saveAt('用户是老画像', layer: Memory.layerProfile,
+          now: 1);
+      await service.saveAt('用户喜欢老偏好', layer: Memory.layerPreference,
+          now: 1);
+
+      final text = await service.recentText();
+      expect(text, contains('最新事件'));
+      expect(text, contains('近期事件'));
+      expect(text, isNot(contains('陈旧事件')), reason: '超 30 天的事件层记忆不注入');
+      expect(text, contains('用户是老画像'));
+      expect(text, contains('用户喜欢老偏好'));
+    });
+
+    test('衰减不删除：过期事件仍在库中（面板可见可删）', () async {
+      final day = 24 * 60 * 60 * 1000;
+      await service.saveAt('最新事件', layer: Memory.layerEvent,
+          now: 100 * day);
+      await service.saveAt('陈旧事件', layer: Memory.layerEvent,
+          now: 100 * day - 31 * day);
+
+      expect(await service.count(), 2); // 不删除
+      final all = await service.getAll();
+      expect(anyOfMemoryExists(all, '陈旧事件'), isTrue);
+    });
+
+    test('置顶事件层记忆不衰减（永久记忆语义优先）', () async {
+      final day = 24 * 60 * 60 * 1000;
+      await service.saveAt('最新事件', layer: Memory.layerEvent,
+          now: 100 * day);
+      final old = await service.saveAt('置顶的陈旧事件',
+          layer: Memory.layerEvent, now: 100 * day - 60 * day);
+      await service.setPinned(old.id, true);
+
+      final text = await service.recentText();
+      expect(text, contains('置顶的陈旧事件（置顶）'),
+          reason: '置顶条走 pinned 通道，不经过衰减过滤');
+    });
+
+    test('Memory.isDecayed：非事件层恒 false；事件层按天数判定', () {
+      final day = 24 * 60 * 60 * 1000;
+      final base = 100 * day;
+      final profile = Memory(
+          id: 'a',
+          content: 'x',
+          layer: Memory.layerProfile,
+          createdAt: 1,
+          updatedAt: base - 100 * day);
+      expect(profile.isDecayed(base), isFalse);
+
+      final freshEvent = Memory(
+          id: 'b',
+          content: 'x',
+          layer: Memory.layerEvent,
+          createdAt: 1,
+          updatedAt: base - 29 * day);
+      expect(freshEvent.isDecayed(base), isFalse);
+
+      final staleEvent = Memory(
+          id: 'c',
+          content: 'x',
+          layer: Memory.layerEvent,
+          createdAt: 1,
+          updatedAt: base - 31 * day);
+      expect(staleEvent.isDecayed(base), isTrue);
+    });
+
+    test('Memory.fromMap：非法 layer 值回退 event（备份导入防御）', () {
+      final m = Memory.fromMap({
+        'id': 'x',
+        'content': '内容',
+        'layer': '不合法的层',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      expect(m.layer, Memory.layerEvent);
+
+      final missing = Memory.fromMap({
+        'id': 'y',
+        'content': '内容',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      expect(missing.layer, Memory.layerEvent);
+    });
+  });
+
   group('容量上限（滚动压缩）', () {
     test('超过 200 条：最旧 40 条活跃记忆压缩为一条归档摘要', () async {
       for (var i = 1; i <= MemoryService.maxMemories + 10; i++) {

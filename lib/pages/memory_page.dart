@@ -27,6 +27,9 @@ class _MemoryPanelState extends State<MemoryPanel> {
   /// 当前选中的 tag 筛选（null = 全部）
   String? _tagFilter;
 
+  /// 当前选中的层级筛选（M3，null = 全部）
+  String? _layerFilter;
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -69,6 +72,12 @@ class _MemoryPanelState extends State<MemoryPanel> {
     // tag 筛选（与搜索叠加）
     if (_tagFilter != null) {
       filtered = filtered.where((m) => m.tag == _tagFilter).toList();
+    }
+
+    // 层级筛选（M3，与搜索/tag 叠加；归档行不参与层级筛选）
+    if (_layerFilter != null) {
+      filtered =
+          filtered.where((m) => !m.isArchived && m.layer == _layerFilter).toList();
     }
 
     // 置顶组恒在列表最前（组内按更新时间倒序，与全量排序一致）
@@ -165,6 +174,51 @@ class _MemoryPanelState extends State<MemoryPanel> {
             context.read<SettingsService>().setEpisodicMemory(v);
           },
         ),
+        // M3 层级筛选 chips（画像/偏好/事件；无记忆时隐藏）
+        if (provider.memories.any((m) => !m.isArchived))
+          SizedBox(
+            height: 40,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: FilterChip(
+                    label: const Text('全部层级'),
+                    selected: _layerFilter == null,
+                    showCheckmark: false,
+                    visualDensity: VisualDensity.compact,
+                    onSelected: (_) {
+                      Haptics.selection();
+                      setState(() => _layerFilter = null);
+                    },
+                  ),
+                ),
+                for (final layer in [
+                  Memory.layerProfile,
+                  Memory.layerPreference,
+                  Memory.layerEvent,
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      label: Text(Memory.layerLabel(layer)),
+                      selected: _layerFilter == layer,
+                      showCheckmark: false,
+                      visualDensity: VisualDensity.compact,
+                      onSelected: (_) {
+                        Haptics.selection();
+                        setState(() {
+                          _layerFilter =
+                              _layerFilter == layer ? null : layer;
+                        });
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
         // tag 筛选 chips（横向滚动；无 tag 时隐藏）
         if (tags.isNotEmpty)
           SizedBox(
@@ -254,14 +308,23 @@ class _MemoryPanelState extends State<MemoryPanel> {
     );
   }
 
-  /// 单条记忆卡片：置顶标记 + 编辑/置顶/删除操作
+  /// 单条记忆卡片：层级徽章 + 置顶标记 + 编辑/置顶/删除操作
   Widget _memoryCard(
       ThemeData theme, MemoryProvider provider, Memory m) {
+    final showLayerBadge = !m.isArchived;
     return Card(
       elevation: 0,
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       child: ListTile(
-        title: Text(m.content),
+        title: Row(
+          children: [
+            if (showLayerBadge) ...[
+              _LayerBadge(theme: theme, layer: m.layer),
+              const SizedBox(width: 6),
+            ],
+            Expanded(child: Text(m.content)),
+          ],
+        ),
         subtitle: (m.tag != null || m.sourceAgent != null)
             ? Text(
                 [
@@ -395,6 +458,48 @@ class _MemoryFormResult {
   const _MemoryFormResult({required this.content, this.tag});
   final String content;
   final String? tag;
+}
+
+/// M3 层级徽章：画像/偏好/事件 小胶囊（颜色按层区分）
+class _LayerBadge extends StatelessWidget {
+  const _LayerBadge({required this.theme, required this.layer});
+
+  final ThemeData theme;
+  final String layer;
+
+  @override
+  Widget build(BuildContext context) {
+    // 画像=主色（稳定核心）、偏好= tertiary（风格喜好）、事件= secondary（动态）
+    final (bg, fg) = switch (layer) {
+      Memory.layerProfile => (
+          theme.colorScheme.primaryContainer,
+          theme.colorScheme.onPrimaryContainer
+        ),
+      Memory.layerPreference => (
+          theme.colorScheme.tertiaryContainer,
+          theme.colorScheme.onTertiaryContainer
+        ),
+      _ => (
+          theme.colorScheme.secondaryContainer,
+          theme.colorScheme.onSecondaryContainer
+        ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        Memory.layerLabel(layer),
+        style: theme.textTheme.labelSmall?.copyWith(
+          color: fg,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
 }
 
 /// 添加/编辑记忆弹窗：独立 StatefulWidget，控制器随弹窗销毁，

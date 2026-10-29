@@ -1,4 +1,4 @@
-import 'dart:math';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -33,30 +33,56 @@ class MemoryService {
   /// 包含合并的最短边长度（短于此长度的包含关系不合并，防误伤）
   static const containMergeMinLength = 6;
 
-  /// 注入 system prompt 的最大条数
+  /// 注入 system prompt 的最大条数（M3 分层后为各层配额之和）
   static const injectLimit = 20;
+
+  /// 分层注入配额（M3）：画像 5 + 偏好 5 + 事件 10 = 20（与 injectLimit 一致）
+  static const profileQuota = 5;
+  static const preferenceQuota = 5;
+  static const eventQuota = 10;
 
   /// 存一条记忆（归一化去重 + 包含合并）
   ///
   /// 返回实际落库的记忆（新建或被更新的那条）。
-  Future<Memory> save(String content, {String? tag, String? sourceAgent}) =>
+  Future<Memory> save(
+    String content, {
+    String? tag,
+    String? sourceAgent,
+    String? layer,
+    String? replaces,
+  }) =>
       saveAt(
         content,
         tag: tag,
         sourceAgent: sourceAgent,
+        layer: layer,
+        replaces: replaces,
         now: DateTime.now().millisecondsSinceEpoch,
       );
 
   /// save 的可测内核（时间注入）：[now] 为毫秒时间戳
+  ///
+  /// [layer] 为 M3 分层（null = 自动分类 [classifyLayer]）；
+  /// [replaces] 为冲突消解（M3）：指定被本条取代的旧记忆 id——旧条
+  /// 归档（tag 改 [Memory.archiveTag] 前缀保留原文）而非删除，可溯源。
   Future<Memory> saveAt(
     String content, {
     String? tag,
     String? sourceAgent,
+    String? layer,
+    String? replaces,
     required int now,
   }) async {
     final trimmed = content.trim();
     if (trimmed.isEmpty) {
       throw ArgumentError('记忆内容不能为空');
+    }
+
+    // 冲突消解（M3）：显式指定 replaces 时先归档旧条（在去重之前——
+    // 旧条在场会被去重逻辑合并而非取代）。归档 = tag 加前缀 + layer 置空
+    // 语义（isArchived 判定后不参与注入/去重/压缩）。
+    if (replaces != null) {
+      await _archiveReplaced(replaces, now: now);
     }
 
     // 去重/合并：归一化相同 → 更新原条；包含关系（短边≥6字）→ 保留信息更全的长边
@@ -83,6 +109,7 @@ class MemoryService {
       content: trimmed,
       tag: tag,
       sourceAgent: sourceAgent,
+      layer: _resolveLayer(layer, trimmed),
       createdAt: now,
       updatedAt: now,
     );
@@ -90,6 +117,52 @@ class MemoryService {
     await _enforceCapacity(now: now);
     _notifyChange();
     return memory;
+  }
+
+  /// 冲突消解：把被取代的旧条归档（tag 加 [Memory.replacedTagPrefix] 前缀
+  /// 保留原标签可溯源）
+  ///
+  /// 归档行不参与注入/去重/滚动压缩（isArchived 判定），用户在记忆面板
+  /// 可见可删。id 不存在时静默跳过（模型幻觉防御）。
+  Future<void> _archiveReplaced(String id, {required int now}) async {
+    final all = await _db.getAllMemories();
+    final target = all.where((m) => m.id == id).firstOrNull;
+    if (target == null || target.isArchived) return;
+    await _db.updateMemory(target.copyWith(
+      tag: '${Memory.replacedTagPrefix} · ${target.tag ?? '无标签'}',
+      updatedAt: now,
+    ));
+  }
+
+  /// 层级解析：显式指定且合法用之，否则启发式自动分类
+  static String _resolveLayer(String? layer, String content) {
+    if (layer != null && Memory.validLayers.contains(layer)) return layer;
+    return classifyLayer(content);
+  }
+
+  /// 启发式分层（M3）：按内容关键词把记忆分到画像/偏好/事件三层
+  ///
+  /// 规则从宽（分类错了用户可在面板改，宁错分不漏分）：
+  /// - 画像：身份/地点/职业/技术栈等稳定事实
+  /// - 偏好：喜欢/想要/习惯等风格与喜好
+  /// - 事件：其余（带时间性的动态信息，30 天衰减）
+  static String classifyLayer(String content) {
+    final norm = normalize(content);
+    const profileKeywords = [
+      '住在', '城市', '北京', '上海', '广州', '深圳', '杭州', '成都',
+      '职业', '工作', '公司', '岗位', '工程师', '开发', '产品', '设计',
+      '学生', '老师', '医生', '律师', '大学', '专业', '技术栈', '语言',
+      'java', 'python', 'dart', 'flutter', 'go', 'rust', 'c++', '前端',
+      '后端', '全栈', '算法', '运维', '测试', '名字', '岁', '年级',
+    ];
+    const preferenceKeywords = [
+      '喜欢', '不喜欢', '偏好', '想要', '希望', '习惯', '爱', '讨厌',
+      '简洁', '详细', '简短', '啰嗦', '幽默', '严肃', '正式', '口语',
+      '中文', '英文', '代码', '注释', '例子', '比喻', '风格', '语气',
+    ];
+    if (preferenceKeywords.any(norm.contains)) return Memory.layerPreference;
+    if (profileKeywords.any(norm.contains)) return Memory.layerProfile;
+    return Memory.layerEvent;
   }
 
   /// 全部记忆（按更新时间倒序）
@@ -156,20 +229,49 @@ class MemoryService {
   /// 条数
   Future<int> count() => _db.memoryCount();
 
-  /// 拼接注入 system prompt 的记忆文本（置顶条 + 最近 [injectLimit] 条活跃记忆）
+  /// 拼接注入 system prompt 的记忆文本（M3 分层配额注入）
   ///
-  /// 置顶条（pinned）排最前且不占 [injectLimit] 名额（永久记忆语义）；
-  /// 归档摘要行置尾单独成段（低优先级参考，不占活跃条数名额）。
-  /// 无记忆返回空字符串（调用方据此跳过注入段）。
+  /// 结构（总预算 ≤ [injectLimit] 条 + 置顶不占名额）：
+  /// 1. 置顶条排最前（永久记忆语义，不占配额）
+  /// 2. 画像层 ≤ [profileQuota] 条（稳定身份事实，不衰减）
+  /// 3. 偏好层 ≤ [preferenceQuota] 条（风格喜好，不衰减）
+  /// 4. 事件层 ≤ [eventQuota] 条（**30 天衰减**：过期不注入不删除）
+  /// 5. 归档摘要行置尾单独成段（低优先级参考，不占配额）
+  ///
+  /// 衰减时间基准 = **最新活跃记忆的 updatedAt**（而非真实时钟）——
+  /// 「30 天」的语义是「比最新记忆旧 30 天以上」，这样时钟偏移/测试
+  /// 注入相对时间戳都自洽；真实场景中最新记忆必然是刚写入的。
+  ///
+  /// 各层内部按更新时间倒序（getAllMemories 已排序）。某层空则跳过该段；
+  /// 无任何可注入内容返回空字符串（调用方据此跳过注入段）。
   Future<String> recentText({int limit = injectLimit}) async {
     final all = await _db.getAllMemories();
     if (all.isEmpty) return '';
     final active = all.where((m) => !m.isArchived).toList();
     final archived = all.where((m) => m.isArchived).toList();
     if (active.isEmpty && archived.isEmpty) return '';
+
     final pinned = active.where((m) => m.pinned).toList();
     final unpinned = active.where((m) => !m.pinned).toList();
-    final picked = unpinned.take(limit).toList();
+    // 事件层衰减：比最新记忆旧 30 天以上的不注入（保留在库，面板可见可删）；
+    // 只有归档行时 active 为空，跳过衰减判定（归档段照常渲染）
+    final living = unpinned.isEmpty
+        ? unpinned
+        : unpinned
+            .where((m) =>
+                !m.isDecayed(unpinned.map((x) => x.updatedAt).reduce(math.max)))
+            .toList();
+
+    final profiles =
+        living.where((m) => m.layer == Memory.layerProfile).take(profileQuota);
+    final preferences = living
+        .where((m) => m.layer == Memory.layerPreference)
+        .take(preferenceQuota);
+    final events =
+        living.where((m) => m.layer == Memory.layerEvent).take(eventQuota);
+    final picked =
+        [...profiles, ...preferences, ...events].take(limit).toList();
+
     if (pinned.isEmpty && picked.isEmpty && archived.isEmpty) return '';
     return [
       '【用户记忆】（长期有效，跨会话）',
@@ -287,7 +389,7 @@ class MemoryService {
   }
 
   /// id 随机源（static final：与实例生命周期解耦）
-  static final Random _idRandom = Random();
+  static final math.Random _idRandom = math.Random();
 
   /// 触发变更信号（写库成功后调用）
   static void _notifyChange() => changeSignal.value++;

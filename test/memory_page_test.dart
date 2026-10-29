@@ -96,12 +96,14 @@ class _FakeMemoryProvider extends MemoryProvider {
   }
 }
 
-Memory memory(String id, String content, {String? tag, bool pinned = false}) =>
+Memory memory(String id, String content,
+        {String? tag, bool pinned = false, String? layer}) =>
     Memory(
       id: id,
       content: content,
       tag: tag,
       pinned: pinned,
+      layer: layer ?? Memory.layerEvent,
       createdAt: 1000,
       updatedAt: 1000,
     );
@@ -163,8 +165,8 @@ void main() {
 
       expect(find.text('用户喜欢简洁回答'), findsOneWidget);
       expect(find.text('用户在上海工作'), findsOneWidget);
-      // 「偏好」同时出现在 chip 与卡片副标题（M1 策展台新增 chips 行）
-      expect(find.text('偏好'), findsNWidgets(2));
+      // 「偏好」出现在 chip、层级徽章（M3 preference 层）、卡片副标题
+      expect(find.text('偏好'), findsNWidgets(3));
     });
 
     testWidgets('搜索过滤：关键词命中与清空', (tester) async {
@@ -269,20 +271,20 @@ void main() {
       await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
-      // chips 行出现：全部 + 偏好 + 背景（「偏好」chip + 卡片副标题 = 2 处）
+      // chips 行出现：全部 + 偏好 + 背景（「偏好」= chip + 徽章 + 副标题 3 处）
       expect(find.text('全部'), findsOneWidget);
-      expect(find.text('偏好'), findsNWidgets(2));
+      expect(find.text('偏好'), findsNWidgets(3));
       expect(find.text('背景'), findsNWidgets(2));
 
-      // 点「偏好」chip（第一个匹配）→ 只剩该 tag 的记忆
-      await tester.tap(find.text('偏好').first);
+      // 点「偏好」tag chip（层级行在前，tag 行在后 → 取 .at(1)）→ 只剩该 tag
+      await tester.tap(find.widgetWithText(FilterChip, '偏好').at(1));
       await tester.pump();
       expect(find.text('喜欢简洁'), findsOneWidget);
       expect(find.text('在上海工作'), findsNothing);
       expect(find.text('无标签记忆'), findsNothing);
 
       // 再点「偏好」chip → 取消筛选恢复全部
-      await tester.tap(find.text('偏好').first);
+      await tester.tap(find.widgetWithText(FilterChip, '偏好').at(1));
       await tester.pump();
       expect(find.text('在上海工作'), findsOneWidget);
       expect(find.text('无标签记忆'), findsOneWidget);
@@ -304,6 +306,45 @@ void main() {
       final pinnedY = tester.getTopLeft(find.text('置顶记忆')).dy;
       final normalY = tester.getTopLeft(find.text('普通记忆')).dy;
       expect(pinnedY, lessThan(normalY));
+    });
+
+    testWidgets('M3 层级徽章：每条记忆卡片显示层级徽章', (tester) async {
+      provider.seed([
+        memory('m1', '用户喜欢简洁回答', layer: Memory.layerPreference),
+        memory('m2', '用户是后端工程师', layer: Memory.layerProfile),
+        memory('m3', '最近在准备考试', layer: Memory.layerEvent),
+      ]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      // 三种层级徽章各出现一次
+      expect(find.text('偏好'), findsWidgets); // 徽章 + tag chips 行
+      expect(find.text('画像'), findsWidgets);
+      expect(find.text('事件'), findsWidgets);
+    });
+
+    testWidgets('M3 层级筛选：点「画像」只显示画像层记忆', (tester) async {
+      provider.seed([
+        memory('m1', '用户喜欢简洁回答', layer: Memory.layerPreference),
+        memory('m2', '用户是后端工程师', layer: Memory.layerProfile),
+        memory('m3', '最近在准备考试', layer: Memory.layerEvent),
+      ]);
+      await tester.pumpWidget(wrap(const MemoryPanel()));
+      await tester.pump();
+
+      // 点层级 chips 行的「画像」（层级行在前 → .first）
+      await tester.tap(find.widgetWithText(FilterChip, '画像').first);
+      await tester.pump();
+
+      expect(find.text('用户是后端工程师'), findsOneWidget);
+      expect(find.text('用户喜欢简洁回答'), findsNothing);
+      expect(find.text('最近在准备考试'), findsNothing);
+
+      // 点「全部层级」恢复
+      await tester.tap(find.widgetWithText(FilterChip, '全部层级').first);
+      await tester.pump();
+      expect(find.text('用户喜欢简洁回答'), findsOneWidget);
+      expect(find.text('最近在准备考试'), findsOneWidget);
     });
 
     testWidgets('点置顶按钮：调用 setPinned(true)，再点取消', (tester) async {

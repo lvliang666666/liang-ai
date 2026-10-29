@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -11,6 +13,7 @@ import 'providers/sessions_provider.dart';
 import 'providers/agent_provider.dart';
 import 'providers/theme_provider.dart';
 import 'services/database_service.dart';
+import 'services/diagnostic_log.dart';
 import 'services/memory_service.dart';
 import 'services/secure_key_store.dart';
 import 'services/settings_service.dart';
@@ -18,6 +21,10 @@ import 'services/agent_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // E4 诊断日志：崩溃钩子 + 落盘目录（越早挂越好，启动期崩溃也有据可查）
+  installDiagnosticHooks();
+  unawaited(DiagnosticLog.init());
 
   final prefs = await SharedPreferences.getInstance();
   final settings = SettingsService(prefs);

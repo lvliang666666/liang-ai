@@ -17,6 +17,7 @@ import '../providers/agent_provider.dart';
 import '../providers/theme_provider.dart';
 import '../services/backup_service.dart';
 import '../services/database_service.dart';
+import '../services/diagnostic_log.dart';
 import '../services/settings_service.dart';
 import '../services/agent_parser.dart';
 import '../theme/app_theme_id.dart';
@@ -1051,7 +1052,33 @@ class _SettingsPageState extends State<SettingsPage> {
           trailing: const Icon(Icons.chevron_right),
           onTap: _importBackup,
         ),
+        const Divider(),
+        // E4 本地诊断日志：查看/分享/清空
+        ListTile(
+          leading: Icon(Icons.bug_report_outlined,
+              color: theme.colorScheme.primary),
+          title: const Text('诊断日志'),
+          subtitle: const Text('崩溃与 API 错误记录（仅存本机，内容脱敏）'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: _showDiagnosticLog,
+        ),
       ],
+    );
+  }
+
+  /// E4 诊断日志：底部弹层展示最近日志 + 分享/清空
+  Future<void> _showDiagnosticLog() async {
+    Haptics.light();
+    final text = await DiagnosticLog.readAllFiles();
+    if (!mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => _DiagnosticLogSheet(initialText: text),
     );
   }
 
@@ -1201,5 +1228,151 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       ],
     );
+  }
+}
+
+/// E4 诊断日志底部弹层：最近日志只读展示 + 分享/清空
+class _DiagnosticLogSheet extends StatefulWidget {
+  const _DiagnosticLogSheet({required this.initialText});
+
+  final String initialText;
+
+  @override
+  State<_DiagnosticLogSheet> createState() => _DiagnosticLogSheetState();
+}
+
+class _DiagnosticLogSheetState extends State<_DiagnosticLogSheet> {
+  /// 日志文本（initState 取一次后不可变——清空操作直接关弹层，无需原地刷新）
+  late final String _text;
+
+  @override
+  void initState() {
+    super.initState();
+    _text = widget.initialText;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.9,
+      builder: (context, scrollController) => Column(
+        children: [
+          // 标题行 + 操作按钮
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('诊断日志',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                          fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+                IconButton(
+                  onPressed: () async {
+                    Haptics.medium();
+                    final text = await DiagnosticLog.readAllFiles();
+                    if (text.isEmpty) {
+                      if (context.mounted) showAppToast(context, '日志为空');
+                      return;
+                    }
+                    final dir = await getTemporaryDirSafe();
+                    final file =
+                        File('$dir/liang_ai_diag_${DateTime.now().millisecondsSinceEpoch}.log');
+                    await file.writeAsString(text);
+                    if (!context.mounted) return;
+                    await SharePlus.instance.share(ShareParams(
+                      files: [XFile(file.path)],
+                      text: 'Liang AI 诊断日志',
+                    ));
+                  },
+                  icon: const Icon(Icons.ios_share, size: 22),
+                  tooltip: '分享日志',
+                ),
+                IconButton(
+                  onPressed: () async {
+                    Haptics.heavy();
+                    final confirmed = await showDialog<bool>(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('清空日志'),
+                        content: const Text('将删除全部诊断日志文件，确定吗？'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context, false),
+                            child: const Text('取消'),
+                          ),
+                          FilledButton(
+                            onPressed: () => Navigator.pop(context, true),
+                            child: const Text('清空'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirmed != true) return;
+                    await DiagnosticLog.clearAll();
+                    if (context.mounted) {
+                      Navigator.pop(context); // 关弹层（内容已空）
+                    }
+                  },
+                  icon: const Icon(Icons.delete_sweep_outlined, size: 22),
+                  tooltip: '清空日志',
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close, size: 24),
+                  tooltip: '关闭',
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '仅存本机 · 保留 3 天 · API Key 与消息内容已脱敏',
+                style: theme.textTheme.labelSmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+          ),
+          const Divider(height: 16),
+          Expanded(
+            child: _text.trim().isEmpty
+                ? Center(
+                    child: Text(
+                      '暂无日志\n遇到问题后这里会有崩溃与 API 错误记录',
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                          height: 1.6),
+                    ),
+                  )
+                : SingleChildScrollView(
+                    controller: scrollController,
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: SelectableText(
+                      _text,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'monospace', height: 1.5),
+                    ),
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 临时目录解析（分享日志文件用；失败回退当前目录）
+Future<Directory> getTemporaryDirSafe() async {
+  try {
+    return Directory.systemTemp;
+  } catch (_) {
+    return Directory.current;
   }
 }
