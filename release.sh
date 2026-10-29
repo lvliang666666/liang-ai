@@ -21,8 +21,14 @@ set -euo pipefail
 APP_NAME="LiangAI"                                    # 归档命名用
 PUBSPEC="pubspec.yaml"                                # 版本声明文件
 VERSIONING="VERSIONING.md"                            # 版本记录文件
-BUILD_CMD=("/d/flutter/bin/flutter" "build" "apk" "--release")
-ARTIFACT="build/app/outputs/flutter-apk/app-release.apk"
+# E11 ③：--split-per-abi 出 ABI 独立包（arm64 包体积约为通用包 1/3）。
+# 归档取 arm64-v8a（现代 Android 设备全覆盖）；x86_64 包仅模拟器用，
+# armeabi-v7a 包给老设备（如需可从 build 目录手动取）。
+BUILD_CMD=("/d/flutter/bin/flutter" "build" "apk" "--release" "--split-per-abi")
+ARTIFACT="build/app/outputs/flutter-apk/app-arm64-v8a-release.apk"
+# split-per-abi 下 versionCode = abiVersionCode * 1000 + buildNo
+# （FlutterPlugin.kt：arm64=2, armeabi-v7a=1, x86_64=4），aapt 校验用
+ABI_VERSION_CODE=2
 AAPT="$LOCALAPPDATA/Android/Sdk/build-tools/36.0.0/aapt"
 RELEASES_DIR="releases"
 # 构建环境（Clash 代理；flutter test 需 NO_PROXY 防代理劫持本地端口）
@@ -70,6 +76,9 @@ if [ "$MODE" = "preview" ]; then
   info "aapt 校验"
   BADGING=$("$AAPT" dump badging "$ARTIFACT" 2>/dev/null) || die "aapt 不可用：$AAPT"
   echo "$BADGING" | grep -q "versionName='${VERSION}'" || die "versionName 不符（期望 ${VERSION}）：$(echo "$BADGING" | head -1)"
+  # split-per-abi：arm64 包 versionCode = ABI_VERSION_CODE * 1000 + buildNo
+  PREVIEW_CODE=$((ABI_VERSION_CODE * 1000 + BUILD_NO))
+  echo "$BADGING" | grep -q "versionCode='${PREVIEW_CODE}'" || die "versionCode 不符（期望 ${PREVIEW_CODE}）：$(echo "$BADGING" | head -1)"
   mkdir -p "$RELEASES_DIR"
   cp "$ARTIFACT" "$OUT_FILE"
   ok "验收包已归档：${OUT_FILE}（版本号未动，验收通过后走正式发版）"
@@ -127,8 +136,10 @@ info "⑤ 构建 APK"
 info "⑥ aapt 校验产物与 tag 对应"
 BADGING=$("$AAPT" dump badging "$ARTIFACT" 2>/dev/null) || die "aapt 不可用：$AAPT"
 echo "$BADGING" | grep -q "versionName='${NEW_VERSION}'" || die "versionName 不符（期望 ${NEW_VERSION}）：$(echo "$BADGING" | head -1)"
-echo "$BADGING" | grep -q "versionCode='${NEW_BUILD}'"  || die "versionCode 不符（期望 ${NEW_BUILD}）：$(echo "$BADGING" | head -1)"
-ok "versionName=${NEW_VERSION} versionCode=${NEW_BUILD} 校验通过"
+# split-per-abi：arm64 包 versionCode = ABI_VERSION_CODE * 1000 + buildNo
+EXPECTED_CODE=$((ABI_VERSION_CODE * 1000 + NEW_BUILD))
+echo "$BADGING" | grep -q "versionCode='${EXPECTED_CODE}'" || die "versionCode 不符（期望 ${EXPECTED_CODE} = ABI ${ABI_VERSION_CODE}×1000 + ${NEW_BUILD}）：$(echo "$BADGING" | head -1)"
+ok "versionName=${NEW_VERSION} versionCode=${EXPECTED_CODE}（arm64）校验通过"
 
 # ⑦ 归档
 info "⑦ 归档 ${OUT_FILE}"
@@ -138,6 +149,7 @@ ok "归档完成"
 
 echo
 echo -e "${c_ok}==============================================${c_off}"
-echo -e "${c_ok}  v${NEW_VERSION} 发版完成（versionCode ${NEW_BUILD}）${c_off}"
+echo -e "${c_ok}  v${NEW_VERSION} 发版完成（arm64 versionCode ${EXPECTED_CODE}）${c_off}"
 echo -e "${c_ok}==============================================${c_off}"
 warn "别忘了：① 真机验收（脚本不能代替）② VERSIONING.md 更新清单如未写全，补完单独提交"
+warn "其他 ABI 产物（如需）：build/app/outputs/flutter-apk/app-{armeabi-v7a,x86_64}-release.apk"
