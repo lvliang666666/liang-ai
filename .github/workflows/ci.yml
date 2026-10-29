@@ -75,4 +75,4 @@ jobs:
           echo "analyze 通过（info 级 $(grep -cE '^[[:space:]]*info([[:space:]]|$)' analyze_output.txt || true) 条）"
 
       - name: Test（全绿门禁）
-        run: flutter test --reporter expanded
+        run: flutter test --reporter expanded --concurrency=1
