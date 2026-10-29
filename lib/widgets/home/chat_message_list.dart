@@ -71,16 +71,20 @@ class ChatMessageListState extends State<ChatMessageList> {
   /// 距底部多少像素内算「在底部」（reverse 列表 offset 0 = 底部）
   static const double _bottomThreshold = 60;
 
-  // ===== I7 搜索定位（FTS 命中跳转）=====
+  // ===== I9 胶囊行滚动收纳 =====
 
-  /// 消息 id → 气泡锚点（itemBuilder 登记宿主回调，定位时取用）
-  final Map<String, GlobalKey> _bubbleKeys = {};
+  /// tags 胶囊行收纳信号（true = 收起）。
+  /// 微信顶栏思路：下滑看历史（offset 增大）收起、上滑回底部（offset
+  /// 减小）展开。ValueNotifier 让宿主（HomeInputBar）精准订阅，
+  /// 不牵动消息列表整树重建。
+  final ValueNotifier<bool> capsuleCollapsed = ValueNotifier(false);
 
-  /// 当前高亮的消息 id（scrollToMessage 设置，2s 后自动清除）
-  String? _highlightMessageId;
+  /// 上一次滚动位置（方向判定基准）
+  double _lastScrollOffset = 0;
 
-  /// 高亮渐隐定时器（重复定位时先取消旧的）
-  Timer? _highlightTimer;
+  /// 收纳判定：距底部超过该距离才允许收起（在底部附近来回微滚不收纳，
+  /// 避免流式贴底跳动时胶囊闪烁）
+  static const double _collapseDistance = 120;
 
   @override
   void initState() {
@@ -92,9 +96,21 @@ class ChatMessageListState extends State<ChatMessageList> {
   void dispose() {
     _highlightTimer?.cancel();
     _scrollController.removeListener(_onScroll);
+    capsuleCollapsed.dispose();
     _scrollController.dispose();
     super.dispose();
   }
+
+  // ===== I7 搜索定位（FTS 命中跳转）=====
+
+  /// 消息 id → 气泡锚点（itemBuilder 登记宿主回调，定位时取用）
+  final Map<String, GlobalKey> _bubbleKeys = {};
+
+  /// 当前高亮的消息 id（scrollToMessage 设置，2s 后自动清除）
+  String? _highlightMessageId;
+
+  /// 高亮渐隐定时器（重复定位时先取消旧的）
+  Timer? _highlightTimer;
 
   /// itemBuilder 登记气泡锚点（GlobalKey 挂 MessageBubble）
   GlobalKey _bubbleKey(String messageId) =>
@@ -162,13 +178,34 @@ class ChatMessageListState extends State<ChatMessageList> {
       _highlightMessageId == messageId;
 
   /// 滚动监听：位置驱动跟随状态（唯一事实来源，触摸/惯性/点击胶囊都汇到这里）
+  ///
+  /// I9 收纳：方向驱动胶囊行——下滑看历史（offset 增大且离底部够远）
+  /// 收起，上滑（offset 减小）或回到底部附近展开。流式贴底跳转
+  /// （jumpTo(0)）offset 只减不增，天然不触发收起。
   void _onScroll() {
     if (!_scrollController.hasClients) return;
-    final atBottom = _scrollController.offset <= _bottomThreshold;
+    final offset = _scrollController.offset;
+    final atBottom = offset <= _bottomThreshold;
     if (atBottom != _following) {
       setState(() {
         _following = atBottom;
       });
+    }
+
+    // I9 方向判定（reverse 列表：offset 增大 = 向更早的历史滚）
+    final delta = offset - _lastScrollOffset;
+    _lastScrollOffset = offset;
+    if (delta > 1) {
+      // 下滑看历史：离底部够远才收起（底部附近微滚不收纳）
+      final collapsed = offset > _collapseDistance;
+      if (collapsed != capsuleCollapsed.value) {
+        capsuleCollapsed.value = collapsed;
+      }
+    } else if (delta < -1) {
+      // 上滑回底部：立即展开
+      if (capsuleCollapsed.value) {
+        capsuleCollapsed.value = false;
+      }
     }
   }
 

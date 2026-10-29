@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -53,6 +54,7 @@ class HomeInputBar extends StatefulWidget {
     this.onCancelEdit,
     this.quotedMessage,
     this.onCancelQuote,
+    this.capsuleCollapsed,
   });
 
   final TextEditingController controller;
@@ -88,6 +90,10 @@ class HomeInputBar extends StatefulWidget {
 
   /// 取消引用（引用条右侧 ×）
   final VoidCallback? onCancelQuote;
+
+  /// I9 胶囊行收纳信号（true = 收起 tags 行；null = 不收纳，常显）。
+  /// 聊天态由 ChatMessageList 的滚动方向驱动，空闲态不传（无列表可滚）。
+  final ValueListenable<bool>? capsuleCollapsed;
 
   @override
   State<HomeInputBar> createState() => _HomeInputBarState();
@@ -395,49 +401,28 @@ class _HomeInputBarState extends State<HomeInputBar> {
     final showSend = isStreaming || hasText || pending.isNotEmpty || editing != null;
     final showPlus = !isStreaming && !hasText && showAttachmentButton;
 
-    // tags 配置：聊天态取会话绑定值，空闲态取预选值
-    final currentAgent = inChat ? chat.agent : widget.selectedAgent;
-    // label 只放名字（icon 由 tag 的 emoji/icon 字段单独渲染，避免重复）
-    final agentLabel = currentAgent != null ? currentAgent.name : '默认助手';
-    // agent tag 图标：具体 agent 用其 emoji，默认助手用内置 icon
-    final agentEmoji = currentAgent?.icon;
-    final modelLabel =
-        inChat ? chat.model : (widget.selectedModel?.$2 ?? '默认模型');
-    // 推理档位：聊天态取会话值，空闲态取预选值（两态都显示）
-    final effortValue = inChat ? chat.session.effort : widget.selectedEffort;
-    final effortLabel = effortLabels[effortValue]?.$1 ?? effortValue;
-
     return SafeArea(
       top: false,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // tags 行：独立于输入框（agent / model / effort）
-          ChatTagsBar(tags: [
-            ChatTag(
-              emoji: agentEmoji,
-              icon: agentEmoji == null ? Icons.smart_toy_outlined : null,
-              label: agentLabel,
-              onTap: widget.onPickAgent,
-            ),
-            ChatTag(
-              icon: Icons.tune,
-              label: modelLabel,
-              onTap: widget.onPickModel,
-            ),
-            ChatTag(
-              icon: Icons.bolt,
-              label: effortLabel,
-              onTap: widget.onPickEffort,
-            ),
-            // F3 Token 水位仪表盘：仅聊天态显示，label = 会话累计 token
-            if (inChat)
-              ChatTag(
-                icon: Icons.data_usage,
-                label: formatTokenCount(chat.totalTokens),
-                onTap: () => _openTokenUsageSheet(context, chat),
+          // tags 行：独立于输入框（agent / model / effort）。
+          // I9 收纳：聊天态随滚动方向收起/展开（AnimatedSize 平滑过渡，
+          // 收起时高度归零 + 淡出）；空闲态无滚动列表，常显不收纳
+          if (widget.capsuleCollapsed != null)
+            ValueListenableBuilder<bool>(
+              valueListenable: widget.capsuleCollapsed!,
+              builder: (context, collapsed, _) => AnimatedSize(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.bottomCenter,
+                child: collapsed
+                    ? const SizedBox(width: double.infinity)
+                    : _buildTagsRow(context, chat),
               ),
-          ]),
+            )
+          else
+            _buildTagsRow(context, chat),
           const SizedBox(height: 6),
           // 浮起输入框：圆角主题（默认/DeepSeek）外层容器即唯一输入框（豆包式）；
           // 直角主题（Minecraft）无外框，内层填充为输入区域
@@ -569,6 +554,44 @@ class _HomeInputBarState extends State<HomeInputBar> {
         ],
       ),
     );
+  }
+
+  /// tags 行内容（agent / model / effort / token 标签）。
+  /// I9 收纳动画的展开态内容；空闲态直接渲染。
+  Widget _buildTagsRow(BuildContext context, ChatProvider? chat) {
+    final inChat = chat != null;
+    final currentAgent = inChat ? chat.agent : widget.selectedAgent;
+    final agentLabel = currentAgent != null ? currentAgent.name : '默认助手';
+    final agentEmoji = currentAgent?.icon;
+    final modelLabel =
+        inChat ? chat.model : (widget.selectedModel?.$2 ?? '默认模型');
+    final effortValue = inChat ? chat.session.effort : widget.selectedEffort;
+    final effortLabel = effortLabels[effortValue]?.$1 ?? effortValue;
+    return ChatTagsBar(tags: [
+      ChatTag(
+        emoji: agentEmoji,
+        icon: agentEmoji == null ? Icons.smart_toy_outlined : null,
+        label: agentLabel,
+        onTap: widget.onPickAgent,
+      ),
+      ChatTag(
+        icon: Icons.tune,
+        label: modelLabel,
+        onTap: widget.onPickModel,
+      ),
+      ChatTag(
+        icon: Icons.bolt,
+        label: effortLabel,
+        onTap: widget.onPickEffort,
+      ),
+      // F3 Token 水位仪表盘：仅聊天态显示，label = 会话累计 token
+      if (inChat)
+        ChatTag(
+          icon: Icons.data_usage,
+          label: formatTokenCount(chat.totalTokens),
+          onTap: () => _openTokenUsageSheet(context, chat),
+        ),
+    ]);
   }
 
   void _send(BuildContext context) {

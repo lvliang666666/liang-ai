@@ -1,0 +1,65 @@
+# E7 CI 门禁：push/PR 到 main 时跑 analyze + test，全绿才算过
+#
+# 设计要点：
+# - Flutter 版本锁 3.44.9（与本地开发环境一致，避免工具链漂移）
+# - pub 缓存按 pubspec.lock 哈希命中（lock 已入库，哈希稳定）
+# - 测试用 sqflite_common_ffi（纯 Dart 内存库），CI Linux 容器直接跑
+# - assets/agents/ 内置 Agent 文档随仓库走，rootBundle 在测试绑定下可读
+# - pubspec.lock 里是 pub.flutter-io.cn 镜像 URL：CI 上用默认 pub.dev
+#   解析（pub get 按 package 名+版本取，URL 只影响缓存键，不校验来源）
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # Java 是 Android Gradle 构建依赖；纯 analyze+test 不需要，
+      # 但 flutter precache 会探 android 工具链，装上避免偶发告警
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.9
+          channel: stable
+          cache: true
+
+      - name: Pub 缓存
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.pub-cache/hosted
+            ~/.pub-cache/git
+          key: pub-${{ runner.os }}-${{ hashFiles('pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+
+      - name: 拉依赖
+        run: flutter pub get
+
+      - name: Analyze（零 error/warning 门禁）
+        run: |
+          flutter analyze > analyze_output.txt
+          if grep -qE '^\s*-\s*(error|warning)' analyze_output.txt; then
+            echo "::error::flutter analyze 有 error/warning"
+            cat analyze_output.txt
+            exit 1
+          fi
+          echo "analyze 通过（info 级 $(grep -cE '^\s*-\s*info' analyze_output.txt || true) 条）"
+
+      - name: Test（全绿门禁）
+        run: flutter test --reporter expanded

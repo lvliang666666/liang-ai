@@ -90,6 +90,14 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
   bool _batchMode = false;
   final Set<String> _selectedIds = {};
 
+  // ===== E11 ② 会话列表游标分页 =====
+  // 全量列表已在内存（个人规模千级会话 ≈ 百 KB 级，DB 游标分页反而
+  // 破坏备份全量导出与主页 id 直查两个不变量），分页只裁剪「构建范围」：
+  // 常规列表首屏 50 条，底部「加载更多」按步进追加；搜索态不受限
+  // （搜索必须命中全部，FTS 消息命中本身有 20 条上限）。
+  static const int _pageStep = 50;
+  int _displayLimit = _pageStep;
+
   @override
   void initState() {
     super.initState();
@@ -131,7 +139,13 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
 
   /// 搜索框输入：标题过滤即时生效，FTS 正文检索防抖 300ms
   void _onSearchChanged(String v) {
-    setState(() => _query = v);
+    setState(() {
+      _query = v;
+      // 搜索态不裁剪（必须命中全部）；回到常规态重置游标
+      if (v.trim().isNotEmpty) {
+        _displayLimit = _filteredAllCount;
+      }
+    });
     _debounce?.cancel();
     final q = v.trim();
     if (q.isEmpty) {
@@ -169,6 +183,7 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
       _query = '';
       _messageHits = [];
       _searchingMessages = false;
+      _displayLimit = _pageStep; // 回常规态重置游标（E11 ②）
       _searchController.clear();
       _searchFocusNode.unfocus();
     });
@@ -239,8 +254,14 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
         .toList();
   }
 
+  /// 全量会话数（搜索态展开游标用：搜索必须命中全部）
+  int get _filteredAllCount => widget.sessions.length;
+
   /// 分组展示：置顶组恒在时间分组之上（I7），其余按时间分组
   /// （今天 / 7 天内 / 更早）。置顶会话不再进时间分组。
+  ///
+  /// E11 ②：常规列表走游标分页——只取 _filtered 前 _displayLimit 条
+  /// 参与分组构建（搜索态不裁剪，见 _displayLimit 语义）。
   Map<String, List<ChatSession>> get _grouped {
     final now = DateTime.now();
     final startOfToday =
@@ -252,7 +273,8 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
       '7 天内': [],
       '更早': [],
     };
-    for (final s in _filtered) {
+    final source = _searching ? _filtered : _filtered.take(_displayLimit);
+    for (final s in source) {
       if (s.pinned) {
         groups['置顶']!.add(s);
       } else if (s.updatedAt >= startOfToday) {
@@ -265,6 +287,10 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
     }
     return groups;
   }
+
+  /// 常规列表是否还有未展示的会话（「加载更多」入口显隐）
+  bool get _hasMore =>
+      !_searching && _filtered.length > _displayLimit;
 
   @override
   Widget build(BuildContext context) {
@@ -452,66 +478,71 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
         );
       }
-      return ListView(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        children: [
-          // ===== 会话标题命中（置顶：会话少，搜会话不该滚过一堆消息；
-          // 用户定版 2026-10-28——原顺序消息组在上，搜会话要往下滑很烦）=====
-          if (sessionHits.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text('会话',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant)),
-            ),
-            for (final s in sessionHits)
-              ListTile(
-                dense: true,
-                leading: Text(
-                  widget.agentsProvider.byId(s.agentId)?.icon ?? '💬',
-                  style: const TextStyle(fontSize: 18),
-                ),
-                title: Text(
-                  s.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodyMedium,
-                ),
-                trailing: s.pinned
-                    ? Icon(Icons.push_pin,
-                        size: 14, color: theme.colorScheme.primary)
-                    : null,
-                onTap: () {
-                  Haptics.light();
-                  widget.onOpenChat(s.id);
-                },
-              ),
-          ],
-          // ===== FTS 正文命中 =====
-          if (_messageHits.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text('消息内容',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant)),
-            ),
-            for (final hit in _messageHits)
-              _MessageHitTile(
-                hit: hit,
-                sessionTitle: widget.sessions
-                        .where((s) => s.id == hit.sessionId)
-                        .firstOrNull
-                        ?.title ??
-                    '已删除的会话',
-                query: _query.trim(),
-                snippet: _snippet(hit, _query.trim()),
-                onTap: () {
-                  Haptics.light();
-                  widget.onOpenMessage(hit, _query.trim());
-                },
-              ),
-          ],
+      // E11 ②：搜索结果同样走 builder 惰性构建（会话命中 + 消息命中
+      // 展平为单序列；搜索态不裁剪——必须命中全部）
+      final searchRows = <_DrawerRow>[
+        if (sessionHits.isNotEmpty) ...[
+          _DrawerRow.header('会话'),
+          for (final s in sessionHits) _DrawerRow.session(s),
         ],
+        if (_messageHits.isNotEmpty) ...[
+          _DrawerRow.header('消息内容'),
+          for (final hit in _messageHits) _DrawerRow.message(hit),
+        ],
+      ];
+      return ListView.builder(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        itemCount: searchRows.length,
+        itemBuilder: (context, index) {
+          final row = searchRows[index];
+          if (row.isHeader) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Text(row.header!,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant)),
+            );
+          }
+          if (row.message != null) {
+            final hit = row.message!;
+            return _MessageHitTile(
+              hit: hit,
+              sessionTitle: widget.sessions
+                      .where((s) => s.id == hit.sessionId)
+                      .firstOrNull
+                      ?.title ??
+                  '已删除的会话',
+              query: _query.trim(),
+              snippet: _snippet(hit, _query.trim()),
+              onTap: () {
+                Haptics.light();
+                widget.onOpenMessage(hit, _query.trim());
+              },
+            );
+          }
+          final s = row.session!;
+          return ListTile(
+            dense: true,
+            leading: Text(
+              widget.agentsProvider.byId(s.agentId)?.icon ?? '💬',
+              style: const TextStyle(fontSize: 18),
+            ),
+            title: Text(
+              s.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium,
+            ),
+            trailing: s.pinned
+                ? Icon(Icons.push_pin,
+                    size: 14, color: theme.colorScheme.primary)
+                : null,
+            onTap: () {
+              Haptics.light();
+              widget.onOpenChat(s.id);
+            },
+          );
+        },
       );
     }
 
@@ -523,94 +554,148 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
                 ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
       );
     }
-    return ListView(
+    // E11 ②：ListView.builder 惰性构建（只构建可见子树）+ 游标分页
+    // （_grouped 已按 _displayLimit 裁剪，末尾挂「加载更多」行）
+    final grouped = _grouped;
+    // 展平为 (groupHeader?, session) 序列：偶数位可能是分组标题
+    final rows = <_DrawerRow>[];
+    for (final entry in grouped.entries) {
+      if (entry.value.isEmpty) continue;
+      rows.add(_DrawerRow.header(entry.key));
+      for (final s in entry.value) {
+        rows.add(_DrawerRow.session(s));
+      }
+    }
+    final totalRows = rows.length + (_hasMore ? 1 : 0);
+    return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      children: [
-        for (final entry in _grouped.entries)
-          if (entry.value.isNotEmpty) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text(entry.key,
-                  style: theme.textTheme.labelSmall
-                      ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
-            ),
-            for (final s in entry.value)
-              // 离场动画：删除确认后卡片收缩淡出（200ms），动画完宿主
-              // 才真删，其余卡片随列表重建平滑上移补位
-              AnimatedOpacity(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeOutCubic,
-                opacity:
-                    widget.removingIds.contains(s.id) ? 0.0 : 1.0,
-                child: AnimatedSize(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                  alignment: Alignment.topCenter,
-                  child: AnimatedScale(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                    scale: widget.removingIds.contains(s.id) ? 0.9 : 1.0,
-                    // GestureDetector 包 ListTile：ListTile 无
-                    // onLongPressStart，外包一层拿长按点全局坐标（锚点菜单用）
-                    child: PressableScale(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onLongPressStart: _batchMode
-                            ? null
-                            : (details) => widget.onShowActions(
-                                context, s.id, s.title, details.globalPosition),
-                        child: ListTile(
-                          dense: true,
-                          leading: _batchMode
-                              ? Icon(
-                                  _selectedIds.contains(s.id)
-                                      ? Icons.check_circle
-                                      : Icons.radio_button_unchecked,
-                                  size: 22,
-                                  color: _selectedIds.contains(s.id)
-                                      ? theme.colorScheme.primary
-                                      : theme.colorScheme.onSurfaceVariant,
-                                )
-                              : Text(
-                                  widget.agentsProvider.byId(s.agentId)?.icon ??
-                                      '💬',
-                                  style: const TextStyle(fontSize: 18),
-                                ),
-                          title: Text(
-                            s.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium,
-                          ),
-                          // 置顶标记（I7）：图钉小图标
-                          trailing: s.pinned
-                              ? Icon(Icons.push_pin,
-                                  size: 14, color: theme.colorScheme.primary)
-                              : null,
-                          onTap: () {
-                            if (_batchMode) {
-                              Haptics.selection();
-                              setState(() {
-                                if (_selectedIds.contains(s.id)) {
-                                  _selectedIds.remove(s.id);
-                                } else {
-                                  _selectedIds.add(s.id);
-                                }
-                              });
-                            } else {
-                              widget.onOpenChat(s.id);
-                            }
-                          },
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-      ],
+      itemCount: totalRows,
+      itemBuilder: (context, index) {
+        if (index >= rows.length) {
+          return _buildLoadMoreTile(theme);
+        }
+        final row = rows[index];
+        if (row.isHeader) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Text(row.header!,
+                style: theme.textTheme.labelSmall
+                    ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          );
+        }
+        return _buildSessionTile(theme, row.session!);
+      },
     );
   }
+
+  /// 「加载更多」行：追加一个步进页并重建（E11 ②）
+  Widget _buildLoadMoreTile(ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Center(
+        child: TextButton.icon(
+          onPressed: () {
+            Haptics.light();
+            setState(() => _displayLimit += _pageStep);
+          },
+          icon: const Icon(Icons.expand_more, size: 18),
+          label: Text('加载更多',
+              style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant)),
+        ),
+      ),
+    );
+  }
+
+  /// 单条会话 tile（离场动画 + 长按锚点菜单 + 批量多选，E11 ② 抽出复用）
+  Widget _buildSessionTile(ThemeData theme, ChatSession s) {
+    // 离场动画：删除确认后卡片收缩淡出（200ms），动画完宿主
+    // 才真删，其余卡片随列表重建平滑上移补位
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      opacity: widget.removingIds.contains(s.id) ? 0.0 : 1.0,
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 200),
+          curve: Curves.easeOutCubic,
+          scale: widget.removingIds.contains(s.id) ? 0.9 : 1.0,
+          // GestureDetector 包 ListTile：ListTile 无
+          // onLongPressStart，外包一层拿长按点全局坐标（锚点菜单用）
+          child: PressableScale(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onLongPressStart: _batchMode
+                  ? null
+                  : (details) => widget.onShowActions(
+                      context, s.id, s.title, details.globalPosition),
+              child: ListTile(
+                key: ValueKey('session-tile-${s.id}'),
+                dense: true,
+                leading: _batchMode
+                    ? Icon(
+                        _selectedIds.contains(s.id)
+                            ? Icons.check_circle
+                            : Icons.radio_button_unchecked,
+                        size: 22,
+                        color: _selectedIds.contains(s.id)
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurfaceVariant,
+                      )
+                    : Text(
+                        widget.agentsProvider.byId(s.agentId)?.icon ?? '💬',
+                        style: const TextStyle(fontSize: 18),
+                      ),
+                title: Text(
+                  s.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyMedium,
+                ),
+                // 置顶标记（I7）：图钉小图标
+                trailing: s.pinned
+                    ? Icon(Icons.push_pin,
+                        size: 14, color: theme.colorScheme.primary)
+                    : null,
+                onTap: () {
+                  if (_batchMode) {
+                    Haptics.selection();
+                    setState(() {
+                      if (_selectedIds.contains(s.id)) {
+                        _selectedIds.remove(s.id);
+                      } else {
+                        _selectedIds.add(s.id);
+                      }
+                    });
+                  } else {
+                    widget.onOpenChat(s.id);
+                  }
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// E11 ②：抽屉列表展平行——分组标题 / 会话条目 / FTS 消息命中
+class _DrawerRow {
+  const _DrawerRow._(this.header, this.session, this.message);
+
+  final String? header;
+  final ChatSession? session;
+  final ChatMessage? message;
+
+  bool get isHeader => header != null;
+
+  factory _DrawerRow.header(String text) => _DrawerRow._(text, null, null);
+  factory _DrawerRow.session(ChatSession s) => _DrawerRow._(null, s, null);
+  factory _DrawerRow.message(ChatMessage m) => _DrawerRow._(null, null, m);
 }
 
 /// I7：FTS 命中消息条目——会话名 + 命中缩略（命中词高亮）
