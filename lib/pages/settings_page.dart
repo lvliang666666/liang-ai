@@ -1069,6 +1069,11 @@ class _SettingsPageState extends State<SettingsPage> {
       if (contextCompression is bool && mounted) {
         await _settings.setContextCompression(contextCompression);
       }
+      // M4：情景记忆层开关随备份迁移（缺字段 = 老备份，不动当前值）
+      final episodicMemory = data?['settings']?['episodic_memory'];
+      if (episodicMemory is bool && mounted) {
+        await _settings.setEpisodicMemory(episodicMemory);
+      }
       if (!mounted) return;
       await context.read<SessionsProvider>().refresh();
       await context.read<SkillProvider>().load();

@@ -9,6 +9,7 @@ import '../models/context_summary.dart';
 import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
+import '../models/session_summary.dart';
 import '../models/skill.dart';
 import 'fts_service.dart';
 import 'secure_key_store.dart';
@@ -22,7 +23,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 15;
+  static const int dbVersion = 16;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -144,6 +145,7 @@ class DatabaseService {
     await _createMemoriesTable(db);
     await _createHttpToolsTable(db);
     await _createContextSummariesTable(db);
+    await _createSessionSummariesTable(db);
     await _createFtsTables(db);
   }
 
@@ -254,6 +256,12 @@ class DatabaseService {
       // 后标「已中断」并提供重新生成入口；0 = 正常收尾）
       await db.execute(
           'ALTER TABLE messages ADD COLUMN interrupted INTEGER NOT NULL DEFAULT 0');
+    }
+    if (oldVersion < 16 && newVersion >= 16) {
+      // v15 → v16：情景记忆层（M4）——新建 session_summaries 表
+      //（每会话一条「标题+摘要+关键词」，会话结束时生成；派生数据，
+      // 不进备份 restore 清空、deleteSession 级联删）
+      await _createSessionSummariesTable(db);
     }
   }
 
@@ -388,6 +396,27 @@ class DatabaseService {
     );
   }
 
+  /// 情景记忆层表（M4）：每会话一条「标题+摘要+关键词」
+  ///
+  /// 派生数据（可由消息重新生成）：不进备份（restore 清空）、
+  /// deleteSession 级联删。keywords 存逗号分隔文本（LIKE 检索）。
+  static Future<void> _createSessionSummariesTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS session_summaries (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        summary TEXT NOT NULL DEFAULT '',
+        keywords TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_session_summaries_session '
+      'ON session_summaries(session_id)',
+    );
+  }
+
   // ===== Sessions =====
 
   Future<void> insertSession(ChatSession session) async {
@@ -480,8 +509,57 @@ class DatabaseService {
       await txn.delete('messages', where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('context_summaries',
           where: 'session_id = ?', whereArgs: [id]);
+      await txn.delete('session_summaries',
+          where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('sessions', where: 'id = ?', whereArgs: [id]);
     });
+  }
+
+  // ===== Session summaries（M4 情景记忆层） =====
+
+  /// 保存会话摘要（每会话一条：同 id replace 覆盖旧摘要）
+  Future<void> insertSessionSummary(SessionSummary summary) async {
+    final db = await database;
+    await db.insert('session_summaries', summary.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 关键词检索会话摘要（标题/摘要/关键词 LIKE 匹配，按时间倒序）
+  ///
+  /// excludeSessionId：当前会话不参与检索（模型问「之前聊过什么」
+  /// 指的是其他会话；本会话内容已在上下文里）。
+  Future<List<SessionSummary>> searchSessionSummaries(String query,
+      {String? excludeSessionId, int limit = 8}) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    final db = await database;
+    final rows = await db.query(
+      'session_summaries',
+      where: excludeSessionId != null
+          ? '(title LIKE ? OR summary LIKE ? OR keywords LIKE ?) '
+              'AND session_id != ?'
+          : 'title LIKE ? OR summary LIKE ? OR keywords LIKE ?',
+      whereArgs: excludeSessionId != null
+          ? ['%$q%', '%$q%', '%$q%', excludeSessionId]
+          : ['%$q%', '%$q%', '%$q%'],
+      orderBy: 'created_at DESC',
+      limit: limit,
+    );
+    return rows.map(SessionSummary.fromMap).toList();
+  }
+
+  /// 全部会话摘要（时间倒序；测试与调试用）
+  Future<List<SessionSummary>> getAllSessionSummaries() async {
+    final db = await database;
+    final rows = await db
+        .query('session_summaries', orderBy: 'created_at DESC');
+    return rows.map(SessionSummary.fromMap).toList();
+  }
+
+  /// 清空全部会话摘要（备份导入时重灌前调用；派生数据可随时重建）
+  Future<void> clearSessionSummaries() async {
+    final db = await database;
+    await db.delete('session_summaries');
   }
 
   // ===== Messages =====

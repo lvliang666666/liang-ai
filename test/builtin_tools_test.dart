@@ -21,8 +21,8 @@ void main() {
       ));
 
   group('工具目录', () {
-    test('注册表含全部 29 个内置工具', () {
-      expect(registry.length, 29);
+    test('注册表含全部 30 个内置工具', () {
+      expect(registry.length, 30);
       expect(
         registry.names,
         containsAll([

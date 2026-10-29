@@ -17,6 +17,7 @@ import '../providers/skill_provider.dart';
 import '../services/api_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_extraction_service.dart';
+import '../services/session_summary_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
 import '../services/tools/builtin_tools.dart';
@@ -106,32 +107,52 @@ class _HomePageState extends State<HomePage> {
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
-  /// M2 自动记忆沉淀：会话结束（切走/退出聊天态）时后台提取记忆
+  /// M2 自动记忆沉淀 + M4 情景记忆：会话结束（切走/退出聊天态）时
+  /// 后台提取记忆与生成会话摘要
   ///
-  /// fire-and-forget：不阻塞切换动画；开关关闭/正在流式/无 user+assistant
-  /// 交换时跳过。提取服务自建 ApiService（会话 provider 的 Key 从 DB 注水），
-  /// 与 ChatProvider 的连接池互不影响；失败静默（后台任务不打扰）。
+  /// fire-and-forget：不阻塞切换动画；各自开关关闭/正在流式/无
+  /// user+assistant 交换时跳过。两个服务共用一次自建 ApiService
+  /// （会话 provider 的 Key 从 DB 注水），与 ChatProvider 的连接池
+  /// 互不影响；失败静默（后台任务不打扰）。
   void _extractMemoryInBackground(ChatProvider chat) {
     final settings = context.read<SettingsService>();
-    if (!settings.autoMemory || chat.isStreaming) return;
+    if (chat.isStreaming) return;
+    final doMemory = settings.autoMemory;
+    final doSummary = settings.episodicMemory;
+    if (!doMemory && !doSummary) return;
     final messages = List<ChatMessage>.of(chat.messages);
     final profile = chat.profile;
     final model = chat.model;
     final skillName = chat.skill?.name;
     final sessionTitle = chat.session.title;
+    final sessionId = chat.session.id;
     unawaited(() async {
       final api = ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
       try {
-        await MemoryExtractionService(
-          api: api,
-          memory: MemoryService(database: DatabaseService.instance),
-        ).extractAndSave(
-          messages: messages,
-          profile: profile,
-          model: model,
-          sourceSkill: skillName,
-          sessionTitle: sessionTitle,
-        );
+        if (doMemory) {
+          await MemoryExtractionService(
+            api: api,
+            memory: MemoryService(database: DatabaseService.instance),
+          ).extractAndSave(
+            messages: messages,
+            profile: profile,
+            model: model,
+            sourceSkill: skillName,
+            sessionTitle: sessionTitle,
+          );
+        }
+        if (doSummary) {
+          await SessionSummaryService(
+            api: api,
+            database: DatabaseService.instance,
+          ).summarizeAndSave(
+            sessionId: sessionId,
+            messages: messages,
+            profile: profile,
+            model: model,
+            sessionTitle: sessionTitle,
+          );
+        }
       } finally {
         api.dispose();
       }

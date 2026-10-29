@@ -94,6 +94,7 @@ void main() {
     await settings.setTemperature(0.9);
     await settings.setAutoMemory(false);
     await settings.setContextCompression(false);
+    await settings.setEpisodicMemory(false);
   }
 
   group('buildBackup：导出结构', () {
@@ -137,7 +138,7 @@ void main() {
       }
     });
 
-    test('settings 段含主题/档位/温度/自动记忆/上下文压缩开关', () async {
+    test('settings 段含主题/档位/温度/自动记忆/上下文压缩/情景记忆开关', () async {
       await seedAll();
       final data =
           (await service.buildBackup())['data'] as Map<String, dynamic>;
@@ -147,6 +148,7 @@ void main() {
       expect(s['temperature'], 0.9);
       expect(s['auto_memory'], isFalse);
       expect(s['context_compression'], isFalse);
+      expect(s['episodic_memory'], isFalse);
     });
   });
 

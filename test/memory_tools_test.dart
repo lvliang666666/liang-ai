@@ -42,11 +42,16 @@ void main() {
   });
 
   group('工具目录', () {
-    test('注册表含全部 29 个内置工具（26 + 记忆 3）', () {
-      expect(registry.length, 29);
+    test('注册表含全部 30 个内置工具（26 + 记忆 3 + 情景 1）', () {
+      expect(registry.length, 30);
       expect(
         registry.names,
-        containsAll(['memory_save', 'memory_search', 'memory_forget']),
+        containsAll([
+          'memory_save',
+          'memory_search',
+          'memory_forget',
+          'search_history',
+        ]),
       );
     });
   });
