@@ -896,42 +896,121 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  // ===== Tag 6：快捷操作（消息横滑手势开关） =====
+  // ===== Tag 6：快捷操作（消息横滑手势开关 + 斜杠短语管理） =====
   Widget _buildGesturesTab(ThemeData theme) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('消息横滑快捷操作'),
-          subtitle: const Text(
-            '开启后：助手消息左滑复制，用户消息右滑复制；'
-            '关闭后恢复常规样式（长按复制仍可用）',
+    return ListenableBuilder(
+      listenable: _settings,
+      builder: (context, _) => ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('消息横滑快捷操作'),
+            subtitle: const Text(
+              '开启后：助手消息左滑复制，用户消息右滑复制；'
+              '关闭后恢复常规样式（长按复制仍可用）',
+            ),
+            value: _settings.swipeActions,
+            onChanged: (v) {
+              Haptics.selection();
+              setState(() => _settings.setSwipeActions(v));
+            },
           ),
-          value: _settings.swipeActions,
-          onChanged: (v) {
-            Haptics.selection();
-            setState(() => _settings.setSwipeActions(v));
-          },
-        ),
-        const SizedBox(height: 8),
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest
-                .withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(10),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '· 横滑复制与「右滑出会话列表」抽屉共存：气泡上右滑开抽屉，'
+              '左滑复制\n'
+              '· 流式生成中的消息横滑自动禁用，避免与滚动冲突\n'
+              '· 长按助手气泡可弹出菜单：复制全文 / 选择文字 / 导出并分享',
+              style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+            ),
           ),
-          child: Text(
-            '· 横滑复制与「右滑出会话列表」抽屉共存：气泡上右滑开抽屉，'
-            '左滑复制\n'
-            '· 流式生成中的消息横滑自动禁用，避免与滚动冲突\n'
-            '· 长按助手气泡可弹出菜单：复制全文 / 选择文字 / 导出并分享',
-            style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+          const SizedBox(height: 16),
+          // I12 斜杠命令自定义短语管理
+          Row(
+            children: [
+              Expanded(
+                child: Text('斜杠命令短语',
+                    style: theme.textTheme.titleSmall),
+              ),
+              IconButton.outlined(
+                tooltip: '添加短语',
+                onPressed: () {
+                  Haptics.light();
+                  _showAddPhraseDialog(context);
+                },
+                icon: const Icon(Icons.add, size: 20),
+              ),
+            ],
           ),
-        ),
-      ],
+          if (_settings.slashPhrases.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text(
+                '暂无短语。聊天输入框输入「/」可唤起 Skill 与短语面板，'
+                '高频问法从打字变点选',
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant, height: 1.6),
+              ),
+            )
+          else
+            ..._settings.slashPhrases.map((p) => ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.bolt, size: 20),
+                  title: Text(p, maxLines: 2,
+                      overflow: TextOverflow.ellipsis),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                    tooltip: '删除',
+                    onPressed: () {
+                      Haptics.medium();
+                      _settings.removeSlashPhrase(p);
+                    },
+                  ),
+                )),
+        ],
+      ),
     );
+  }
+
+  /// I12 添加斜杠短语弹窗
+  Future<void> _showAddPhraseDialog(BuildContext context) async {
+    final controller = TextEditingController();
+    final phrase = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('添加短语'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLines: 3,
+          minLines: 1,
+          decoration: const InputDecoration(
+            hintText: '例如：帮我总结这段话的要点',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text),
+            child: const Text('添加'),
+          ),
+        ],
+      ),
+    );
+    if (phrase == null || phrase.trim().isEmpty || !mounted) return;
+    await _settings.addSlashPhrase(phrase);
+    if (mounted) showAppToast(context, '已添加，输入「/」即可使用');
   }
 
   // ===== Tag 7：备份（E1 备份/导出） =====

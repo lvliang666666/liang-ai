@@ -16,16 +16,19 @@ import '../../models/provider_profile.dart';
 import '../../models/skill.dart' as skill_model;
 import '../../pages/payload_lens_page.dart';
 import '../../providers/chat_provider.dart';
+import '../../providers/skill_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/attachment_service.dart';
 import '../../services/settings_service.dart';
 import '../../utils/haptics.dart';
 import '../../utils/transitions.dart';
 import '../app_toast.dart';
+import '../app_bottom_sheet.dart';
 import '../attachment_thumbnail.dart';
 import '../chat_input_bar.dart';
 import '../chat_tags_bar.dart';
 import '../token_usage_sheet.dart';
+import 'slash_command_sheet.dart';
 
 /// 主页底部输入区：tags 行（agent/model/effort）+ 输入框 + 附件 + 发送键
 ///
@@ -116,7 +119,8 @@ class _HomeInputBarState extends State<HomeInputBar> {
     super.dispose();
   }
 
-  /// 输入变化：空闲态防抖存草稿（聊天态草稿在切换/发送时机存，不逐键写）
+  /// 输入变化：空闲态防抖存草稿（聊天态草稿在切换/发送时机存，不逐键写）；
+  /// 输入「/」唤起斜杠命令面板（I12）
   void _onInputChanged(String text) {
     setState(() {});
     if (widget.chat == null) {
@@ -125,6 +129,53 @@ class _HomeInputBarState extends State<HomeInputBar> {
         context.read<SettingsService>().setIdleDraft(text.trim());
       });
     }
+    // I12 斜杠命令：输入以「/」开头（单独一个 / 或 / 后跟筛选词）时唤起面板。
+    // 面板打开期间输入框继续可编辑（筛选词实时传入），pop 后按需处理
+    if (text.startsWith('/')) {
+      _openSlashCommands(text);
+    }
+  }
+
+  /// I12 斜杠命令面板：Skill 切换 + 自定义短语填入
+  Future<void> _openSlashCommands(String query) async {
+    final skills = context.read<SkillProvider>();
+    if (!skills.loaded) await skills.load();
+    if (!mounted) return;
+    final settings = context.read<SettingsService>();
+    final chat = widget.chat;
+
+    final result = await showAppBottomSheet<Object>(
+      context: context,
+      builder: (context) => SlashCommandSheet(
+        skills: skills.skills,
+        settings: settings,
+        onSelectSkill: (s) => Navigator.pop(context, s),
+        onSelectPhrase: (p) => Navigator.pop(context, p),
+        onDeletePhrase: (p) => settings.removeSlashPhrase(p),
+      ),
+    );
+    if (!mounted) return;
+
+    if (result is skill_model.Skill) {
+      // 选 Skill：清掉「/」前缀再切换（聊天态 setSkill / 空闲态改预选）
+      widget.controller.clear();
+      if (chat != null) {
+        await chat.setSkill(result);
+      } else {
+        widget.onPickSkill(); // 空闲态走既有选择器（保持单一入口语义）
+      }
+      return;
+    }
+    if (result is String) {
+      // 选短语：替换输入框内容为短语（「/」前缀一并清掉）
+      widget.controller
+        ..clear()
+        ..text = result;
+      widget.controller.selection =
+          TextSelection.collapsed(offset: result.length);
+      return;
+    }
+    // 点遮罩关闭：保留输入框原样（用户可能继续输入）
   }
 
   /// 文件附件沙箱目录（应用文档目录/attachments）
