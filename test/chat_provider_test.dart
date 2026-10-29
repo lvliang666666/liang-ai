@@ -7,6 +7,7 @@ import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
+import 'package:ai_chat_app/services/generation_keepalive.dart';
 import 'package:ai_chat_app/services/sse_parser.dart';
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -629,6 +630,98 @@ void main() {
       expect(api.lastEffort, isNot('low'));
       api.emit(const SseDone());
       await Future.delayed(Duration.zero);
+    });
+  });
+
+  group('I13 后台生成保活', () {
+    setUp(() {
+      GenerationKeepalive.resetForTest();
+    });
+
+    tearDown(() {
+      GenerationKeepalive.resetForTest();
+    });
+
+    /// 建一个指定保活开关的 provider（复用 setUp 的 db/api）
+    ChatProvider keepaliveProvider({required bool notification}) =>
+        ChatProvider(
+          database: db,
+          api: api,
+          session: ChatSession(
+            id: 's-keepalive',
+            title: '保活测试',
+            createdAt: 1000,
+            updatedAt: 1000,
+          ),
+          profile: ProviderProfile.builtinCompany(),
+          model: 'glm5.1',
+          keepaliveNotification: notification,
+        );
+
+    test('生成开始记录通知开关，结束释放保活态', () async {
+      final p = keepaliveProvider(notification: true);
+      await p.loadMessages();
+      await p.sendMessage('你好');
+
+      // 生成中：保活已激活，通知开关已记录
+      await Future.delayed(Duration.zero);
+      expect(GenerationKeepalive.active, isTrue);
+      expect(GenerationKeepalive.lastNotificationEnabled, isTrue);
+
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      // 生成结束：保活释放
+      expect(GenerationKeepalive.active, isFalse);
+      p.dispose();
+    });
+
+    test('通知开关关：不启动前台服务（纯保活态标记）', () async {
+      final p = keepaliveProvider(notification: false);
+      await p.loadMessages();
+      await p.sendMessage('你好');
+
+      await Future.delayed(Duration.zero);
+      expect(GenerationKeepalive.active, isTrue);
+      expect(GenerationKeepalive.lastNotificationEnabled, isFalse);
+
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      expect(GenerationKeepalive.active, isFalse);
+      p.dispose();
+    });
+
+    test('出错路径也释放保活（finally 兜底）', () async {
+      final p = keepaliveProvider(notification: true);
+      await p.loadMessages();
+      await p.sendMessage('你好');
+      await Future.delayed(Duration.zero);
+      expect(GenerationKeepalive.active, isTrue);
+
+      api.emitError(Exception('网络错误'));
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      expect(GenerationKeepalive.active, isFalse);
+      p.dispose();
+    });
+
+    test('手动停止生成也释放保活', () async {
+      final p = keepaliveProvider(notification: true);
+      await p.loadMessages();
+      await p.sendMessage('你好');
+      await Future.delayed(Duration.zero);
+      expect(GenerationKeepalive.active, isTrue);
+
+      p.stopGeneration();
+      // mock 模拟 cancel 错误（与「手动停止不标记中断态」同款）
+      api.emitError(DioException(
+          requestOptions: RequestOptions(path: '/'),
+          type: DioExceptionType.cancel));
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      expect(GenerationKeepalive.active, isFalse);
+      p.dispose();
     });
   });
 }

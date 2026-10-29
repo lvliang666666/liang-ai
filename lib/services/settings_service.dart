@@ -101,6 +101,19 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 后台生成保活（I13：前台服务 + WakeLock） =====
+  // 开 = 生成期间启动 dataSync 前台服务（通知栏常驻提示）+ WakeLock，
+  //   短时切后台 SSE 流不断；关 = 不启动服务（无通知打扰，但切后台
+  //   可能断流，降级为 I10 断流续传）。默认开
+  static const _kKeepaliveNotification = 'keepalive_notification';
+  bool get keepaliveNotification =>
+      _prefs.getBool(_kKeepaliveNotification) ?? true;
+  Future<void> setKeepaliveNotification(bool v) async {
+    if (v == keepaliveNotification) return;
+    await _prefs.setBool(_kKeepaliveNotification, v);
+    notifyListeners();
+  }
+
   // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续

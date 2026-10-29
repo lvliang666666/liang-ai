@@ -875,6 +875,23 @@ class _SettingsPageState extends State<SettingsPage> {
             setState(() => _settings.setSmartRouting(v));
           },
         ),
+        const SizedBox(height: 16),
+        Text('后台生成', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('后台生成保活'),
+          subtitle: const Text(
+            '生成期间在通知栏常驻提示并保持 CPU 唤醒，切到微信/'
+            '锁屏时回答继续生成不断流；关闭后无通知打扰，但切后台'
+            '可能断流（回来可续传）',
+          ),
+          value: _settings.keepaliveNotification,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setKeepaliveNotification(v));
+          },
+        ),
       ],
     );
   }

@@ -14,6 +14,7 @@ import '../models/tool_call.dart';
 import '../services/api_service.dart';
 import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
+import '../services/generation_keepalive.dart';
 import '../services/memory_service.dart';
 import '../services/smart_router.dart';
 import '../services/sse_parser.dart';
@@ -36,6 +37,7 @@ class ChatProvider extends ChangeNotifier {
     MemoryService? memory,
     ContextSummaryService? summaryService,
     bool smartRouting = false,
+    bool keepaliveNotification = false,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -47,6 +49,7 @@ class ChatProvider extends ChangeNotifier {
         _summaryService = summaryService ??
             ContextSummaryService(api: api, database: database),
         _smartRoutingEnabled = smartRouting,
+        _keepaliveNotification = keepaliveNotification,
         _tools = _buildRegistry(skill, toolCatalog);
 
   final DatabaseService _db;
@@ -423,6 +426,21 @@ class ChatProvider extends ChangeNotifier {
   /// （含 tool_calls）立即落库，工具结果以 role='tool' 消息落库，
   /// 然后进入下一轮。取消 = 终止整个 loop，已落库内容保留。
   Future<void> _runLoop() async {
+    // I13 后台保活：生成开始启动前台服务 + WakeLock（静默容错，
+    // 插件异常不影响生成主流程）
+    unawaited(GenerationKeepalive.start(
+      notificationEnabled: _keepaliveNotification,
+      title: _session.title.isEmpty ? 'Liang AI' : _session.title,
+    ));
+    try {
+      await _runLoopInner();
+    } finally {
+      // 所有收尾路径（完成/出错/断流/取消/轮数耗尽）统一释放
+      unawaited(GenerationKeepalive.stop());
+    }
+  }
+
+  Future<void> _runLoopInner() async {
     for (var iteration = 0; iteration < _maxLoopIterations; iteration++) {
       // 超上限保护：最后一轮注入系统提示强制模型总结
       final forceSummary = iteration == _maxLoopIterations - 1;
@@ -884,6 +902,10 @@ class ChatProvider extends ChangeNotifier {
 
   /// F4 智能路由开关（宿主从 SettingsService 传入；默认关）
   bool _smartRoutingEnabled;
+
+  /// I13 保活通知开关（宿主从 SettingsService 读入；默认关 = 测试/
+  /// 未注入场景不启动前台服务）
+  bool _keepaliveNotification;
 
   /// 生效的温度：Skill 预设优先（会话级温度暂未开放手动调整）
   double get _effectiveTemperature => _skill?.temperature ?? 0.7;

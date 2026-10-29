@@ -237,6 +237,9 @@ class _HomePageState extends State<HomePage> {
       memory: MemoryService(database: db),
       // F4 智能路由开关（设置页控制；关 = 手动档位行为不变）
       smartRouting: context.read<SettingsService>().smartRouting,
+      // I13 后台保活通知开关（设置页控制；关 = 不启动前台服务）
+      keepaliveNotification:
+          context.read<SettingsService>().keepaliveNotification,
       toolCatalog: [
         ...builtinTools,
         for (final t in httpTools) HttpToolHandler(t),
