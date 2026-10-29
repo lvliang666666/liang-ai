@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.13.0**（2026-10-29 发布）
+**当前版本：v2.14.0**（2026-10-29 发布）
+
+v2.14.0 在 v2.13.0 基础上新增（feat/background-keepalive 分支，roadmap I13+E5 → MINOR）：
+
+- **I13 后台生成保活**：生成期间启动 dataSync 前台服务（进程不冻结、网络不断，插件自持 PARTIAL_WAKE_LOCK）+ WakeLock，短时切后台（回微信/锁屏）SSE 流不断；结束/出错/手动停止统一释放（try/finally 兜底所有收尾路径）。GenerationKeepalive 静态服务全链路静默容错（插件异常只 debugPrint，绝不影响生成主流程）；设置页「对话参数」新增「后台生成保活」开关（默认开，关 = 不启动前台服务无通知打扰）；AndroidManifest 加 FOREGROUND_SERVICE / FOREGROUND_SERVICE_DATA_SYNC / POST_NOTIFICATIONS 权限 + ForegroundService 声明（Android 14 dataSync 6h/24h 上限，聊天场景足够，超时降级为 I10 断流续传）
+- **E5 流式中断恢复**：App 被杀不再留半截消息——流式开始即落库占位（interrupted=1），正常收尾覆写为完整内容并复位；启动/进入会话扫描最后一条 assistant 消息的中断标记，恢复「连接中断 · 点击续传」胶囊（复用 I10 续传管线：删半截消息重跑最后一轮）；断流/错误半截内容带标记落库；工具轮落库复位（完整产物非半截）；空占位取消即删除不留幽灵消息。DB v15：messages 加 interrupted 列（NOT NULL DEFAULT 0，老数据 = 正常收尾）
+- 721 项测试全绿（新增 11：保活 4 + E5 6 + v15 迁移 1）；flutter analyze 零 error/warning（53 条 info 持平）
+
+### v2.13.0（2026-10-29）
 
 v2.13.0 在 v2.12.0 基础上新增（feat/quick-wins-2 分支，roadmap T3+F4+I3 → MINOR）：
 

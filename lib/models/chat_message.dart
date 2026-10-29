@@ -38,6 +38,10 @@ class ChatMessage {
   /// 生成总耗时（秒；思考+回答全程。null = 老数据/流式中未收尾）
   int? generationSeconds;
 
+  /// 流式中断标记（E5：1 = 流式占位未收尾——App 被杀/断流留下的
+  /// 半截消息，启动扫描后标「已中断」并提供重新生成入口）
+  bool interrupted;
+
   /// 用户钉住（F2：钉住消息所在轮永不压缩进前情摘要）
   bool pinned;
 
@@ -56,6 +60,7 @@ class ChatMessage {
     this.completionTokens,
     this.thinkingSeconds,
     this.generationSeconds,
+    this.interrupted = false,
     this.pinned = false,
     required this.createdAt,
   })  : attachments = attachments ?? const [],
@@ -80,6 +85,7 @@ class ChatMessage {
         'completion_tokens': completionTokens,
         'thinking_seconds': thinkingSeconds,
         'generation_seconds': generationSeconds,
+        'interrupted': interrupted ? 1 : 0,
         'pinned': pinned ? 1 : 0,
         'created_at': createdAt,
       };
@@ -98,6 +104,7 @@ class ChatMessage {
         completionTokens: map['completion_tokens'] as int?,
         thinkingSeconds: map['thinking_seconds'] as int?,
         generationSeconds: map['generation_seconds'] as int?,
+        interrupted: ((map['interrupted'] as int?) ?? 0) != 0,
         pinned: ((map['pinned'] as int?) ?? 0) != 0,
         createdAt: map['created_at'] as int,
       );

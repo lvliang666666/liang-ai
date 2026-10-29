@@ -103,16 +103,20 @@ void main() {
 
       api.emit(const SseDone());
       await provider.sendMessage('看这些');
+      // E5：占位已落库（interrupted=1），等它进队完成再查库
+      await Future.delayed(Duration.zero);
 
       expect(provider.pendingAttachments, isEmpty);
       expect(provider.messages, hasLength(1));
       expect(provider.messages.first.attachments, hasLength(2));
       expect(provider.messages.first.attachments.first.base64Data, 'QQ==');
 
-      // 落库验证
+      // 落库验证（E5：user 消息 + 未收尾占位 = 2 条）
       final stored = await db.getMessages('s1');
-      expect(stored, hasLength(1));
+      expect(stored, hasLength(2));
       expect(stored.first.attachments, hasLength(2));
+      expect(stored.last.role, 'assistant');
+      expect(stored.last.interrupted, isTrue, reason: 'E5 占位未收尾');
     });
 
     test('仅附件无文字也可发送', () async {

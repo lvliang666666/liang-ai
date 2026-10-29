@@ -618,5 +618,97 @@ void main() {
       await upgraded.close();
       await databaseFactory.deleteDatabase(dbPath);
     });
+
+    test('v14 老库迁移到 v15：messages 补 interrupted 列，老数据保留', () async {
+      // 手写 v14 历史 schema（被测对象是迁移逻辑本身），升级走生产
+      // onUpgrade 本尊。sessions/memories 表 v1/v7 就存在，后续迁移步
+      // 会 ALTER 它们（v12 sessions pinned / v9 memories pinned）
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v14_to_v15_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 14),
+      );
+      await old.execute('''
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          effort TEXT NOT NULL DEFAULT 'max',
+          agent_id TEXT,
+          skill_id TEXT,
+          provider_id TEXT,
+          model TEXT,
+          pinned INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          thinking_seconds INTEGER,
+          generation_seconds INTEGER,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          pinned INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('messages', {
+        'id': 'm1',
+        'session_id': 's1',
+        'role': 'assistant',
+        'content': '老消息',
+        'created_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // 老数据保留，interrupted 由 ALTER DEFAULT 0 回填（老消息 = 正常收尾）
+      final rows = await upgraded.query('messages');
+      expect(rows.single['content'], '老消息');
+      expect(rows.single['interrupted'], 0);
+      expect(ChatMessage.fromMap(rows.single).interrupted, isFalse);
+
+      // 新列可写可读
+      await upgraded.update(
+        'messages',
+        {'interrupted': 1},
+        where: 'id = ?',
+        whereArgs: ['m1'],
+      );
+      final updated = (await upgraded.query('messages')).first;
+      expect(ChatMessage.fromMap(updated).interrupted, isTrue);
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
   });
 }

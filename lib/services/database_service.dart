@@ -22,7 +22,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 14;
+  static const int dbVersion = 15;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -131,6 +131,7 @@ class DatabaseService {
         completion_tokens INTEGER,
         thinking_seconds INTEGER,
         generation_seconds INTEGER,
+        interrupted INTEGER NOT NULL DEFAULT 0,
         pinned INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL
       )
@@ -246,6 +247,13 @@ class DatabaseService {
           'ALTER TABLE messages ADD COLUMN thinking_seconds INTEGER');
       await db.execute(
           'ALTER TABLE messages ADD COLUMN generation_seconds INTEGER');
+    }
+    if (oldVersion < 15 && newVersion >= 15) {
+      // v14 → v15：流式中断恢复（E5）——messages 加 interrupted 列
+      //（1 = 流式占位未收尾：App 被杀/断流留下的半截消息，启动扫描
+      // 后标「已中断」并提供重新生成入口；0 = 正常收尾）
+      await db.execute(
+          'ALTER TABLE messages ADD COLUMN interrupted INTEGER NOT NULL DEFAULT 0');
     }
   }
 

@@ -64,6 +64,10 @@ dependencies:
   # E6 API Key 加固：Key 存系统安全存储（Android Keystore 加密的
   # EncryptedSharedPreferences），DB 只存空串
   flutter_secure_storage: ^11.2.0
+  # I13 后台生成保活：前台服务（dataSync 类型）+ WakeLock，
+  # 短时切后台（回微信/锁屏）SSE 流不断
+  flutter_foreground_task: ^11.0.3
+  wakelock_plus: ^1.8.0
 
 # 锁定 Android 侧插件版本（v2.3.6 白屏事故修复，2026-10-22）
 # shared_preferences_android 2.5.x 改走 JNI native interop 路径，release

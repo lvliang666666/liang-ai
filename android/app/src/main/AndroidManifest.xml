@@ -7,6 +7,12 @@
     <!-- Android 12 及以下相册读取 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>
+    <!-- I13 后台生成保活：前台服务（Android 9+ 需声明权限） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- Android 14+：dataSync 类型前台服务需专项声明（6h/24h 上限，聊天场景足够） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <!-- Android 14+：前台服务启动需通知权限（通知栏常驻提示） -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
         android:label="Liang AI"
         android:name="${applicationName}"
@@ -38,6 +44,12 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- I13 后台生成保活：flutter_foreground_task 的前台服务宿主 -->
+        <service
+            android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and
