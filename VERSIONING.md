@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.15.0**（2026-10-29 发布）
+**当前版本：v2.16.0**（2026-10-29 发布）
+
+v2.16.0 在 v2.15.0 基础上新增（feat/outline-slash-commands 分支，roadmap I8+I12 → MINOR）：
+
+- **I8 消息大纲**：点击 header 会话标题弹出「消息大纲」浮层——以每条 user 提问为目录项（首行截断 40 字 + 微信式时间标签，离线零成本无需模型生成），点条目复用 I7 scrollToMessage 管线平滑定位 + 临时高亮；空会话 toast 提示不弹浮层。长会话从「一条时间轴」变「一篇有目录的文章」
+- **I12 斜杠命令**：输入框输入「/」唤起命令面板（SlashCommandSheet）——Skill（点选切换会话人格）+ 自定义短语（点选整条填入输入框）统一检索，搜索框按名称/内容实时过滤；SettingsService 新增短语 KV（LRU 上限 20，add/remove API）；设置页「快捷操作」tab 增加短语管理（添加/删除）；点遮罩关闭保留输入框原样
+- 792 项测试全绿（新增 36：I8 16 + I12 20）；flutter analyze 零 error/warning（53 条 info 持平）
+
+### v2.15.0（2026-10-29）
 
 v2.15.0 在 v2.14.0 基础上新增（feat/episodic-memory 分支，roadmap M4 → MINOR）：
 
