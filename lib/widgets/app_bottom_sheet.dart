@@ -157,6 +157,13 @@ class SheetScaffold extends StatelessWidget {
 /// showModalBottomSheet.constraints 传 maxHeight），padding 会反向
 /// 压缩内容——列表被压到不足半行。
 ///
+/// **状态栏保护（v2.16.0 验收反馈）**：键盘在场时内容上限额外取
+/// `屏高 − 键盘 − 状态栏`，保证面板顶边不越过状态栏下沿——否则
+/// 「60% 内容 + 键盘」在矮屏/高键盘（中文输入法带工具条可达 320dp+）
+/// 下会把标题行和搜索框顶进通知栏遮挡区（同类问题在多个项目复现，
+/// 已沉淀 lessons：2026-10-29-flutter-sheet-keyboard-statusbar-overflow.md）。
+/// 无键盘时该值远大于 60% 上限，不改变既有布局。
+///
 /// 注意：本组件必须工作在**松约束**下（BottomSheet 内部是
 /// Align(heightFactor: 1.0) 的松约束）。若外层传紧约束
 /// （如 SizedBox.expand），ConstrainedBox 的上限会被紧约束吞掉。
@@ -176,6 +183,13 @@ class SheetKeyboardInset extends StatelessWidget {
   Widget build(BuildContext context) {
     final inset = MediaQuery.viewInsetsOf(context).bottom;
     final screenH = MediaQuery.heightOf(context);
+    final statusBar = MediaQuery.paddingOf(context).top;
+    // 常规上限：60% 屏高
+    final ratioCap = math.max(0.0, screenH * maxHeightRatio);
+    // 状态栏保护：键盘在场时，面板顶边 = 屏高 − 键盘 − 内容高，
+    // 要求顶边不低于状态栏下沿 → 内容高 ≤ 屏高 − 键盘 − 状态栏。
+    // 无键盘时该值 ≥ 屏高 − 状态栏 > 60% 上限，取 min 后不生效。
+    final keyboardCap = math.max(0.0, screenH - inset - statusBar);
     return AnimatedPadding(
       duration: const Duration(milliseconds: 250),
       curve: Curves.easeOutCubic,
@@ -186,7 +200,7 @@ class SheetKeyboardInset extends StatelessWidget {
       // 极端矮屏/高键盘时内容自动收缩，不会溢出屏幕。
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxHeight: math.max(0, screenH * maxHeightRatio),
+          maxHeight: math.min(ratioCap, keyboardCap),
         ),
         child: child,
       ),

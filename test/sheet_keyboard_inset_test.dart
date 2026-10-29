@@ -9,11 +9,17 @@ import 'package:flutter_test/flutter_test.dart';
 /// （键盘 padding 外层），键盘弹出时 padding 挤占内容预算——列表被压到
 /// 不足半行、搜索框贴键盘。修复后上限移到 padding 内层。
 ///
+/// 背景 2（v2.16.0 验收反馈）：键盘在场时内容仍取 60% 屏高，矮屏/高键盘
+/// 下面板顶边越过状态栏——标题行/搜索框被通知栏遮挡（用户：「整个页面
+/// 都铺满了，顶部通知栏挡住了部分的页面」）。修复：键盘在场时内容上限
+/// 额外取 `屏高 − 键盘 − 状态栏`。
+///
 /// 布局数学（松约束下）：
-/// - 内容高度 = min(60% 屏高, 可用高 − 键盘高)
+/// - 内容高度 = min(60% 屏高, 屏高 − 键盘高 − 状态栏)
 ///   - 修复前（上限在外层）：内容 = 60% 屏高 − 键盘高（被挤占）
-///   - 修复后（上限在内层）：内容 = min(60% 屏高, 屏高 − 键盘高)
-///     真机（屏 ~800dp、键盘 ~280dp）→ 内容保持 360dp 不缩水
+///   - 修复后（上限在内层）：内容 = min(60% 屏高, 屏高 − 键盘 − 状态栏)
+///     真机（屏 ~800dp、键盘 ~280dp、状态栏 ~24dp）→ 内容 496dp，
+///     面板顶边正好在状态栏下沿，不再被通知栏遮挡
 /// - 面板总高 = 内容 + 键盘 padding，底部锚定屏幕底 → 内容底边
 ///   正好在键盘上沿
 ///
@@ -25,15 +31,21 @@ void main() {
   // 测试窗口：800×1200 逻辑像素（典型手机竖屏 dp）
   const screenW = 800.0;
   const screenH = 1200.0;
+  const statusBar = 24.0;
   const maxContent = screenH * 0.6; // 720
 
-  void setupView(WidgetTester tester) {
+  void setupView(WidgetTester tester, {double inset = 0}) {
     tester.view.physicalSize = const Size(screenW, screenH);
     tester.view.devicePixelRatio = 1.0;
+    tester.view.padding = FakeViewPadding(top: statusBar);
+    tester.view.viewInsets = FakeViewPadding(bottom: inset);
     addTearDown(tester.view.reset);
   }
 
   /// 模拟 BottomSheet 内部松约束宿主 + 指定键盘 inset
+  ///
+  /// 状态栏/键盘均通过 tester.view 注入（MediaQuery.fromView 自动读取），
+  /// 与真机 WindowInsets 行为一致。
   Widget host(double inset) {
     return MediaQuery.fromView(
       view: RendererBinding.instance.renderViews.single.flutterView,
@@ -75,7 +87,6 @@ void main() {
 
   testWidgets('键盘收起（inset=0）：内容上限 = 60% 屏高', (tester) async {
     setupView(tester);
-    tester.view.viewInsets = FakeViewPadding(bottom: 0);
     await tester.pumpWidget(host(0));
     await tester.pumpAndSettle();
     expect(contentBox(tester).size.height, closeTo(maxContent, 0.5));
@@ -83,19 +94,17 @@ void main() {
 
   testWidgets('键盘弹出（inset=300）：内容高度不被挤占（修复前会缩到 420）',
       (tester) async {
-    setupView(tester);
-    tester.view.viewInsets = FakeViewPadding(bottom: 300);
+    setupView(tester, inset: 300);
     await tester.pumpWidget(host(300));
     await tester.pumpAndSettle();
     // 修复前：上限 720 在 padding 外层 → 内容 = 720-300 = 420（被挤占）
-    // 修复后：上限在 padding 内层 → 内容 = min(720, 1200-300) = 720
+    // 修复后：上限在 padding 内层 → 内容 = min(720, 1200-300-24) = 720
     expect(contentBox(tester).size.height, closeTo(maxContent, 0.5),
         reason: '键盘弹出时内容区高度必须保持 60% 屏高不缩水');
   });
 
   testWidgets('键盘弹出（inset=300）：内容底边正好在键盘上沿', (tester) async {
-    setupView(tester);
-    tester.view.viewInsets = FakeViewPadding(bottom: 300);
+    setupView(tester, inset: 300);
     await tester.pumpWidget(host(300));
     await tester.pumpAndSettle();
 
@@ -117,21 +126,44 @@ void main() {
     expect(paddedBottom, closeTo(screenH, 0.5), reason: '面板底部应贴屏幕底');
   });
 
+  testWidgets('状态栏保护（v2.16.0 验收反馈）：键盘在场时面板顶边不越过状态栏',
+      (tester) async {
+    setupView(tester, inset: 500);
+    // 高键盘 500dp：60% 上限 720 > 屏高−键盘−状态栏 = 676 → 触发保护
+    await tester.pumpWidget(host(500));
+    await tester.pumpAndSettle();
+    final box = contentBox(tester);
+    final contentTop = box.localToGlobal(Offset.zero).dy;
+    // 内容 = min(720, 1200-500-24=676) = 676 → 顶边 = 900-676 = 224
+    // ≥ 状态栏下沿 24，标题行/搜索框不被通知栏遮挡
+    expect(box.size.height, closeTo(screenH - 500 - statusBar, 0.5));
+    expect(contentTop, closeTo(statusBar, 0.5),
+        reason: '面板顶边应正好落在状态栏下沿，不再被通知栏遮挡');
+  });
+
+  testWidgets('状态栏保护不误伤：低键盘时 60% 上限仍生效', (tester) async {
+    setupView(tester, inset: 300);
+    // 低键盘 300dp：屏高−键盘−状态栏 = 876 > 720 → 60% 上限生效
+    await tester.pumpWidget(host(300));
+    await tester.pumpAndSettle();
+    expect(contentBox(tester).size.height, closeTo(maxContent, 0.5),
+        reason: '低键盘时保护上限大于 60% 上限，不应改变既有布局');
+  });
+
   testWidgets('超高键盘（inset=1000 > 60% 屏高）：内容收缩到剩余空间，不溢出',
       (tester) async {
-    setupView(tester);
-    tester.view.viewInsets = FakeViewPadding(bottom: 1000);
+    setupView(tester, inset: 1000);
     await tester.pumpWidget(host(1000));
     await tester.pumpAndSettle();
-    // min(720, 1200-1000=200) → 内容 200dp（极端情况让位键盘不溢出；
+    // min(720, 1200-1000-24=176) → 内容 176dp（极端情况让位键盘不溢出；
     // 真实设备键盘 240-300dp 不会触发此分支）
-    expect(contentBox(tester).size.height, closeTo(screenH - 1000, 0.5));
+    expect(contentBox(tester).size.height,
+        closeTo(screenH - 1000 - statusBar, 0.5));
   });
 
   testWidgets('键盘收起回落：inset 300 → 0，内容高度不变、面板整体回落',
       (tester) async {
-    setupView(tester);
-    tester.view.viewInsets = FakeViewPadding(bottom: 300);
+    setupView(tester, inset: 300);
     await tester.pumpWidget(host(300));
     await tester.pumpAndSettle();
     final openHeight = contentBox(tester).size.height;
@@ -147,7 +179,6 @@ void main() {
   testWidgets('AnimatedPadding 平滑过渡：inset 变化后内容底边位置连续上移',
       (tester) async {
     setupView(tester);
-    tester.view.viewInsets = FakeViewPadding(bottom: 0);
     await tester.pumpWidget(host(0));
     await tester.pumpAndSettle();
 
@@ -176,7 +207,6 @@ void main() {
   testWidgets('内容不足时贴顶：少内容 + 无键盘，面板高度 = 内容实际高度',
       (tester) async {
     setupView(tester);
-    tester.view.viewInsets = FakeViewPadding(bottom: 0);
     await tester.pumpWidget(
       MediaQuery.fromView(
         view: RendererBinding.instance.renderViews.single.flutterView,
