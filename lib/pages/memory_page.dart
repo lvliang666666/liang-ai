@@ -151,6 +151,20 @@ class _MemoryPanelState extends State<MemoryPanel> {
             context.read<SettingsService>().setAutoMemory(v);
           },
         ),
+        // M4 情景记忆层开关（会话结束生成摘要，模型可检索历史会话）
+        SwitchListTile(
+          contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          title: const Text('情景记忆'),
+          subtitle: const Text(
+            '会话结束后自动生成标题与摘要入库，模型可经 search_history '
+            '工具回顾「之前聊过什么」（静默进行）；关闭后不生成不检索',
+          ),
+          value: context.watch<SettingsService>().episodicMemory,
+          onChanged: (v) {
+            Haptics.selection();
+            context.read<SettingsService>().setEpisodicMemory(v);
+          },
+        ),
         // tag 筛选 chips（横向滚动；无 tag 时隐藏）
         if (tags.isNotEmpty)
           SizedBox(

@@ -67,6 +67,7 @@ class BackupService {
           'swipe_actions': settings.swipeActions,
           'auto_memory': settings.autoMemory,
           'context_compression': settings.contextCompression,
+          'episodic_memory': settings.episodicMemory,
         },
       },
     };

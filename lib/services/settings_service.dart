@@ -114,6 +114,18 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 情景记忆层（M4：会话结束生成摘要 + search_history 工具） =====
+  // 开 = 会话切走/退出聊天态时后台生成「标题+摘要+关键词」入库，
+  //   模型可经 search_history 工具检索历史会话；关 = 不生成不检索。
+  // 默认开
+  static const _kEpisodicMemory = 'episodic_memory';
+  bool get episodicMemory => _prefs.getBool(_kEpisodicMemory) ?? true;
+  Future<void> setEpisodicMemory(bool v) async {
+    if (v == episodicMemory) return;
+    await _prefs.setBool(_kEpisodicMemory, v);
+    notifyListeners();
+  }
+
   // ===== 最近使用的 Skill（LRU，最多 recentSkillLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Skill id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续

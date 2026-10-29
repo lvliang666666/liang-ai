@@ -139,3 +139,60 @@ class MemoryForgetTool extends ToolHandler {
     return '已删除 $deleted 条记忆';
   }
 }
+
+/// 检索历史会话（M4 情景记忆层）：「之前/上周我们讨论过 X」类问题
+///
+/// 检索 session_summaries 表（每会话一条「标题+摘要+关键词」，会话
+/// 结束时自动生成）。当前会话不参与检索——本会话内容已在上下文里，
+/// 「之前」指的是其他会话。
+class SearchHistoryTool extends ToolHandler {
+  const SearchHistoryTool({this.currentSessionId});
+
+  /// 当前会话 id（ChatProvider 构建注册表时注入，检索时排除）
+  ///
+  /// 非 final：const 目录里的实例是共享模板，注册表构建时按当前会话
+  /// 复制并填入（与 MemorySaveTool.sourceSkill 同模式）。
+  final String? currentSessionId;
+
+  @override
+  String get name => 'search_history';
+
+  @override
+  String get description =>
+      '检索历史会话摘要。当用户提到「之前/上次/上周我们讨论过什么」'
+      '或需要回顾过往对话的结论时使用，返回匹配的历史会话列表'
+      '（标题+摘要+关键词+时间）。';
+
+  @override
+  Map<String, dynamic> get parametersSchema => const {
+        'type': 'object',
+        'properties': {
+          'keyword': {
+            'type': 'string',
+            'description': '检索关键词（如「报销」「部署方案」「某产品名」）',
+          },
+        },
+        'required': ['keyword'],
+      };
+
+  @override
+  Future<String> execute(Map<String, dynamic> arguments) async {
+    final keyword = arguments['keyword'];
+    if (keyword is! String || keyword.trim().isEmpty) {
+      throw ArgumentError('keyword 不能为空');
+    }
+    final hits = await DatabaseService.instance.searchSessionSummaries(
+      keyword,
+      excludeSessionId: currentSessionId,
+    );
+    if (hits.isEmpty) {
+      return '没有找到与「${keyword.trim()}」相关的历史会话';
+    }
+    return [
+      '找到 ${hits.length} 个相关历史会话：',
+      for (final s in hits)
+        '- ${s.title}：${s.summary}'
+            '${s.keywords.isNotEmpty ? '（关键词：${s.keywords.join('、')}）' : ''}',
+    ].join('\n');
+  }
+}

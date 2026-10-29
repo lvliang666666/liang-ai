@@ -141,7 +141,7 @@ void main() {
   group('内置工具', () {
     test('注册表含全部内置工具', () {
       final registry = ToolRegistry()..registerAll(builtinTools);
-      expect(registry.length, 29);
+      expect(registry.length, 30);
       expect(
           registry.names,
           containsAll([

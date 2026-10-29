@@ -51,6 +51,8 @@ const builtinTools = <ToolHandler>[
   MemorySaveTool(),
   MemorySearchTool(),
   MemoryForgetTool(),
+  // 情景记忆（M4：历史会话摘要检索；currentSessionId 注册时注入）
+  SearchHistoryTool(),
   // 玄学（排盘出事实，解读交给模型）
   LunarCalendarTool(),
   BaziTool(),

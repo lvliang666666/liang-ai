@@ -50,7 +50,7 @@ class ChatProvider extends ChangeNotifier {
             ContextSummaryService(api: api, database: database),
         _smartRoutingEnabled = smartRouting,
         _keepaliveNotification = keepaliveNotification,
-        _tools = _buildRegistry(skill, toolCatalog);
+        _tools = _buildRegistry(skill, toolCatalog, sessionId: session.id);
 
   final DatabaseService _db;
   ApiService _api;
@@ -81,9 +81,11 @@ class ChatProvider extends ChangeNotifier {
   ///
   /// toolNames null = 全部目录工具（默认助手/迁移老数据）；
   /// [] = 无工具；非空 = 指定子集（目录中不存在的名字忽略）。
-  /// memory_save 工具按当前 Skill 注入来源名（记忆溯源）。
+  /// memory_save 工具按当前 Skill 注入来源名（记忆溯源）；
+  /// search_history 工具注入当前会话 id（检索时排除本会话）。
   static ToolRegistry _buildRegistry(
-      Skill? skill, List<ToolHandler> catalog) {
+      Skill? skill, List<ToolHandler> catalog,
+      {String? sessionId}) {
     final registry = ToolRegistry();
     final allowed = skill?.toolNames;
     final selected = allowed == null
@@ -93,7 +95,9 @@ class ChatProvider extends ChangeNotifier {
       for (final t in selected)
         t is MemorySaveTool
             ? MemorySaveTool(sourceSkill: skill?.name)
-            : t,
+            : t is SearchHistoryTool
+                ? SearchHistoryTool(currentSessionId: sessionId)
+                : t,
     ]);
     return registry;
   }
@@ -815,7 +819,7 @@ class ChatProvider extends ChangeNotifier {
   Future<void> setSkill(Skill? skill) async {
     if (_skill?.id == skill?.id) return;
     _skill = skill;
-    _tools = _buildRegistry(skill, _toolCatalog);
+    _tools = _buildRegistry(skill, _toolCatalog, sessionId: _session.id);
     await _db.updateSessionSkill(_session.id, skill?.id);
     _notify();
   }

@@ -8,7 +8,14 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.14.0**（2026-10-29 发布）
+**当前版本：v2.15.0**（2026-10-29 发布）
+
+v2.15.0 在 v2.14.0 基础上新增（feat/episodic-memory 分支，roadmap M4 → MINOR）：
+
+- **M4 情景记忆层**：会话结束自动生成「标题+摘要+关键词」入库，模型可经 `search_history` 工具检索历史会话——「上周我们讨论过 X 的结论」这类问题有了着落。与记忆池形成双层：语义记忆（池，用户是谁）+ 情景记忆（摘要，聊过什么）。DB v16：session_summaries 表（每会话一条 `ep_<sessionId>` 派生 id replace 覆盖；派生数据不进备份、deleteSession 级联删）；SessionSummaryService 复用 M2 提取模式（low 档低温 + 强约束 JSON + 解析失败回喂重试一次 + 全程静默）；search_history 工具注册进 builtinTools（29→30，检索排除当前会话——本会话内容已在上下文里）；触发点与 M2 共用（home_page 会话切走/退出聊天态，共用一次 ApiService）；设置开关「情景记忆」（默认开）+ 记忆管理面板 SwitchListTile + 备份 settings 段导出/导入
+- 756 项测试全绿（新增 35：服务 34 + v16 迁移 1）；flutter analyze 零 error/warning（53 条 info 持平）
+
+### v2.14.0（2026-10-29）
 
 v2.14.0 在 v2.13.0 基础上新增（feat/background-keepalive 分支，roadmap I13+E5 → MINOR）：
 

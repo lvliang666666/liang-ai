@@ -217,7 +217,7 @@ void main() {
       final migrated = await openTestDbFromVersion(1);
 
       // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/
-      // memories/http_tools/context_summaries）
+      // memories/http_tools/context_summaries/session_summaries）
       final tables = await migrated.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
       );
@@ -231,12 +231,12 @@ void main() {
           'memories',
           'http_tools',
           'context_summaries',
+          'session_summaries',
         ]),
       );
       // v13 起新增 FTS5 虚表 + 影子表（_data/_idx/_content/_docsize/_config）
-      // + rowid 映射表：7 业务表 + 8 FTS 相关 = 15？实际 14（虚表 1 +
-      // 影子 5 + 映射 1 = 7，7+7=14）
-      expect(tables.length, 14); // agents 表应已在 v6 迁移中删除
+      // + rowid 映射表；v16 起新增 session_summaries（8 业务表 + 7 FTS 相关）
+      expect(tables.length, 15); // agents 表应已在 v6 迁移中删除
 
       // 迁移后可正常写入读出（走一遍核心链路）
       await migrated.insert('sessions', {
@@ -706,6 +706,100 @@ void main() {
       );
       final updated = (await upgraded.query('messages')).first;
       expect(ChatMessage.fromMap(updated).interrupted, isTrue);
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
+
+    test('v15 老库迁移到 v16：新建 session_summaries 表（M4）', () async {
+      // 手写 v15 历史 schema（messages 含 interrupted 列），升级走生产
+      // onUpgrade 本尊。sessions/memories 表 v1/v7 就存在，后续迁移步
+      // 会 ALTER 它们（v12 sessions pinned / v9 memories pinned）
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v15_to_v16_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 15),
+      );
+      await old.execute('''
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL,
+          effort TEXT NOT NULL DEFAULT 'max',
+          agent_id TEXT,
+          skill_id TEXT,
+          provider_id TEXT,
+          model TEXT,
+          pinned INTEGER NOT NULL DEFAULT 0
+        )
+      ''');
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          thinking_seconds INTEGER,
+          generation_seconds INTEGER,
+          interrupted INTEGER NOT NULL DEFAULT 0,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          pinned INTEGER,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('messages', {
+        'id': 'm1',
+        'session_id': 's1',
+        'role': 'assistant',
+        'content': '老消息',
+        'created_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // session_summaries 表已建，可写可读（M4 摘要行）
+      await upgraded.insert('session_summaries', {
+        'id': 'ep_s1',
+        'session_id': 's1',
+        'title': '报销流程',
+        'summary': '确认了发票要求',
+        'keywords': '报销,发票',
+        'created_at': 1,
+      });
+      final rows = await upgraded.query('session_summaries');
+      expect(rows.single['title'], '报销流程');
+      expect(rows.single['keywords'], '报销,发票');
+
+      // 老消息数据无损
+      final msgs = await upgraded.query('messages');
+      expect(msgs.single['content'], '老消息');
 
       await upgraded.close();
       await databaseFactory.deleteDatabase(dbPath);
