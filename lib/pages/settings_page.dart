@@ -1029,7 +1029,7 @@ class _SettingsPageState extends State<SettingsPage> {
             borderRadius: BorderRadius.circular(10),
           ),
           child: Text(
-            '· 备份包含：会话、消息、Agent、记忆、HTTP 工具、供应商配置（不含 API Key）\n'
+            '· 备份包含：会话、消息、Agent、记忆、卡片、HTTP 工具、供应商配置（不含 API Key）\n'
             '· 导出为 JSON 文件，通过系统分享面板发送（微信/网盘/邮件均可）\n'
             '· 导入会**清空并替换**当前全部数据，操作前请先导出一份备份\n'
             '· 导入后建议返回主页再继续聊天',
