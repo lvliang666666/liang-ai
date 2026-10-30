@@ -237,9 +237,10 @@ void main() {
         ]),
       );
       // v13 起新增 FTS5 虚表 + 影子表（_data/_idx/_content/_docsize/_config）
-      // + rowid 映射表；v16 起新增 session_summaries；v18 起新增 cards
-      //（9 业务表 + 7 FTS 相关）
-      expect(tables.length, 16); // agents 表应已在 v6 迁移中删除
+      // + rowid 映射表；v16 起新增 session_summaries；v18 起新增 cards；
+      // v20 起新增 doc_chunks + chunks_fts（FTS5 虚表 5 影子 + rowid 映射）
+      //（10 业务表 + 12 FTS 相关 + 2 rowid 映射）
+      expect(tables.length, 24); // agents 表应已在 v6 迁移中删除
 
       // 迁移后可正常写入读出（走一遍核心链路）
       await migrated.insert('sessions', {

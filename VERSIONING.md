@@ -8,7 +8,19 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.24.0**（2026-10-30 发布）
+**当前版本：v2.25.0**（2026-10-30 发布）
+
+v2.25.0 在 v2.24.0 基础上新增（feat/doc-workbench 分支，roadmap F8 + E10 顺手项 → MINOR）：
+
+- **F8 长文工作台（PDF 分块索引 + 检索注入 + 引用溯源）**：上传 PDF 附件后台按页分块索引 → 提问时按相关性检索 top-6 片段注入 → 回答标注【文件名·第N页】→ 气泡下方来源 chips 点击看原文/打开原文件——从「能提取文本」到「能精读长文档」，引用可验证
+- **数据层（DB v19→v20）**：doc_chunks 表（派生数据：不进备份、会话删除级联）+ chunks_fts（bigram 同 messages_fts 模式，FTS5 缺失降级 LIKE）；replaceDocChunks 幂等重挂 / searchDocChunks（**自然语言问句 OR 匹配 + FTS5 rank 相关性排序**——整句 AND 必空的教训）/ getDocNames / deleteSession 级联
+- **DocumentIndexService**：分页提取（页码=引用锚点）→ 超长页按段落/句子边界拆块（~1000 字符）→ 入库；损坏/扫描版静默降级返回 0 不炸主链路；索引是增强不是门槛（未完成时走 extractedText 全量注入老路径）
+- **ChatProvider 接线**：addAttachment 检测 PDF（有沙箱路径）fire-and-forget 索引；sendMessage 预取检索 → _buildApiMessages 注入【文档资料】system 块（片段 + 引用标注指令 + 不编造页码纪律）
+- **引用 UI**：CitationChips 解析标注（去重保序）→ chips 行（流式中不显示防打字机闪烁）；点击弹 Sheet 展示片段原文（可选中复制）+「打开原文件」（OpenFilex）
+- **依赖顺手升级**（E10 排期补丁级）：crypto 3.0.8 / syncfusion_flutter_pdf 35.1.42 / sqflite_common_ffi 2.4.5
+- 1032 项测试全绿（新增 39：数据层 13 + 索引服务 8 + 注入 6 + 引用 UI 12）；flutter analyze 零 error/warning（56 条 info，较基线 -2）
+
+### v2.24.0（2026-10-30）
 
 v2.24.0 在 v2.23.0 基础上新增（feat/screenshot-memory 分支，roadmap F7+E10 → MINOR）：
 
