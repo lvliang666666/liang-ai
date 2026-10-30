@@ -5,6 +5,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/card.dart';
 import '../models/context_summary.dart';
 import '../models/http_tool.dart';
 import '../models/memory.dart';
@@ -23,7 +24,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 17;
+  static const int dbVersion = 18;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -146,6 +147,7 @@ class DatabaseService {
     await _createHttpToolsTable(db);
     await _createContextSummariesTable(db);
     await _createSessionSummariesTable(db);
+    await _createCardsTable(db);
     await _createFtsTables(db);
   }
 
@@ -274,6 +276,10 @@ class DatabaseService {
         await db.execute(
             "ALTER TABLE memories ADD COLUMN layer TEXT NOT NULL DEFAULT 'event'");
       }
+    }
+    if (oldVersion < 18 && newVersion >= 18) {
+      // v17 → v18：对话炼金炉（M5）——新建 cards 表（用户策展知识卡片）
+      await _createCardsTable(db);
     }
   }
 
@@ -429,6 +435,31 @@ class DatabaseService {
     await db.execute(
       'CREATE INDEX IF NOT EXISTS idx_session_summaries_session '
       'ON session_summaries(session_id)',
+    );
+  }
+
+  /// 卡片库表（M5 对话炼金炉）：用户策展的知识卡片
+  ///
+  /// 用户资产（非派生数据）：进备份（restore 重灌）。
+  /// session_id/source_message_id 仅溯源用——会话删除后卡片保留
+  ///（卡片是独立知识条目，与记忆池「不参与滚动淘汰」同哲学）。
+  /// tags 存逗号分隔文本（LIKE 检索）。
+  static Future<void> _createCardsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS cards (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        source_message_id TEXT,
+        title TEXT NOT NULL DEFAULT '',
+        content TEXT NOT NULL DEFAULT '',
+        tags TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_cards_updated '
+      'ON cards(updated_at)',
     );
   }
 
@@ -864,6 +895,50 @@ class DatabaseService {
     final db = await database;
     final rows = await db.rawQuery('SELECT COUNT(*) AS c FROM memories');
     return (rows.first['c'] as int?) ?? 0;
+  }
+
+  // ===== Cards（M5 对话炼金炉：用户策展知识卡片）=====
+
+  Future<void> insertCard(Card card) async {
+    final db = await database;
+    await db.insert('cards', card.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 全部卡片（按更新时间倒序——最近编辑的在前）
+  Future<List<Card>> getAllCards() async {
+    final db = await database;
+    final rows = await db.query('cards', orderBy: 'updated_at DESC');
+    return rows.map(Card.fromMap).toList();
+  }
+
+  /// 关键词检索（title/content/tags LIKE 匹配，按更新时间倒序）
+  Future<List<Card>> searchCards(String keyword) async {
+    final db = await database;
+    final rows = await db.query(
+      'cards',
+      where: 'title LIKE ? OR content LIKE ? OR tags LIKE ?',
+      whereArgs: ['%$keyword%', '%$keyword%', '%$keyword%'],
+      orderBy: 'updated_at DESC',
+    );
+    return rows.map(Card.fromMap).toList();
+  }
+
+  Future<void> updateCard(Card card) async {
+    final db = await database;
+    await db.update('cards', card.toMap(),
+        where: 'id = ?', whereArgs: [card.id]);
+  }
+
+  Future<void> deleteCard(String id) async {
+    final db = await database;
+    await db.delete('cards', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 清空全部卡片（备份 restore 用）
+  Future<void> deleteAllCards() async {
+    final db = await database;
+    await db.delete('cards');
   }
 
   // ===== HttpTools（T1 自定义 HTTP 工具）=====

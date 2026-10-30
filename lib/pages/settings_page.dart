@@ -21,6 +21,7 @@ import '../services/diagnostic_log.dart';
 import '../services/settings_service.dart';
 import '../services/agent_parser.dart';
 import '../theme/app_theme_id.dart';
+import 'card_library_page.dart';
 import 'http_tool_panel.dart';
 import 'memory_page.dart';
 import 'agent_editor_page.dart';
@@ -42,7 +43,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'Agent 管理', '记忆管理', 'HTTP 工具', 'API 配置', '对话参数', '快捷操作', '备份', '说明'];
+  static const _tabs = ['外观', 'Agent 管理', '记忆管理', '卡片库', 'HTTP 工具', 'API 配置', '对话参数', '快捷操作', '备份', '说明'];
 
   late final SettingsService _settings;
   late final PageController _pageController;
@@ -136,6 +137,7 @@ class _SettingsPageState extends State<SettingsPage> {
                 _buildAppearanceTab(theme),
                 _buildAgentTab(theme),
                 const MemoryPanel(),
+                const CardLibraryPanel(),
                 const HttpToolPanel(),
                 _buildApiTab(theme),
                 _buildParamsTab(theme),
