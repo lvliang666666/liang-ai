@@ -194,5 +194,48 @@ void main() {
         svc.dispose();
       });
     });
+
+    group('P2 widget deep link', () {
+      test('推送 {type: link} → ShareLinkPayload', () async {
+        mockColdStartPayload = null;
+        final svc = ShareReceiveService();
+        final payloads = <SharePayload>[];
+        final sub = svc.stream.listen(payloads.add);
+        await svc.init();
+        await pushPayload({'type': 'link', 'link': 'liangai://chat/abc'});
+        await Future.delayed(Duration.zero);
+        expect(payloads, hasLength(1));
+        expect(payloads.first, isA<ShareLinkPayload>());
+        expect((payloads.first as ShareLinkPayload).link, 'liangai://chat/abc');
+        await sub.cancel();
+        svc.dispose();
+      });
+
+      test('冷启动兜底拉取 link 缓存', () async {
+        mockColdStartPayload = {'type': 'link', 'link': 'liangai://new'};
+        final svc = ShareReceiveService();
+        final payloads = <SharePayload>[];
+        final sub = svc.stream.listen(payloads.add);
+        await svc.init();
+        await Future.delayed(Duration.zero);
+        expect(payloads, hasLength(1));
+        expect((payloads.first as ShareLinkPayload).link, 'liangai://new');
+        await sub.cancel();
+        svc.dispose();
+      });
+
+      test('link 为空串被忽略', () async {
+        mockColdStartPayload = null;
+        final svc = ShareReceiveService();
+        final payloads = <SharePayload>[];
+        final sub = svc.stream.listen(payloads.add);
+        await svc.init();
+        await pushPayload({'type': 'link', 'link': ''});
+        await Future.delayed(Duration.zero);
+        expect(payloads, isEmpty);
+        await sub.cancel();
+        svc.dispose();
+      });
+    });
   });
 }
