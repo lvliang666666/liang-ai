@@ -137,6 +137,25 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 承诺跟进（P3：对话中提取承诺，到期未完成时提醒一次） =====
+  // 开 = 会话结束后台提取承诺 + 跨天首开扫描到期承诺弹跟进 Sheet；
+  // 关 = 不提取不扫描（已入库的承诺保留，面板仍可看）。默认开
+  static const _kCommitmentFollowUp = 'commitment_follow_up';
+  bool get commitmentFollowUp =>
+      _prefs.getBool(_kCommitmentFollowUp) ?? true;
+  Future<void> setCommitmentFollowUp(bool v) async {
+    if (v == commitmentFollowUp) return;
+    await _prefs.setBool(_kCommitmentFollowUp, v);
+    notifyListeners();
+  }
+
+  // 上次弹出承诺跟进的日期（yyyy-MM-dd）；null = 从未弹过。
+  // 防打扰生命线：每天最多弹一次（与晨间简报同款「打开补算式」状态）
+  static const _kLastFollowUpDate = 'last_follow_up_date';
+  String? get lastFollowUpDate => _prefs.getString(_kLastFollowUpDate);
+  Future<void> setLastFollowUpDate(String v) =>
+      _prefs.setString(_kLastFollowUpDate, v);
+
   // ===== 剪贴板建议（F9：聚焦时检测剪贴板长文本浮出「帮你总结？」胶囊） =====
   // 开 = 输入框聚焦且剪贴板有 ≥200 字文本时提示；关 = 不检测不提示。
   // 默认开

@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
+import '../models/commitment.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
 import '../models/agent.dart' as agent_model;
@@ -17,6 +18,7 @@ import '../providers/sessions_provider.dart';
 import '../providers/agent_provider.dart';
 import '../services/api_service.dart';
 import '../services/card_forge_service.dart';
+import '../services/commitment_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_extraction_service.dart';
 import '../services/morning_briefing_service.dart';
@@ -34,6 +36,7 @@ import '../utils/transitions.dart';
 import '../widgets/app_bottom_sheet.dart';
 import '../widgets/app_toast.dart';
 import '../widgets/chat_input_bar.dart';
+import '../widgets/commitment_follow_up_sheet.dart';
 import '../widgets/gesture_drawer.dart';
 import '../widgets/home/chat_message_list.dart';
 import '../widgets/home/home_input_bar.dart';
@@ -119,6 +122,11 @@ class _HomePageState extends State<HomePage> {
     // 生成完成才弹；开关关闭/当天已生成过则零操作）
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _maybeShowMorningBriefing();
+    });
+    // P3 承诺跟进：跨天首开扫描到期承诺，有则弹跟进 Sheet（排在晨报
+    // 之后——两个弹层不叠加，晨报先弹，跟进 Sheet 等晨报关闭再弹）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeShowCommitmentFollowUp();
     });
     // 聚焦根治：键盘收起（ViewInsets 归零）时自动退出聚焦。
     // 场景：用户点输入框聚焦 → 点 tag 弹层（键盘收起）→ 弹层关闭后
@@ -307,11 +315,11 @@ class _HomePageState extends State<HomePage> {
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
-  /// M2 自动记忆沉淀 + M4 情景记忆：会话结束（切走/退出聊天态）时
-  /// 后台提取记忆与生成会话摘要
+  /// M2 自动记忆沉淀 + M4 情景记忆 + P3 承诺提取：会话结束（切走/
+  /// 退出聊天态）时后台提取
   ///
   /// fire-and-forget：不阻塞切换动画；各自开关关闭/正在流式/无
-  /// user+assistant 交换时跳过。两个服务共用一次自建 ApiService
+  /// user+assistant 交换时跳过。三个服务共用一次自建 ApiService
   /// （会话 provider 的 Key 从 DB 注水），与 ChatProvider 的连接池
   /// 互不影响；失败静默（后台任务不打扰）。
   void _extractMemoryInBackground(ChatProvider chat) {
@@ -319,7 +327,8 @@ class _HomePageState extends State<HomePage> {
     if (chat.isStreaming) return;
     final doMemory = settings.autoMemory;
     final doSummary = settings.episodicMemory;
-    if (!doMemory && !doSummary) return;
+    final doCommitment = settings.commitmentFollowUp;
+    if (!doMemory && !doSummary && !doCommitment) return;
     final messages = List<ChatMessage>.of(chat.messages);
     final profile = chat.profile;
     final model = chat.model;
@@ -351,6 +360,18 @@ class _HomePageState extends State<HomePage> {
             profile: profile,
             model: model,
             sessionTitle: sessionTitle,
+          );
+        }
+        // P3 承诺提取：与记忆同源（对话文本），独立开关
+        if (doCommitment) {
+          await CommitmentService(
+            api: api,
+            db: DatabaseService.instance,
+          ).extractAndSave(
+            messages: messages,
+            profile: profile,
+            model: model,
+            sessionId: sessionId,
           );
         }
       } finally {
@@ -402,6 +423,65 @@ class _HomePageState extends State<HomePage> {
       // prefs 不可用（测试环境）——widget 简报行静默降级
     }
     await showMorningBriefingSheet(context, briefing);
+  }
+
+  /// P3 承诺跟进：跨天首开扫描到期承诺，有则生成跟进语并弹 Sheet
+  ///
+  /// 防打扰生命线（roadmap 原文）：开关可关 + 每天最多弹一次
+  /// （lastFollowUpDate 与晨报同款「打开补算式」状态）+ 点遮罩关闭
+  /// = 剩余承诺保持待跟进（明天再问，不强制处理）。
+  /// 跟进语生成走默认供应商（LLM 失败本地模板兜底）；无到期承诺零操作。
+  Future<void> _maybeShowCommitmentFollowUp() async {
+    final settings = context.read<SettingsService>();
+    if (!settings.commitmentFollowUp) return;
+    final now = DateTime.now();
+    final today = CommitmentService.dateKey(now);
+    if (settings.lastFollowUpDate == today) return;
+
+    final db = DatabaseService.instance;
+    final due = await CommitmentService(api: ApiService(
+      baseUrl: 'unused',
+      apiKey: 'unused',
+    ), db: db).scanDue(now: now);
+    if (!mounted || due.isEmpty) return;
+
+    // 跟进语生成：默认供应商（失败本地模板兜底）；无供应商全走模板
+    final profiles = await db.getAllProviders();
+    ProviderProfile? profile;
+    String? model;
+    if (profiles.isNotEmpty) {
+      profile = profiles.first;
+      model =
+          profile.defaultModel.isNotEmpty ? profile.defaultModel : 'glm5.1';
+    }
+    final api = profile == null
+        ? null
+        : ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
+    List<Commitment> withFollowUps;
+    try {
+      withFollowUps = await CommitmentService(
+        api: api ?? ApiService(baseUrl: 'unused', apiKey: 'unused'),
+        db: db,
+      ).generateFollowUps(
+        due,
+        profile: profile,
+        model: model,
+        now: now,
+      );
+    } finally {
+      api?.dispose();
+    }
+    if (!mounted) return;
+    // 先落日期再弹：弹出期间崩溃/杀进程不会当天重复打扰
+    await settings.setLastFollowUpDate(today);
+    final toContinue = await showCommitmentFollowUpSheet(context, withFollowUps);
+    // 「继续聊」：跳回承诺来源会话（会话已删静默忽略）
+    if (toContinue != null && mounted) {
+      final sessionId = toContinue.sessionId;
+      if (sessionId != null) {
+        await _openChat(sessionId);
+      }
+    }
   }
 
   /// 按时段问候语
