@@ -1026,6 +1026,22 @@ class _HomePageState extends State<HomePage> {
                                   onSaveAsCard: _saveMessageAsCard,
                                   // F6 同问双答「用这个继续」入口
                                   onChooseDualMessage: _chooseDualForHome,
+                                  // F8 引用溯源：引用 chips 点击查 doc_chunks 原文
+                                  resolveChunk: (docName, page) async {
+                                    final db = DatabaseService.instance;
+                                    final names = await db.getDocNames(
+                                        _chat!.session.id);
+                                    if (!names.contains(docName)) return null;
+                                    final hits = await db.searchDocChunks(
+                                        _chat!.session.id, docName,
+                                        docName: docName, limit: 50);
+                                    // 同页可能多块：拼合返回（原文 Sheet 展示整页）
+                                    final samePage = hits
+                                        .where((c) => c.page == page)
+                                        .toList();
+                                    if (samePage.isEmpty) return null;
+                                    return samePage.first;
+                                  },
                                 ),
                               ),
                       ),

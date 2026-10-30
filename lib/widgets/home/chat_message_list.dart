@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../models/chat_message.dart';
+import '../../models/doc_chunk.dart';
 import '../../providers/chat_provider.dart';
 import '../../utils/haptics.dart';
 import '../message_bubble.dart';
@@ -32,6 +33,7 @@ class ChatMessageList extends StatefulWidget {
     this.onRegenerateMessage,
     this.onSaveAsCard,
     this.onChooseDualMessage,
+    this.resolveChunk,
   });
 
   /// 会话身份 key：AnimatedSwitcher 据此判断是否播过渡
@@ -56,6 +58,10 @@ class ChatMessageList extends StatefulWidget {
   /// F6 同问双答「用这个继续」（待选择态 assistant 气泡按钮入口；
   /// null = 无选择能力）
   final ValueChanged<ChatMessage>? onChooseDualMessage;
+
+  /// F8 引用溯源：按 (docName, page) 查回 doc_chunks 原文块（null =
+  /// 无检索能力，引用 chips 纯展示不可点）
+  final Future<DocChunk?> Function(String docName, int page)? resolveChunk;
 
   @override
   State<ChatMessageList> createState() => ChatMessageListState();
@@ -417,6 +423,8 @@ class ChatMessageListState extends State<ChatMessageList> {
                                         widget.onChooseDualMessage != null
                                     ? () => widget.onChooseDualMessage!(msg)
                                     : null,
+                                // F8 引用溯源：assistant 气泡引用 chips 点击查原文
+                                resolveChunk: widget.resolveChunk,
                               ),
                             ],
                           );

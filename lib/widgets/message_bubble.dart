@@ -9,6 +9,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/chat_message.dart';
+import '../models/doc_chunk.dart';
 import '../models/tool_call.dart';
 import '../services/file_export_service.dart';
 import '../services/settings_service.dart';
@@ -16,6 +17,7 @@ import '../utils/haptics.dart';
 import 'app_bottom_sheet.dart';
 import 'app_toast.dart';
 import 'attachment_thumbnail.dart';
+import 'citation_chips.dart';
 import 'code_block_widget.dart';
 import 'swipe_action.dart';
 import 'thinking_block.dart';
@@ -55,6 +57,7 @@ class MessageBubble extends StatefulWidget {
     this.onRegenerate,
     this.onSaveAsCard,
     this.onChooseDual,
+    this.resolveChunk,
   });
 
   final ChatMessage message;
@@ -99,6 +102,10 @@ class MessageBubble extends StatefulWidget {
   /// F6 同问双答「用这个继续」（仅待选择态的 assistant 消息，null =
   /// 无选择能力——姊妹气泡上的按钮不显示，普通消息不受影响）
   final VoidCallback? onChooseDual;
+
+  /// F8 引用溯源：按 (docName, page) 查回 doc_chunks 原文块（null =
+  /// 无检索能力，引用 chips 纯展示不可点）
+  final Future<DocChunk?> Function(String docName, int page)? resolveChunk;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -468,6 +475,13 @@ class _MessageBubbleState extends State<MessageBubble> {
                           codeBuilder: (context, name, code, closed) =>
                               CodeBlockWidget(code: code, language: name),
                         ),
+                // F8 引用来源 chips：回答含【文件名·第N页】标注时显示
+                //（流式中不显示——标注随打字机逐字出现会闪烁）
+                if (!isStreaming && message.role == 'assistant')
+                  CitationChips(
+                    content: message.content,
+                    resolveChunk: widget.resolveChunk,
+                  ),
                 // 流式中正文还没来：显示光标动画占位
                 if (isStreaming &&
                     message.content.isEmpty &&
