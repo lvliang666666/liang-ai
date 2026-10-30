@@ -146,7 +146,13 @@ class ChatProvider extends ChangeNotifier {
   /// 本轮发起请求前的 prompt 估算（订阅前算好，供无 usage 时兜底）
   int _promptEstimate = 0;
 
-  /// dispose 标记：loop 在后台推进，dispose 后不再通知 UI
+  /// dispose 标记：loop 在后台推进，dispose 后不再通知 UI，也不再碰 DB
+  ///
+  /// CI 取证（run 40973938298）：fire-and-forget loop 在测试 tearDown
+  /// （dispose + db.close）后仍会推进——挂起中的工具轮写库链在下一个
+  /// 用例 initForTest 换库后恢复，把上一用例的残留消息写进新库
+  /// （I4 断言 5 vs 2 的元凶）。dispose 必须是硬边界：loop 各 await
+  /// 恢复点检查此标记，置位即退出，不再产生任何 DB 写。
   bool _disposed = false;
 
   void _notify() {
@@ -460,6 +466,9 @@ class ChatProvider extends ChangeNotifier {
 
   Future<void> _runLoopInner() async {
     for (var iteration = 0; iteration < _maxLoopIterations; iteration++) {
+      // dispose 硬边界：宿主已销毁（切会话/测试 tearDown），立即退出，
+      // 不再创建占位消息、不再发起请求、不再写库
+      if (_disposed) return;
       // 超上限保护：最后一轮注入系统提示强制模型总结
       final forceSummary = iteration == _maxLoopIterations - 1;
 
@@ -590,6 +599,9 @@ class ChatProvider extends ChangeNotifier {
   /// 执行工具轮：assistant 消息（含 tool_calls）落库 → 逐个执行 →
   /// 结果消息落库 → 返回是否继续下一轮
   Future<bool> _executeToolRound() async {
+    // dispose 硬边界：completer 恢复后宿主可能已销毁（测试 tearDown
+    // 关库/切会话），继续走会把上一宿主的消息写进新库
+    if (_disposed) return false;
     // 1. 分片累积成完整 ToolCall 列表
     final calls = <ToolCall>[
       for (final entry in _toolCallAccumulators.entries)
@@ -618,11 +630,16 @@ class ChatProvider extends ChangeNotifier {
     _notify();
 
     final results = await _tools!.executeAll(calls);
+    // dispose 硬边界：工具执行期间宿主可能已销毁——结果不再落库，
+    // loop 终止（已落库的 assistant(tool_calls) 保留，与取消同语义）
+    if (_disposed) return false;
     _toolResults = results;
 
     // 4. 每个结果生成 role='tool' 消息落库
     var at = DateTime.now().millisecondsSinceEpoch;
     for (final r in results) {
+      // dispose 硬边界：批量落库中途被销毁，剩余结果不再写库
+      if (_disposed) return false;
       final toolMsg = ChatMessage(
         id: _genId(),
         sessionId: _session.id,
@@ -695,6 +712,9 @@ class ChatProvider extends ChangeNotifier {
   /// 落库带容错：dispose 后 DB 已关时静默（E5 占位残留无害，重启
   /// 扫描会把它标中断，用户重答即清）。
   void _finishStreaming() {
+    // dispose 硬边界：dispose 后 DB 已关（或已被下一用例换库），
+    // 收尾写库只会污染新库——直接放弃，E5 占位残留由启动扫描兜底
+    if (_disposed) return;
     final msg = _streamingMessage;
     if (msg != null) {
       if (msg.content.isNotEmpty ||
@@ -737,6 +757,8 @@ class ChatProvider extends ChangeNotifier {
   /// 不弹错误条，而是尾部显示「连接中断 · 点击续传」胶囊——
   /// 已收内容照常落库展示，用户可一键续传。
   void _interruptStreaming() {
+    // dispose 硬边界：同 _finishStreaming——dispose 后不再写库
+    if (_disposed) return;
     final msg = _streamingMessage;
     if (msg != null &&
         (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
@@ -777,6 +799,8 @@ class ChatProvider extends ChangeNotifier {
 
   /// 出错：保留已收内容落库，显示错误
   void _failStreaming(String message) {
+    // dispose 硬边界：同 _finishStreaming——dispose 后不再写库
+    if (_disposed) return;
     final msg = _streamingMessage;
     if (msg != null && (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
       _stampTokenUsage(msg);
@@ -996,6 +1020,10 @@ class ChatProvider extends ChangeNotifier {
     _disposed = true;
     _subscription?.cancel();
     _cancelToken?.cancel();
+    // dispose 硬边界：后台 loop 的挂起链（工具执行/收尾写库）恢复时
+    // 检查 _disposed 即退出，不再产生任何 DB 写（CI 取证：挂起链在
+    // 测试 tearDown 换库后恢复，把上一用例残留写进新库）
+    _streamingMessage = null;
     // 关闭底层 dio 连接池：切换会话会重建 ChatProvider，不关则每次
     // 切换泄漏一个 HttpClient 实例（连接与内存），累积加重 GC 卡顿
     _api.dispose();
