@@ -14,6 +14,7 @@ import '../models/agent.dart';
 import '../models/tool_call.dart';
 import '../services/agent_service.dart';
 import '../services/api_service.dart';
+import '../services/chat_orchestrator.dart';
 import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
 import '../services/document_index_service.dart';
@@ -25,6 +26,11 @@ import '../services/skill_variables.dart';
 import '../services/tool_registry.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/run_skill_tool.dart';
+
+/// F3/F5 token 估算函数的转发导出（E9 后实现移入 chat_orchestrator.dart；
+/// payload_lens_page 等既有 import chat_provider 的调用方不受影响）
+export '../services/chat_orchestrator.dart'
+    show estimateTextTokens, estimateMessageTokens, estimatePromptTokens;
 
 /// 聊天流式状态
 enum ChatStatus { idle, thinking, answering, toolCalling, error }
@@ -156,9 +162,6 @@ class ChatProvider extends ChangeNotifier {
   /// 当前注册的工具数（测试/调试用）
   int get toolCount => _tools?.length ?? 0;
 
-  /// agentic loop 最大轮数（防死循环 + token 膨胀）
-  static const _maxLoopIterations = 8;
-
   List<ChatMessage> _messages = [];
   ChatStatus _status = ChatStatus.idle;
   String _errorMessage = '';
@@ -181,7 +184,10 @@ class ChatProvider extends ChangeNotifier {
   late ApiService Function(ProviderProfile profile) _dualApiFactory;
 
   CancelToken? _cancelToken;
-  StreamSubscription<SseEvent>? _subscription;
+
+  /// 当前运行中的编排器（E9：stopGeneration/dispose 经它中止本轮流式；
+  /// 一次性对象，每次生成新建，收尾后置 null）
+  ChatOrchestrator? _activeOrchestrator;
   DateTime? _thinkingStart;
 
   /// 本轮生成起始时间（I10：思考+回答全程耗时；工具轮跨轮累计）
@@ -189,13 +195,6 @@ class ChatProvider extends ChangeNotifier {
 
   /// 最近一次收尾的耗时快照（落库后供 UI 角标读取；流式中为 null）
   int? _lastGenerationSeconds;
-
-  /// 本轮 usage 统计（SseUsage 末帧捕获；null = 网关未透传，走估算）
-  int? _roundPromptTokens;
-  int? _roundCompletionTokens;
-
-  /// 本轮发起请求前的 prompt 估算（订阅前算好，供无 usage 时兜底）
-  int _promptEstimate = 0;
 
   /// dispose 标记：loop 在后台推进，dispose 后不再通知 UI，也不再碰 DB
   ///
@@ -209,9 +208,6 @@ class ChatProvider extends ChangeNotifier {
   void _notify() {
     if (!_disposed) notifyListeners();
   }
-
-  /// 工具调用分片累积（按 index 拼接，SseToolCallsFinished 时成完整调用）
-  final Map<int, _ToolCallAccumulator> _toolCallAccumulators = {};
 
   /// 本轮已完成的工具执行结果（UI 卡片渲染用，随 streamingMessage 生命周期）
   List<ToolCallResult> _toolResults = [];
@@ -842,7 +838,9 @@ class ChatProvider extends ChangeNotifier {
     }));
   }
 
-  /// agentic loop：请求 → 流式收包 →（工具调用？执行 → 再请求）→ 收尾
+  /// agentic loop 启动（E9 后为编排器宿主）：保活包装 + 编排器运行 +
+  /// 事件→状态机映射。轮次循环/流式订阅/工具执行/收尾落库全部在
+  /// [ChatOrchestrator]（纯 Dart，可假 service 单测）。
   ///
   /// 每轮创建新的流式 assistant 消息；工具轮结束后 assistant 消息
   /// （含 tool_calls）立即落库，工具结果以 role='tool' 消息落库，
@@ -855,221 +853,141 @@ class ChatProvider extends ChangeNotifier {
       title: _session.title.isEmpty ? 'Liang AI' : _session.title,
     ));
     try {
-      await _runLoopInner();
+      final orchestrator = _buildOrchestrator();
+      _activeOrchestrator = orchestrator;
+      await orchestrator.run(_handleOrchestratorEvent);
     } finally {
+      _activeOrchestrator = null;
       // 所有收尾路径（完成/出错/断流/取消/轮数耗尽）统一释放
       unawaited(GenerationKeepalive.stop());
     }
   }
 
-  Future<void> _runLoopInner() async {
-    for (var iteration = 0; iteration < _maxLoopIterations; iteration++) {
-      // dispose 硬边界：宿主已销毁（切会话/测试 tearDown），立即退出，
-      // 不再创建占位消息、不再发起请求、不再写库
-      if (_disposed) return;
-      // 超上限保护：最后一轮注入系统提示强制模型总结
-      final forceSummary = iteration == _maxLoopIterations - 1;
+  /// 构建编排器：函数依赖注入当前运行时状态（profile/model 可中途
+  /// 切换，每轮请求时实时解析——与旧实现读实例字段一致）
+  ChatOrchestrator _buildOrchestrator() {
+    return ChatOrchestrator(
+      api: _api,
+      sessionId: _session.id,
+      resolveProfile: () => _profile,
+      resolveModel: () => _model,
+      resolveEffort: () => _effectiveEffort,
+      resolveTemperature: () => _effectiveTemperature,
+      resolveRegistry: () => _toolsEnabled ? _tools : null,
+      resolveToolsPayload: () =>
+          _toolsEnabled ? _tools!.toOpenAiTools() : null,
+      buildMessages: (forceSummary) =>
+          _buildApiMessages(forceSummary: forceSummary),
+      refreshMemoryText: _refreshMemoryText,
+      insertMessage: (msg) => _db.insertMessage(msg),
+      deleteMessage: (id) => _db.deleteMessage(id),
+      genId: _genId,
+      isDisposed: () => _disposed,
+      onRoundCancelToken: (token) => _cancelToken = token,
+    );
+  }
 
-      // 创建本轮流式 assistant 消息（E5：interrupted 预置 true——
-      // 占位即「未收尾」，正常收尾时覆写复位）
-      _streamingMessage = ChatMessage(
-        id: _genId(),
-        sessionId: _session.id,
-        role: 'assistant',
-        interrupted: true,
-        createdAt: DateTime.now().millisecondsSinceEpoch,
-      );
-      _status = ChatStatus.thinking;
-      _thinkingStart ??= DateTime.now();
-      // I10：首轮记生成起点（工具轮跨轮累计，不重置）
-      _generationStart ??= DateTime.now();
-      // E5：流式开始即落库占位（interrupted=1）——App 被杀时消息已在
-      // DB，启动扫描能识别「未收尾」；正常收尾时覆写为完整内容
-      _persistQuietly(_db.insertMessage(_streamingMessage!));
-      _notify();
+  /// 编排事件 → UI 状态机映射（E9：宿主唯一职责）
+  ///
+  /// 消息实例由编排器持有并持续变异，宿主把事件映射为状态迁移：
+  /// 占位/增量 → 流式渲染；工具轮消息 → 并入历史；收尾事件 → idle/
+  /// error + 计时复位。编排器已保证收尾只跑一次（_roundSettled 守卫）。
+  void _handleOrchestratorEvent(OrchestratorEvent event) {
+    switch (event) {
+      case OrchRoundStarted(:final message):
+        _streamingMessage = message;
+        _status = ChatStatus.thinking;
+        _thinkingStart ??= DateTime.now();
+        // I10：首轮记生成起点（工具轮跨轮累计，不重置）
+        _generationStart ??= DateTime.now();
+        _notify();
+      case OrchReasoningDelta():
+        if (_status == ChatStatus.thinking) _notify();
+      case OrchContentDelta():
+        _status = ChatStatus.answering;
+        _notify();
+      case OrchToolRoundStarted(:final message):
+        _messages = [..._messages, message];
+        _lastToolCallMessageId = message.id;
+        _streamingMessage = null; // 已并入历史，防 displayMessages 双渲染
+        _status = ChatStatus.toolCalling;
+        _toolResults = [];
+        _notify();
+      case OrchToolResults(:final results, :final messages):
+        _toolResults = results;
+        _messages = [..._messages, ...messages];
+        _status = ChatStatus.thinking;
+        _notify();
+      case OrchToolRoundCancelled():
+        _status = ChatStatus.idle;
+        _notify();
+      case OrchFinished(:final message):
+        _streamingMessage = message;
+        _finishStreaming();
+      case OrchInterrupted(:final message):
+        _streamingMessage = message;
+        _interruptStreaming();
+      case OrchFailed(:final error, :final message):
+        _streamingMessage = message;
+        _failStreaming(error);
+    }
+  }
 
-      // 发起流式请求（Agent system prompt 插入消息头部）
-      _cancelToken = CancelToken();
-      final history = _buildApiMessages(forceSummary: forceSummary);
-      // F3：本轮 token 统计复位 + prompt 估算（订阅前完成，无 await 间隙）
-      _roundPromptTokens = null;
-      _roundCompletionTokens = null;
-      _promptEstimate = estimatePromptTokens(history);
-      final completer = Completer<void>();
-      // 本轮是否已进入工具执行流程（防止 [DONE] 尾随分片重复收尾）
-      var toolRoundStarted = false;
-
-      _subscription = _api
-          .chatStream(
-        profile: _profile,
-        messages: history,
-        model: _model,
-        effort: _effectiveEffort,
-        cancelToken: _cancelToken!,
-        temperature: _effectiveTemperature,
-        tools: _toolsEnabled ? _tools!.toOpenAiTools() : null,
-      )
-          .listen(
-        (event) {
-          switch (event) {
-            case SseDeltaReasoning(:final text):
-              _streamingMessage = _streamingMessage!..reasoning += text;
-              if (_status == ChatStatus.thinking) _notify();
-            case SseDeltaContent(:final text):
-              _streamingMessage = _streamingMessage!..content += text;
-              _status = ChatStatus.answering;
-              _notify();
-            case SseToolCallDelta():
-              _accumulateToolCallFragment(event);
-            case SseUsage(:final promptTokens, :final completionTokens):
-              // F3：网关透传的真实用量（末帧），优先于本地估算
-              _roundPromptTokens = promptTokens;
-              _roundCompletionTokens = completionTokens;
-            case SseToolCallsFinished():
-              toolRoundStarted = true;
-              // 延迟到微任务后 complete：vLLM 在 finish_reason=tool_calls
-              // 之后同批还会发 usage 末帧（+ [DONE]），同步 complete 会让
-              // loop 在 usage 投递前取消订阅（真实用量丢失）。让出微任务
-              // 让同批事件先走完，兼容不发 usage/[DONE] 的服务端。
-              scheduleMicrotask(() {
-                if (!completer.isCompleted) completer.complete();
-              });
-            case SseDone():
-              // 工具轮后服务端常尾随 [DONE]：此时本轮已交给工具流程，忽略
-              if (toolRoundStarted) return;
-              _finishStreaming();
-              if (!completer.isCompleted) completer.complete();
-            case SseInterrupted():
-              // I10 断流：连接断开未收到 [DONE]——保留已收内容落库，
-              // 标记中断态供 UI 显示「连接中断 · 点击续传」
-              if (toolRoundStarted) return;
-              _interruptStreaming();
-              if (!completer.isCompleted) completer.complete();
-            case SseError(:final message):
-              if (toolRoundStarted) return;
-              _failStreaming(message);
-              if (!completer.isCompleted) completer.complete();
-          }
-        },
-        onError: (Object e) {
-          if (e is DioException && e.type == DioExceptionType.cancel) {
-            _finishStreaming(); // 手动停止：保留已收内容
-          } else if (e is ApiException) {
-            _failStreaming(e.message);
-          } else {
-            _failStreaming('请求失败：$e');
-          }
-          if (!completer.isCompleted) completer.complete();
-        },
-        onDone: () {
-          if (isStreaming) _finishStreaming();
-          if (!completer.isCompleted) completer.complete();
-        },
-      );
-
-      await completer.future;
-      // 旧订阅不再需要：广播流下不取消会重复消费下一轮事件
-      await _subscription?.cancel();
-
-      // 流结束后判定：正常收尾 / 工具轮继续 / 出错终止
-      if (_status == ChatStatus.error || _status == ChatStatus.idle) {
-        return; // SseDone / SseError / 取消：loop 结束
+  /// 正常结束：并入历史 + 状态复位（消息落库已由编排器完成）
+  void _finishStreaming() {
+    final msg = _streamingMessage;
+    if (msg != null) {
+      if (msg.generationSeconds != null) {
+        _lastGenerationSeconds = msg.generationSeconds;
       }
-      // toolCalling：执行工具 → 落库 → 下一轮
-      final continueLoop = await _executeToolRound();
-      if (!continueLoop) return;
+      _messages = [..._messages, msg];
     }
-    // 轮数耗尽（理论上 forceSummary 已让模型收尾，这里兜底）
-    _finishStreaming();
-  }
-
-  /// 累积工具调用分片（按 index 拼接：首片 id/name，后续片 arguments 增量）
-  void _accumulateToolCallFragment(SseToolCallDelta event) {
-    final acc = _toolCallAccumulators.putIfAbsent(
-        event.index, () => _ToolCallAccumulator());
-    if (event.id != null) acc.id = event.id!;
-    if (event.name != null) acc.name = event.name!;
-    if (event.argumentsFragment != null) {
-      acc.arguments.write(event.argumentsFragment!);
-    }
-  }
-
-  /// 执行工具轮：assistant 消息（含 tool_calls）落库 → 逐个执行 →
-  /// 结果消息落库 → 返回是否继续下一轮
-  Future<bool> _executeToolRound() async {
-    // dispose 硬边界：completer 恢复后宿主可能已销毁（测试 tearDown
-    // 关库/切会话），继续走会把上一宿主的消息写进新库
-    if (_disposed) return false;
-    // 1. 分片累积成完整 ToolCall 列表
-    final calls = <ToolCall>[
-      for (final entry in _toolCallAccumulators.entries)
-        ToolCall(
-          id: entry.value.id.isEmpty ? 'call_${entry.key}' : entry.value.id,
-          name: entry.value.name,
-          argumentsJson: entry.value.arguments.toString(),
-        ),
-    ];
-    _toolCallAccumulators.clear();
-
-    // 2. 当前 assistant 消息（含 tool_calls + 已收 content/reasoning）落库
-    //（E5 占位覆写：interrupted 复位——工具调用是完整产物，非半截）
-    final assistantMsg = _streamingMessage!;
-    assistantMsg.toolCalls = calls;
-    assistantMsg.interrupted = false;
-    _stampTokenUsage(assistantMsg);
-    await _db.insertMessage(assistantMsg);
-    _messages = [..._messages, assistantMsg];
-    _lastToolCallMessageId = assistantMsg.id;
     _streamingMessage = null;
-
-    // 3. 逐个执行工具（toolCalling 态供 UI 显示进度）
-    _status = ChatStatus.toolCalling;
-    _toolResults = [];
+    _status = ChatStatus.idle;
+    _cancelToken = null;
+    _thinkingStart = null;
+    _generationStart = null;
+    _lastRoundInterrupted = false;
     _notify();
+  }
 
-    final results = await _tools!.executeAll(calls);
-    // dispose 硬边界：工具执行期间宿主可能已销毁——结果不再落库，
-    // loop 终止（已落库的 assistant(tool_calls) 保留，与取消同语义）
-    if (_disposed) return false;
-    _toolResults = results;
-
-    // 4. 每个结果生成 role='tool' 消息落库
-    var at = DateTime.now().millisecondsSinceEpoch;
-    for (final r in results) {
-      // dispose 硬边界：批量落库中途被销毁，剩余结果不再写库
-      if (_disposed) return false;
-      final toolMsg = ChatMessage(
-        id: _genId(),
-        sessionId: _session.id,
-        role: 'tool',
-        content: r.content,
-        toolCallId: r.callId,
-        createdAt: at++,
-      );
-      await _db.insertMessage(toolMsg);
-      _messages = [..._messages, toolMsg];
+  /// 断流收尾（I10）：并入历史 + 标记中断态（消息落库已由编排器完成）
+  void _interruptStreaming() {
+    final msg = _streamingMessage;
+    if (msg != null) {
+      _messages = [..._messages, msg];
     }
-
-    // 5. 取消检查：用户在工具执行期间点了停止 → 终止 loop（已落库保留）
-    if (_cancelToken?.isCancelled == true) {
-      _status = ChatStatus.idle;
-      _cancelToken = null;
-      _notify();
-      return false;
-    }
-
-    // 6. 刷新记忆注入文本（工具轮可能刚存了新记忆；此处已有大量 await，
-    // 不影响「订阅建立前无 await」的时序契约）
-    await _refreshMemoryText();
-
-    // 7. 继续下一轮
-    _status = ChatStatus.thinking;
+    _streamingMessage = null;
+    _status = ChatStatus.idle;
+    _cancelToken = null;
+    _thinkingStart = null;
+    _generationStart = null;
+    _lastRoundInterrupted = true;
     _notify();
-    return true;
+  }
+
+  /// 出错：并入历史 + 显示错误（消息落库已由编排器完成）
+  void _failStreaming(String message) {
+    final msg = _streamingMessage;
+    if (msg != null) {
+      _messages = [..._messages, msg];
+    }
+    _streamingMessage = null;
+    _status = ChatStatus.error;
+    _errorMessage = message;
+    _cancelToken = null;
+    _thinkingStart = null;
+    _generationStart = null;
+    _lastRoundInterrupted = false;
+    _notify();
   }
 
   /// 停止生成（保留已收内容；双答时同时停两侧）
+  ///
+  /// E9：经编排器中止——取消令牌让 dio 抛 cancel 错误走正常收尾，
+  /// 同时断开订阅防止广播流残余事件在收尾后误触发状态迁移
   void stopGeneration() {
+    _activeOrchestrator?.cancel();
     _cancelToken?.cancel();
     _dualCancelToken?.cancel();
   }
@@ -1104,119 +1022,13 @@ class ChatProvider extends ChangeNotifier {
     }));
   }
 
-  /// 正常结束：落库 assistant 消息
-  ///
-  /// 同步改状态 + fire-and-forget 落库（与旧版语义一致：调用方在
-  /// completer 完成后立即读内存态；DB 断言经同一队列天然有序）。
-  /// 落库带容错：dispose 后 DB 已关时静默（E5 占位残留无害，重启
-  /// 扫描会把它标中断，用户重答即清）。
-  void _finishStreaming() {
-    // dispose 硬边界：dispose 后 DB 已关（或已被下一用例换库），
-    // 收尾写库只会污染新库——直接放弃，E5 占位残留由启动扫描兜底
-    if (_disposed) return;
-    final msg = _streamingMessage;
-    if (msg != null) {
-      if (msg.content.isNotEmpty ||
-          msg.reasoning.isNotEmpty ||
-          msg.toolCalls.isNotEmpty) {
-        _stampTokenUsage(msg);
-        _stampDurations(msg);
-        // E5 占位覆写：正常收尾 = interrupted 复位（toMap 写 0，
-        // ConflictAlgorithm.replace 覆盖占位的 1）
-        msg.interrupted = false;
-        _persistQuietly(_db.insertMessage(msg));
-        _messages = [..._messages, msg];
-      } else {
-        // 空消息（取消时刚创建、未收到任何内容）：E5 占位已落库，
-        // 删除之，否则启动扫描会误报「已中断」
-        _persistQuietly(_db.deleteMessage(msg.id));
-      }
-    }
-    _streamingMessage = null;
-    _status = ChatStatus.idle;
-    _cancelToken = null;
-    _toolCallAccumulators.clear();
-    _thinkingStart = null;
-    _generationStart = null;
-    _lastRoundInterrupted = false;
-    _notify();
-  }
-
   /// fire-and-forget 落库的统一容错：失败只 debugPrint（dispose 后
-  /// DB 已关是正常时序，绝不让异常逃到 zone 炸测试/崩溃）
+  /// DB 已关是正常时序，绝不让异常逃到 zone 炸测试/崩溃）。
+  /// E9 后仅双答（F6）路径使用——主 loop 落库容错已移入编排器
   void _persistQuietly(Future<void> future) {
     future.catchError((Object e) {
       debugPrint('ChatProvider 落库失败（已忽略）：$e');
     });
-  }
-
-  /// 断流收尾（I10）：保留已收内容落库 + 标记中断态
-  ///
-  /// 与 [_failStreaming] 的区别：断流不是错误（网络抖动是常态），
-  /// 不弹错误条，而是尾部显示「连接中断 · 点击续传」胶囊——
-  /// 已收内容照常落库展示，用户可一键续传。
-  void _interruptStreaming() {
-    // dispose 硬边界：同 _finishStreaming——dispose 后不再写库
-    if (_disposed) return;
-    final msg = _streamingMessage;
-    if (msg != null &&
-        (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
-      _stampTokenUsage(msg);
-      _stampDurations(msg);
-      msg.interrupted = true; // E5：中断消息持久标记（重启后仍可识别）
-      _persistQuietly(_db.insertMessage(msg));
-      _messages = [..._messages, msg];
-    }
-    _streamingMessage = null;
-    _status = ChatStatus.idle;
-    _cancelToken = null;
-    _toolCallAccumulators.clear();
-    _thinkingStart = null;
-    _generationStart = null;
-    _lastRoundInterrupted = true;
-    _notify();
-  }
-
-  /// 耗时盖章（I10）：思考秒数 + 生成总秒数写到消息上（落库前调用）。
-  /// 思考耗时 = 思考起点到首个正文增量（无正文 = 到收尾）；
-  /// 生成耗时 = 本轮生成起点到收尾（工具轮跨轮累计）
-  void _stampDurations(ChatMessage msg) {
-    final thinkStart = _thinkingStart;
-    if (thinkStart != null) {
-      // 思考结束点：进入 answering 后 _thinkingStart 不变，这里用
-      // 「首个 content 增量到达时刻」近似——收尾时若已有正文，思考
-      // 时长按 reasoning 结束计；纯思考无正文按收尾时刻计
-      msg.thinkingSeconds = DateTime.now().difference(thinkStart).inSeconds;
-    }
-    final genStart = _generationStart;
-    if (genStart != null) {
-      final seconds = DateTime.now().difference(genStart).inSeconds;
-      msg.generationSeconds = seconds;
-      _lastGenerationSeconds = seconds;
-    }
-  }
-
-  /// 出错：保留已收内容落库，显示错误
-  void _failStreaming(String message) {
-    // dispose 硬边界：同 _finishStreaming——dispose 后不再写库
-    if (_disposed) return;
-    final msg = _streamingMessage;
-    if (msg != null && (msg.content.isNotEmpty || msg.reasoning.isNotEmpty)) {
-      _stampTokenUsage(msg);
-      _stampDurations(msg);
-      msg.interrupted = true; // E5：错误半截消息同样标中断（可重答）
-      _persistQuietly(_db.insertMessage(msg));
-      _messages = [..._messages, msg];
-    }
-    _streamingMessage = null;
-    _status = ChatStatus.error;
-    _errorMessage = message;
-    _cancelToken = null;
-    _toolCallAccumulators.clear();
-    _thinkingStart = null;
-    _generationStart = null;
-    _lastRoundInterrupted = false;
-    _notify();
   }
 
   /// 清除错误状态
@@ -1438,20 +1250,6 @@ class ChatProvider extends ChangeNotifier {
     ];
   }
 
-  /// 把本轮 token 用量写到 assistant 消息上（落库前调用）
-  ///
-  /// 优先网关透传的真实 usage；无 usage 时本地估算兜底：
-  /// prompt 用订阅前算好的 [_promptEstimate]，completion 按
-  /// reasoning+content 字符数估。工具轮的 assistant 消息同样盖章。
-  void _stampTokenUsage(ChatMessage msg) {
-    msg.promptTokens =
-        _roundPromptTokens ?? (_promptEstimate > 0 ? _promptEstimate : null);
-    final completionEstimate =
-        estimateTextTokens(msg.reasoning + msg.content);
-    msg.completionTokens = _roundCompletionTokens ??
-        (completionEstimate > 0 ? completionEstimate : null);
-  }
-
   /// F5 上下文透视镜：预览下一轮请求将发送的完整 messages payload
   ///
   /// 复用 [_buildApiMessages]（Agent system prompt + 记忆注入 + 全部历史），
@@ -1559,7 +1357,7 @@ class ChatProvider extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _subscription?.cancel();
+    _activeOrchestrator?.cancel();
     _cancelToken?.cancel();
     _dualCancelToken?.cancel();
     // dispose 硬边界：后台 loop 的挂起链（工具执行/收尾写库）恢复时
@@ -1571,13 +1369,6 @@ class ChatProvider extends ChangeNotifier {
     _api.dispose();
     super.dispose();
   }
-}
-
-/// 工具调用分片累积器（OpenAI 流式：首片 id/name，后续片 arguments 增量）
-class _ToolCallAccumulator {
-  String id = '';
-  String name = '';
-  final StringBuffer arguments = StringBuffer();
 }
 
 /// T2 run_skill 委派桥宿主实现：从 ChatProvider 运行时状态取
@@ -1610,57 +1401,4 @@ class _HostRunSkillDelegate implements RunSkillDelegate {
 
   @override
   List<ToolHandler> toolCatalog() => _host!._toolCatalog;
-}
-
-/// 本地 token 估算：CJK 字符 ≈1 token/字，其他 ≈1 token/4 字符
-///
-/// 网关不透传 usage 时的兜底（F3）。粗估但量级正确——水位仪表盘
-/// 的意义在趋势与相对水位，不在精确对账。
-int estimateTextTokens(String text) {
-  if (text.isEmpty) return 0;
-  var cjk = 0;
-  var other = 0;
-  for (final rune in text.runes) {
-    // CJK 统一表意文字 + 扩展 A + 兼容表意区
-    if ((rune >= 0x4E00 && rune <= 0x9FFF) ||
-        (rune >= 0x3400 && rune <= 0x4DBF) ||
-        (rune >= 0xF900 && rune <= 0xFAFF)) {
-      cjk++;
-    } else {
-      other++;
-    }
-  }
-  return cjk + (other / 4).ceil();
-}
-
-/// 估算一条 API 消息的 token 数（content 字符串或多模态数组）
-///
-/// 多模态：text 部分按文本估算，图片按定额 800 token/张
-/// （glm-4v 类视觉模型典型值，量级参考用）。
-int estimateMessageTokens(Map<String, Object?> message) {
-  final content = message['content'];
-  if (content is String) return estimateTextTokens(content);
-  if (content is List) {
-    var sum = 0;
-    for (final part in content) {
-      if (part is Map<String, dynamic>) {
-        final text = part['text'];
-        if (text is String) sum += estimateTextTokens(text);
-        if (part['type'] == 'image_url') sum += 800;
-      }
-    }
-    return sum;
-  }
-  return 0;
-}
-
-/// 估算整条请求的 prompt token（system + 记忆 + 历史 + 附加提示）
-int estimatePromptTokens(List<Map<String, Object?>> messages) {
-  var sum = 0;
-  for (final m in messages) {
-    sum += estimateMessageTokens(m);
-    // 每条消息的角色/结构开销（OpenAI 经验值）
-    sum += 4;
-  }
-  return sum;
 }
