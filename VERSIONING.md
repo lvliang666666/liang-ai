@@ -8,7 +8,17 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.18.0**（2026-10-29 发布）
+**当前版本：v2.19.0**（2026-10-30 发布）
+
+v2.19.0 在 v2.18.0 基础上新增（feat/card-forge 分支，roadmap M5 → MINOR）：
+
+- **M5 对话炼金炉**：聊天中长按任意消息（user/assistant 均可）→「沉淀为卡片」——CardForgeService 用会话同款供应商离线提炼（low 档低温 + 强 JSON prompt），解析失败回喂重试一次，两次失败本地回退（首行/80 字为标题，全文为正文）——提炼是增强而非门槛，离线/网关异常不阻塞存卡。卡片是用户策展资产：可编辑、可搜索、不参与任何淘汰，与记忆池（AI 自动沉淀、参与衰减）明确区分
+- **DB v18**：cards 表（id/session_id/source_message_id/title/content/tags/created_at/updated_at + updated_at 索引），会话删除后卡片保留（独立知识条目）；随机后缀用真随机（Windows 时钟粒度 ~15ms 下时钟位后缀撞车 → replace 覆盖丢卡，CI 实测复现后修复）
+- **卡片库面板**：设置页新增「卡片库」tab——搜索（标题/正文/标签）+ 卡片列表（标题 + 正文预览 + 标签 chips）+ 编辑弹窗（空标题就地拦截不关弹窗）+ 单删/清空确认；空态引导「聊天中长按消息 → 沉淀为卡片」
+- **备份集成**：备份 JSON 加 cards 段（用户策展资产换机不丢），导入清空+重灌，老备份无 cards 段向后兼容
+- 888 项测试全绿（新增 38：DB 34 + 提炼 17 + 卡片库 UI 9 + 长按菜单 4 + 备份 2 调整）；flutter analyze 零 error/warning（53 条 info 持平）
+
+### v2.18.0（2026-10-29）
 
 v2.18.0 在 v2.17.0 基础上新增（feat/capsule-collapse-ci 分支，roadmap I9+E11+E7 → MINOR）：
 

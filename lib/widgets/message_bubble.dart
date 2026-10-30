@@ -53,6 +53,7 @@ class MessageBubble extends StatefulWidget {
     this.onEdit,
     this.onQuote,
     this.onRegenerate,
+    this.onSaveAsCard,
   });
 
   final ChatMessage message;
@@ -90,6 +91,9 @@ class MessageBubble extends StatefulWidget {
   /// 重答（I3：仅 assistant 消息，null = 无重答能力）——删除该回答
   /// 及其后消息，复用原 user 消息重新生成
   final VoidCallback? onRegenerate;
+
+  /// 沉淀为卡片（M5 对话炼金炉：user/assistant 消息均可，null = 无沉淀能力）
+  final VoidCallback? onSaveAsCard;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -479,6 +483,7 @@ class _MessageBubbleState extends State<MessageBubble> {
       BuildContext context, ChatMessage message, Offset pressPosition) async {
     final canEdit = widget.onEdit != null && !widget.isStreaming;
     final canPin = widget.onTogglePin != null;
+    final canCard = widget.onSaveAsCard != null;
     final action = await showAppBottomSheet<String>(
       context: context,
       builder: (context) => SheetScaffold(
@@ -489,6 +494,9 @@ class _MessageBubbleState extends State<MessageBubble> {
             _actionTile(context, Icons.copy_outlined, '复制', 'copy'),
             if (canEdit)
               _actionTile(context, Icons.edit_outlined, '编辑重发', 'edit'),
+            if (canCard)
+              _actionTile(
+                  context, Icons.style_outlined, '沉淀为卡片', 'card'),
             if (canPin)
               _actionTile(
                 context,
@@ -511,6 +519,10 @@ class _MessageBubbleState extends State<MessageBubble> {
     }
     if (action == 'edit') {
       widget.onEdit?.call();
+      return;
+    }
+    if (action == 'card') {
+      widget.onSaveAsCard?.call();
       return;
     }
     if (action == 'pin') {
@@ -544,6 +556,7 @@ class _MessageBubbleState extends State<MessageBubble> {
     final canPin = widget.onTogglePin != null;
     final canQuote = widget.onQuote != null && !widget.isStreaming;
     final canRegen = widget.onRegenerate != null && !widget.isStreaming;
+    final canCard = widget.onSaveAsCard != null;
     final action = await showAppBottomSheet<String>(
       context: context,
       builder: (context) => SheetScaffold(
@@ -558,6 +571,9 @@ class _MessageBubbleState extends State<MessageBubble> {
                   context, Icons.format_quote_outlined, '引用', 'quote'),
             if (canRegen)
               _actionTile(context, Icons.refresh_outlined, '重答', 'regen'),
+            if (canCard)
+              _actionTile(
+                  context, Icons.style_outlined, '沉淀为卡片', 'card'),
             if (canPin)
               _actionTile(
                 context,
@@ -598,6 +614,11 @@ class _MessageBubbleState extends State<MessageBubble> {
 
     if (action == 'regen') {
       widget.onRegenerate?.call();
+      return;
+    }
+
+    if (action == 'card') {
+      widget.onSaveAsCard?.call();
       return;
     }
 

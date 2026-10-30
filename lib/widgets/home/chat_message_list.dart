@@ -30,6 +30,7 @@ class ChatMessageList extends StatefulWidget {
     this.onEditMessage,
     this.onQuoteMessage,
     this.onRegenerateMessage,
+    this.onSaveAsCard,
   });
 
   /// 会话身份 key：AnimatedSwitcher 据此判断是否播过渡
@@ -46,6 +47,10 @@ class ChatMessageList extends StatefulWidget {
 
   /// 重答（I3：assistant 消息长按菜单「重答」入口；null = 无重答能力）
   final ValueChanged<ChatMessage>? onRegenerateMessage;
+
+  /// 沉淀为卡片（M5：user/assistant 消息长按菜单「沉淀为卡片」入口；
+  /// null = 无沉淀能力）
+  final ValueChanged<ChatMessage>? onSaveAsCard;
 
   @override
   State<ChatMessageList> createState() => ChatMessageListState();
@@ -389,6 +394,10 @@ class ChatMessageListState extends State<ChatMessageList> {
                                 onRegenerate: !msg.isUser &&
                                         widget.onRegenerateMessage != null
                                     ? () => widget.onRegenerateMessage!(msg)
+                                    : null,
+                                // M5 沉淀为卡片：user/assistant 消息均可
+                                onSaveAsCard: widget.onSaveAsCard != null
+                                    ? () => widget.onSaveAsCard!(msg)
                                     : null,
                               ),
                             ],

@@ -194,4 +194,71 @@ void main() {
           findsOneWidget);
     });
   });
+
+  group('M5 沉淀为卡片', () {
+    testWidgets('assistant 菜单：onSaveAsCard 提供时显示，点击触发回调', (tester) async {
+      var saved = false;
+      await tester.pumpWidget(wrap(MessageBubble(
+        message: msg('回答内容'),
+        onSaveAsCard: () => saved = true,
+      )));
+      await tester.pump();
+
+      await tester.longPress(find.text('回答内容'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('沉淀为卡片'), findsOneWidget);
+
+      await tester.tap(find.text('沉淀为卡片'));
+      await tester.pumpAndSettle();
+
+      expect(saved, isTrue);
+      expect(find.text('消息操作'), findsNothing);
+    });
+
+    testWidgets('assistant 菜单：onSaveAsCard 为 null 不显示该项', (tester) async {
+      await tester.pumpWidget(wrap(MessageBubble(
+        message: msg('回答内容'),
+        onQuote: () {},
+      )));
+      await tester.pump();
+
+      await tester.longPress(find.text('回答内容'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('沉淀为卡片'), findsNothing);
+    });
+
+    testWidgets('user 菜单：onSaveAsCard 提供时显示，点击触发回调', (tester) async {
+      var saved = false;
+      await tester.pumpWidget(wrap(MessageBubble(
+        message: msg('我的提问', role: 'user'),
+        onSaveAsCard: () => saved = true,
+      )));
+      await tester.pump();
+
+      await tester.longPress(find.text('我的提问'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('沉淀为卡片'), findsOneWidget);
+
+      await tester.tap(find.text('沉淀为卡片'));
+      await tester.pumpAndSettle();
+
+      expect(saved, isTrue);
+    });
+
+    testWidgets('user 菜单：onSaveAsCard 为 null 不显示该项', (tester) async {
+      await tester.pumpWidget(wrap(MessageBubble(
+        message: msg('我的提问', role: 'user'),
+        onEdit: () {},
+      )));
+      await tester.pump();
+
+      await tester.longPress(find.text('我的提问'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('沉淀为卡片'), findsNothing);
+    });
+  });
 }

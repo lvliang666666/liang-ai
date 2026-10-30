@@ -1,5 +1,6 @@
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
+import 'package:ai_chat_app/models/card.dart';
 import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -217,7 +218,7 @@ void main() {
       final migrated = await openTestDbFromVersion(1);
 
       // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/
-      // memories/http_tools/context_summaries/session_summaries）
+      // memories/http_tools/context_summaries/session_summaries/cards）
       final tables = await migrated.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
       );
@@ -232,11 +233,13 @@ void main() {
           'http_tools',
           'context_summaries',
           'session_summaries',
+          'cards',
         ]),
       );
       // v13 起新增 FTS5 虚表 + 影子表（_data/_idx/_content/_docsize/_config）
-      // + rowid 映射表；v16 起新增 session_summaries（8 业务表 + 7 FTS 相关）
-      expect(tables.length, 15); // agents 表应已在 v6 迁移中删除
+      // + rowid 映射表；v16 起新增 session_summaries；v18 起新增 cards
+      //（9 业务表 + 7 FTS 相关）
+      expect(tables.length, 16); // agents 表应已在 v6 迁移中删除
 
       // 迁移后可正常写入读出（走一遍核心链路）
       await migrated.insert('sessions', {
@@ -885,6 +888,189 @@ void main() {
       final parsed = Memory.fromMap(row);
       expect(parsed.layer, Memory.layerProfile);
       await db.close();
+    });
+
+    test('v17 老库迁移到 v18：新建 cards 表（M5）', () async {
+      // 手写 v17 历史 schema（无 cards 表），升级走生产 onUpgrade 本尊。
+      // memories 表含 layer 列（v17 已迁移），v18 步只建 cards
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v17_to_v18_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 17),
+      );
+      await old.execute('''
+        CREATE TABLE memories (
+          id TEXT PRIMARY KEY,
+          content TEXT NOT NULL,
+          tag TEXT,
+          source_skill TEXT,
+          pinned INTEGER,
+          layer TEXT NOT NULL DEFAULT 'event',
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('memories', {
+        'id': 'mem1',
+        'content': '老记忆',
+        'tag': null,
+        'source_skill': null,
+        'pinned': 0,
+        'layer': 'event',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // cards 表已建，可写可读（M5 卡片行）
+      await upgraded.insert('cards', {
+        'id': 'c1',
+        'session_id': 's1',
+        'source_message_id': 'm1',
+        'title': '报销流程要点',
+        'content': '发票抬头必须与公司名一致',
+        'tags': '财务,报销',
+        'created_at': 1,
+        'updated_at': 1,
+      });
+      final rows = await upgraded.query('cards');
+      expect(rows.single['title'], '报销流程要点');
+      expect(rows.single['tags'], '财务,报销');
+
+      // 老记忆数据无损
+      final mems = await upgraded.query('memories');
+      expect(mems.single['content'], '老记忆');
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
+
+    test('v18 新装库：cards 表存在且索引齐全', () async {
+      final db = await openTestDb();
+      final cols = await db.rawQuery('PRAGMA table_info(cards)');
+      expect(
+        cols.map((c) => c['name']).toList(),
+        containsAll([
+          'id',
+          'session_id',
+          'source_message_id',
+          'title',
+          'content',
+          'tags',
+          'created_at',
+          'updated_at',
+        ]),
+      );
+      final idx = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_cards_updated'",
+      );
+      expect(idx, isNotEmpty, reason: 'v18 新装库 cards 必须有 updated_at 索引');
+      await db.close();
+    });
+  });
+
+  group('Cards CRUD（M5 对话炼金炉）', () {
+    Card card(String id, {String title = '标题', String content = '正文',
+            String? tags, int at = 1000}) =>
+        Card(
+          id: id,
+          sessionId: 's1',
+          sourceMessageId: 'm1',
+          title: title,
+          content: content,
+          tags: tags,
+          createdAt: at,
+          updatedAt: at,
+        );
+
+    test('插入 + 全量读取（按更新时间倒序）', () async {
+      await db.insertCard(card('c1', title: '旧卡', at: 1000));
+      await db.insertCard(card('c2', title: '新卡', at: 2000));
+
+      final all = await db.getAllCards();
+      expect(all.length, 2);
+      expect(all.first.id, 'c2', reason: 'updated_at 倒序：新卡在前');
+      expect(all.last.id, 'c1');
+    });
+
+    test('toMap/fromMap 往返一致（含可空字段）', () async {
+      final withAll = card('c1', tags: '财务,报销');
+      final noTags = card('c2', tags: null);
+
+      await db.insertCard(withAll);
+      await db.insertCard(noTags);
+
+      final all = await db.getAllCards();
+      final parsedA = all.firstWhere((c) => c.id == 'c1');
+      expect(parsedA.sessionId, 's1');
+      expect(parsedA.sourceMessageId, 'm1');
+      expect(parsedA.title, '标题');
+      expect(parsedA.tags, '财务,报销');
+      expect(parsedA.tagList, ['财务', '报销']);
+
+      final parsedB = all.firstWhere((c) => c.id == 'c2');
+      expect(parsedB.tags, isNull);
+      expect(parsedB.tagList, isEmpty);
+    });
+
+    test('关键词检索命中 title/content/tags', () async {
+      await db.insertCard(card('c1', title: '报销流程要点'));
+      await db.insertCard(card('c2', content: '发票抬头必须一致'));
+      await db.insertCard(card('c3', tags: '财务'));
+      await db.insertCard(card('c4', title: '无关卡片'));
+
+      final hits = await db.searchCards('报销');
+      expect(hits.map((c) => c.id), ['c1']);
+      final hits2 = await db.searchCards('发票');
+      expect(hits2.map((c) => c.id), ['c2']);
+      final hits3 = await db.searchCards('财务');
+      expect(hits3.map((c) => c.id), ['c3']);
+      expect((await db.searchCards('不存在词')), isEmpty);
+    });
+
+    test('更新卡片：内容生效且 updated_at 刷新排序', () async {
+      await db.insertCard(card('c1', title: '旧标题', at: 1000));
+      await db.insertCard(card('c2', title: '中间卡', at: 2000));
+
+      final c1 = (await db.getAllCards()).firstWhere((c) => c.id == 'c1');
+      await db.updateCard(c1.copyWith(title: '新标题', updatedAt: 3000));
+
+      final all = await db.getAllCards();
+      expect(all.first.id, 'c1', reason: '更新后 updated_at 最大，排最前');
+      expect(all.first.title, '新标题');
+      expect(all.first.createdAt, 1000, reason: 'createdAt 不可变');
+    });
+
+    test('删除单条 + 清空全部', () async {
+      await db.insertCard(card('c1'));
+      await db.insertCard(card('c2'));
+
+      await db.deleteCard('c1');
+      expect((await db.getAllCards()).map((c) => c.id), ['c2']);
+
+      await db.deleteAllCards();
+      expect(await db.getAllCards(), isEmpty);
+    });
+
+    test('会话删除后卡片保留（卡片是独立知识条目）', () async {
+      await db.insertSession(session('s1'));
+      await db.insertCard(card('c1'));
+
+      await db.deleteSession('s1');
+      expect(await db.getSession('s1'), isNull);
+      expect((await db.getAllCards()).length, 1,
+          reason: '卡片不随会话级联删除（与 session_summaries 派生数据不同）');
     });
   });
 }

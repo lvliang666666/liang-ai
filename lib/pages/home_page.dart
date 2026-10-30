@@ -15,6 +15,7 @@ import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/agent_provider.dart';
 import '../services/api_service.dart';
+import '../services/card_forge_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_extraction_service.dart';
 import '../services/session_summary_service.dart';
@@ -168,6 +169,41 @@ class _HomePageState extends State<HomePage> {
     if (hour < 13) return '中午好';
     if (hour < 18) return '下午好';
     return '晚上好';
+  }
+
+  /// M5 对话炼金炉：把消息沉淀为知识卡片
+  ///
+  /// 提炼走会话同款供应商与模型（low 档低温，失败本地回退）；
+  /// 成功 Toast 提示并可跳转卡片库。fire-and-forget：提炼期间用户
+  /// 可继续操作，完成时 Toast 反馈。
+  void _saveMessageAsCard(ChatMessage msg) {
+    final chat = _chat;
+    if (chat == null) return;
+    Haptics.light();
+    final profile = chat.profile;
+    final model = chat.model;
+    final sessionId = chat.session.id;
+    unawaited(() async {
+      final api = ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
+      try {
+        final card = await CardForgeService(
+          api: api,
+          db: DatabaseService.instance,
+        ).forge(
+          message: msg,
+          profile: profile,
+          model: model,
+          sessionId: sessionId,
+        );
+        if (!mounted) return;
+        showAppToast(context, '已沉淀卡片「${card.title}」');
+      } catch (_) {
+        if (!mounted) return;
+        showAppToast(context, '沉淀失败，请重试');
+      } finally {
+        api.dispose();
+      }
+    }());
   }
 
   /// 打开即聊：发送首条消息时才创建会话，主页原地进入聊天态
@@ -825,6 +861,8 @@ class _HomePageState extends State<HomePage> {
                                     Haptics.light();
                                     _chat?.regenerateFrom(msg);
                                   },
+                                  // M5 沉淀为卡片入口
+                                  onSaveAsCard: _saveMessageAsCard,
                                 ),
                               ),
                       ),
