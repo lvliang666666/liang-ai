@@ -1291,6 +1291,12 @@ class ChatProvider extends ChangeNotifier {
     _notify();
   }
 
+  /// 恢复预设名回显（setAgent(variables:) 后调用：变量 map 只存值，
+  /// 预设名按值反查——UI chips 选中态需要名字）
+  void restorePersonaName(String? name) {
+    _activePersonaName = name;
+  }
+
   static bool _mapEquals(Map<String, String> a, Map<String, String> b) {
     if (a.length != b.length) return false;
     for (final e in a.entries) {
