@@ -28,9 +28,13 @@ Future<void> showTokenUsageSheet(
 }) {
   return showAppBottomSheet(
     context: context,
-    builder: (context) => TokenUsageSheet(
-      chat: chat,
-      onOpenPayload: onOpenPayload,
+    // v2.30.2：SheetKeyboardInset 施加 60% 屏高上限（同晨报 Sheet——
+    // SheetScaffold+Expanded 在松约束下撑满全屏，标题被通知栏遮挡）
+    builder: (context) => SheetKeyboardInset(
+      child: TokenUsageSheet(
+        chat: chat,
+        onOpenPayload: onOpenPayload,
+      ),
     ),
   );
 }
