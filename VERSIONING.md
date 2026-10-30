@@ -8,7 +8,17 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.29.0**（2026-10-30 发布）
+**当前版本：v2.30.0**（2026-10-30 发布）
+
+v2.30.0 在 v2.29.0 基础上新增（feat/chat-orchestrator 分支，roadmap E9 → MINOR）：
+
+- **E9 ChatProvider 瘦身——agentic loop 抽成纯 Dart ChatOrchestrator**：复刻 SseParser 的架构决策，把 ChatProvider 内嵌的多轮工具编排（请求 → 流式收包 → 工具执行 → 再请求）抽成不依赖 Flutter 的纯 Dart 编排器，ChatProvider 退化为「订阅事件 → 映射状态机」的宿主（净 +868 行含 17 个新单测；loop 逻辑首次可用假 service 独立单测）
+- **ChatOrchestrator（lib/services/chat_orchestrator.dart）**：轮次循环、流式订阅、工具分片累积、token/耗时盖章、占位消息生命周期（创建/落库/删除）、每轮取消令牌登记全部内聚；事件同步派发（OrchRoundStarted/ReasoningDelta/ContentDelta/ToolRoundStarted/ToolResults/ToolRoundCancelled/Finished/Interrupted/Failed）——同步派发保证宿主在下一轮请求组装前已把工具轮消息并入历史
+- **ChatProvider 侧**：_runLoop 改为构建编排器 + 事件映射状态机；删除 _runLoopInner/_executeToolRound/旧收尾三方法/盖章方法/分片累积器（约 -330 行）；token 估算函数经 export 转发保持 payload_lens_page 等调用方兼容；stopGeneration/dispose 经编排器 cancel（只取消令牌不断订阅——收尾错误要经订阅送达）
+- **语义逐字段对齐旧实现**：scheduleMicrotask usage 帧延迟（vLLM finish_reason=tool_calls 后同批发 usage）、[DONE] 尾随守卫（toolRoundStarted）、8 轮上限 forceSummary、E5 占位生命周期（interrupted 预置/覆写/删除）、I10 中断续传、dispose 硬边界（isDisposed 谓词在每个 await 恢复点检查）
+- **17 个编排器单测**（假 service 驱动）：单轮直答 3 + 工具轮多轮 5（含工具执行中取消）+ 轮数上限 2 + 断流与出错 4 + dispose 硬边界 2 + 时序契约 1；全量 1158 项测试绿；flutter analyze 零 error/warning（70 条 info）
+
+### v2.29.0（2026-10-30）
 
 v2.29.0 在 v2.28.0 基础上新增（feat/commitment-followup 分支，roadmap P3 → MINOR）：
 
