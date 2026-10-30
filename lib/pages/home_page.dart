@@ -24,6 +24,7 @@ import '../services/memory_service.dart';
 import '../services/settings_service.dart';
 import '../services/share_receive_service.dart';
 import '../services/screenshot_memory_service.dart';
+import '../services/skill_variables.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/http_tool_handler.dart';
 import '../utils/haptics.dart';
@@ -39,6 +40,7 @@ import '../widgets/home/new_chat_preset_sheet.dart';
 import '../widgets/home/session_drawer_panel.dart';
 import '../widgets/morning_briefing_sheet.dart';
 import '../widgets/home/agent_picker_sheet.dart';
+import '../widgets/skill_variables_sheet.dart';
 import 'settings_page.dart';
 
 /// 首页：DeepSeek 风格单页架构——主页即聊天页
@@ -74,6 +76,9 @@ class _HomePageState extends State<HomePage> {
   // 空闲态的预选状态（tags 行展示与切换）
   agent_model.Agent? _selectedAgent; // null = 默认助手
   (ProviderProfile, String)? _selectedModel; // null = 用默认供应商默认模型
+
+  // F10 空闲态预选 Agent 的变量值（随首条消息传入新会话）
+  Map<String, String> _selectedAgentVariables = const {};
 
   // 空闲态预选推理档位（effort tag 空闲态也显示）
   String _selectedEffort = 'max';
@@ -363,7 +368,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _startChat(String text,
       {String? agentId,
       (ProviderProfile, String)? modelPick,
-      List<MessageAttachment> attachments = const []}) async {
+      List<MessageAttachment> attachments = const [],
+      Map<String, String> agentVariables = const {}}) async {
     Haptics.light();
     _unfocus();
 
@@ -390,7 +396,9 @@ class _HomePageState extends State<HomePage> {
 
     // 主页原地进入聊天态并自动发送首条消息（附件随首条消息发出）
     await _enterChat(session,
-        initialMessage: text, initialAttachments: allAttachments);
+        initialMessage: text,
+        initialAttachments: allAttachments,
+        initialAgentVariables: agentVariables);
   }
 
   /// 进入聊天态：构建 ChatProvider 并加载消息
@@ -403,7 +411,8 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _enterChat(ChatSession session,
       {String? initialMessage,
-      List<MessageAttachment> initialAttachments = const []}) async {
+      List<MessageAttachment> initialAttachments = const [],
+      Map<String, String> initialAgentVariables = const {}}) async {
     final token = ++_switchToken;
     final isSwitch = _chat != null && _chat!.session.id != session.id;
 
@@ -476,6 +485,15 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _chat = chat;
     });
+    // F10：空闲态预选的 Agent 变量带入新会话（含人格预设名回显）
+    if (initialAgentVariables.isNotEmpty && agent != null) {
+      chat.setAgentVariables(initialAgentVariables);
+      final personaName = agent.personas
+          .where((p) => initialAgentVariables['persona'] == p.value)
+          .map((p) => p.name)
+          .firstOrNull;
+      chat.restorePersonaName(personaName);
+    }
     // M2 自动记忆沉淀：旧会话结束，后台提取记忆（fire-and-forget）
     if (old != null) {
       _extractMemoryInBackground(old);
@@ -1072,6 +1090,15 @@ class _HomePageState extends State<HomePage> {
                         // I9 胶囊行收纳：聊天态随消息列表滚动方向收起/展开
                         capsuleCollapsed:
                             _chatAreaKey.currentState?.capsuleCollapsed,
+                        // F10 空闲态预选 Agent 的变量值（随首条消息传入）
+                        agentVariables: _chat == null
+                            ? _selectedAgentVariables
+                            : null,
+                        // F10 空闲态长按 agent tag 重开配置表单的回传暂存
+                        onIdleAgentVariables: _chat == null
+                            ? (values) => setState(
+                                () => _selectedAgentVariables = values)
+                            : null,
                       ),
                     ),
                   ],
@@ -1140,6 +1167,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// 主页 agent tag：空闲态改预选 / 聊天态改当前会话 Agent
+  ///
+  /// F10：选中的 Agent 声明了自定义变量或人格预设时，接着弹变量
+  /// 填写表单（预填当前值）；点遮罩关闭表单 = 取消本次切换（Agent
+  /// 保持原样——填了一半的配置不该生效）。
   Future<void> _pickAgentForHome() async {
     Haptics.light();
     // 打开面板前收起键盘（需求：点「+」/tag 后键盘先收起，面板再滑出）
@@ -1165,11 +1196,35 @@ class _HomePageState extends State<HomePage> {
     if (result == null || !mounted) return; // 点遮罩关闭不改动
     // 哨兵 Agent（id='__default__'）= 默认助手 = null
     final picked = result.id == '__default__' ? null : result;
+
+    // F10：需要变量/预设的 Agent 先弹配置表单（取消 = 放弃切换）
+    Map<String, String>? variables;
+    if (picked != null &&
+        (picked.customVariables.isNotEmpty || picked.personas.isNotEmpty)) {
+      variables = await showSkillVariablesSheet(
+        context,
+        agent: picked,
+        initial: chat?.agentVariables ?? _selectedAgentVariables,
+      );
+      if (variables == null || !mounted) return; // 表单取消：不切换
+    }
+
     if (chat != null) {
-      await chat.setAgent(picked);
+      await chat.setAgent(picked, variables: variables);
+      // 恢复预设名回显（变量 map 里 persona 值反查预设名）
+      if (picked != null) {
+        final personaName = picked.personas
+            .where((p) => variables?['persona'] == p.value)
+            .map((p) => p.name)
+            .firstOrNull;
+        chat.restorePersonaName(personaName);
+      }
       if (mounted) context.read<SessionsProvider>().refresh();
     } else {
-      setState(() => _selectedAgent = picked);
+      setState(() {
+        _selectedAgent = picked;
+        _selectedAgentVariables = variables ?? const {};
+      });
     }
   }
 

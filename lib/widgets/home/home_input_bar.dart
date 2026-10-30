@@ -19,6 +19,7 @@ import '../../providers/chat_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/attachment_service.dart';
 import '../../services/settings_service.dart';
+import '../../services/skill_variables.dart';
 import '../../utils/haptics.dart';
 import '../../utils/transitions.dart';
 import '../app_toast.dart';
@@ -26,6 +27,7 @@ import '../app_bottom_sheet.dart';
 import '../attachment_thumbnail.dart';
 import '../chat_input_bar.dart';
 import '../chat_tags_bar.dart';
+import '../skill_variables_sheet.dart';
 import '../token_usage_sheet.dart';
 import 'slash_command_sheet.dart';
 
@@ -56,6 +58,8 @@ class HomeInputBar extends StatefulWidget {
     this.quotedMessage,
     this.onCancelQuote,
     this.capsuleCollapsed,
+    this.agentVariables,
+    this.onIdleAgentVariables,
   });
 
   final TextEditingController controller;
@@ -73,7 +77,8 @@ class HomeInputBar extends StatefulWidget {
   final void Function(String text,
       {String? agentId,
       (ProviderProfile, String)? modelPick,
-      List<MessageAttachment> attachments}) onSendIdle;
+      List<MessageAttachment> attachments,
+      Map<String, String> agentVariables}) onSendIdle;
   final VoidCallback onPickAgent;
   final VoidCallback onPickModel;
   final VoidCallback onPickEffort;
@@ -98,6 +103,13 @@ class HomeInputBar extends StatefulWidget {
   /// I9 胶囊行收纳信号（true = 收起 tags 行；null = 不收纳，常显）。
   /// 聊天态由 ChatMessageList 的滚动方向驱动，空闲态不传（无列表可滚）。
   final ValueListenable<bool>? capsuleCollapsed;
+
+  /// F10 空闲态预选 Agent 的变量值（随首条消息传入新会话；null = 无）
+  final Map<String, String>? agentVariables;
+
+  /// F10 空闲态长按 agent tag 重开配置表单后的回传（主页 setState 暂存；
+  /// null = 长按入口不可用）
+  final ValueChanged<Map<String, String>>? onIdleAgentVariables;
 
   @override
   State<HomeInputBar> createState() => _HomeInputBarState();
@@ -631,7 +643,11 @@ class _HomeInputBarState extends State<HomeInputBar> {
   Widget _buildTagsRow(BuildContext context, ChatProvider? chat) {
     final inChat = chat != null;
     final currentAgent = inChat ? chat.agent : widget.selectedAgent;
-    final agentLabel = currentAgent != null ? currentAgent.name : '默认助手';
+    // F10：人格预设名回显（选中预设时 agent 标签显示「名字·预设」）
+    final personaName = inChat ? chat.activePersonaName : null;
+    final agentLabel = currentAgent == null
+        ? '默认助手'
+        : (personaName != null ? '${currentAgent.name}·${personaName}' : currentAgent.name);
     final agentEmoji = currentAgent?.icon;
     final modelLabel =
         inChat ? chat.model : (widget.selectedModel?.$2 ?? '默认模型');
@@ -643,6 +659,12 @@ class _HomeInputBarState extends State<HomeInputBar> {
         icon: agentEmoji == null ? Icons.smart_toy_outlined : null,
         label: agentLabel,
         onTap: widget.onPickAgent,
+        // F10：声明了变量/预设的 Agent 长按重开配置表单
+        onLongPress: currentAgent != null &&
+                (currentAgent.customVariables.isNotEmpty ||
+                    currentAgent.personas.isNotEmpty)
+            ? () => _reopenAgentConfig(context, chat, currentAgent)
+            : null,
       ),
       ChatTag(
         icon: Icons.tune,
@@ -711,6 +733,7 @@ class _HomeInputBarState extends State<HomeInputBar> {
         agentId: widget.selectedAgent?.id,
         modelPick: widget.selectedModel,
         attachments: attachments,
+        agentVariables: widget.agentVariables ?? const {},
       );
     }
     widget.controller.clear();
@@ -734,6 +757,34 @@ class _HomeInputBarState extends State<HomeInputBar> {
         );
       },
     );
+  }
+
+  /// F10 长按 agent tag：重开变量/预设配置表单。
+  /// - 聊天态：确认即写入 ChatProvider（setAgentVariables + restorePersonaName）
+  /// - 空闲态：确认经 onIdleAgentVariables 回传主页暂存（随首条消息入会话）
+  /// - 点遮罩取消 = 保持原配置不动
+  Future<void> _reopenAgentConfig(
+      BuildContext context, ChatProvider? chat, agent_model.Agent agent) async {
+    Haptics.light();
+    FocusManager.instance.primaryFocus?.unfocus();
+    final initial = chat?.agentVariables ?? widget.agentVariables ?? const {};
+    final values = await showSkillVariablesSheet(
+      context,
+      agent: agent,
+      initial: initial,
+    );
+    if (values == null || !context.mounted) return; // 取消 = 不动
+    if (chat != null) {
+      // 聊天态：直接写入 provider；预设名按值反查回显
+      chat.setAgentVariables(values);
+      final persona = agent.personas
+          .where((p) => p.value == values['persona'])
+          .firstOrNull;
+      chat.restorePersonaName(persona?.name);
+    } else {
+      // 空闲态：经回调回传主页暂存
+      widget.onIdleAgentVariables?.call(values);
+    }
   }
 }
 

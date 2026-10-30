@@ -25,6 +25,7 @@ class ChatTagsBar extends StatelessWidget {
           final tag = tags[index];
           return InkWell(
             onTap: tag.onTap,
+            onLongPress: tag.onLongPress,
             borderRadius: BorderRadius.circular(18),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
@@ -94,7 +95,13 @@ class ChatTagsBar extends StatelessWidget {
 
 /// tags 行的单个标签定义
 class ChatTag {
-  const ChatTag({this.icon, this.emoji, required this.label, required this.onTap});
+  const ChatTag({
+    this.icon,
+    this.emoji,
+    required this.label,
+    required this.onTap,
+    this.onLongPress,
+  });
 
   /// 内置图标（无 emoji 时使用）
   final IconData? icon;
@@ -103,4 +110,7 @@ class ChatTag {
   final String? emoji;
   final String label;
   final VoidCallback onTap;
+
+  /// 长按回调（F10：agent tag 长按 = 重开变量/预设配置表单；null = 无）
+  final VoidCallback? onLongPress;
 }

@@ -287,7 +287,7 @@ void main() {
         selectedAgent: null,
         selectedModel: null,
         selectedEffort: 'max',
-        onSendIdle: (_, {agentId, modelPick, attachments = const []}) {},
+        onSendIdle: (_, {agentId, modelPick, attachments = const [], agentVariables = const {}}) {},
         onPickAgent: () {},
         onPickModel: () {},
         onPickEffort: () {},
