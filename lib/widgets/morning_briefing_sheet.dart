@@ -14,7 +14,12 @@ Future<void> showMorningBriefingSheet(
 ) {
   return showAppBottomSheet(
     context: context,
-    builder: (context) => MorningBriefingSheet(briefing: briefing),
+    // v2.30.2：SheetKeyboardInset 施加 60% 屏高上限——SheetScaffold 的
+    // Column+Expanded(ListView) 在 isScrollControlled 松约束下会撑满
+    // 全屏，顶部标题被通知栏遮挡（用户反馈；与大纲/斜杠面板同款修复）
+    builder: (context) => SheetKeyboardInset(
+      child: MorningBriefingSheet(briefing: briefing),
+    ),
   );
 }
 

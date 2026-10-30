@@ -23,7 +23,11 @@ Future<Commitment?> showCommitmentFollowUpSheet(
 ) {
   return showAppBottomSheet<Commitment>(
     context: context,
-    builder: (context) => CommitmentFollowUpSheet(commitments: commitments),
+    // v2.30.2：SheetKeyboardInset 施加 60% 屏高上限（同晨报 Sheet——
+    // SheetScaffold+Expanded 在松约束下撑满全屏，标题被通知栏遮挡）
+    builder: (context) => SheetKeyboardInset(
+      child: CommitmentFollowUpSheet(commitments: commitments),
+    ),
   );
 }
 
