@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- P2 桌面小组件布局：标题行（App 名 + 新对话按钮）+ 简报行 + 最近会话 3 行 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@drawable/widget_background">
+
+    <!-- 标题行：App 名 + 快速新对话按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Liang AI"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textColor="#ECECEC" />
+
+        <TextView
+            android:id="@+id/widget_new_chat"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:background="@drawable/widget_button_bg"
+            android:text="+ 新对话"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF" />
+    </LinearLayout>
+
+    <!-- 简报行（当天晨报问候语；无简报时隐藏） -->
+    <TextView
+        android:id="@+id/widget_briefing"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:textSize="12sp"
+        android:textColor="#B8B8C0"
+        android:visibility="gone" />
+
+    <!-- 最近会话行 ×3（无会话时隐藏；点击进对应会话） -->
+    <TextView
+        android:id="@+id/widget_session_0"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:textSize="13sp"
+        android:textColor="#ECECEC"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_session_1"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:textSize="13sp"
+        android:textColor="#ECECEC"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/widget_session_2"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:paddingTop="4dp"
+        android:paddingBottom="4dp"
+        android:textSize="13sp"
+        android:textColor="#ECECEC"
+        android:visibility="gone" />
+</LinearLayout>

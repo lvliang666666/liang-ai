@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
@@ -25,6 +26,7 @@ import '../services/settings_service.dart';
 import '../services/share_receive_service.dart';
 import '../services/screenshot_memory_service.dart';
 import '../services/skill_variables.dart';
+import '../services/widget_data_service.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/http_tool_handler.dart';
 import '../utils/haptics.dart';
@@ -96,6 +98,10 @@ class _HomePageState extends State<HomePage> {
   // F7 空闲态暂存的分享图片（聊天态直接进 ChatProvider 附件队列）
   final List<MessageAttachment> _idleShareAttachments = [];
 
+  // P2 桌面小组件：会话变化 → 防抖推送数据到原生 widget
+  WidgetDataPusher? _widgetPusher;
+  VoidCallback? _sessionsListener;
+
   @override
   void initState() {
     super.initState();
@@ -106,6 +112,9 @@ class _HomePageState extends State<HomePage> {
     // 收到后按类型分发（fire-and-forget，不阻塞首帧）
     _shareSubscription = _shareReceive.stream.listen(_onSharedPayload);
     unawaited(_shareReceive.init());
+    // P2 桌面小组件：订阅会话列表变化，防抖推送最近会话 + 简报行
+    // （fire-and-forget；平台不可用静默降级）
+    unawaited(_setupWidgetPusher());
     // P1 晨间简报：跨天后首次打开自动生成并弹出（fire-and-forget，
     // 生成完成才弹；开关关闭/当天已生成过则零操作）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -123,6 +132,7 @@ class _HomePageState extends State<HomePage> {
     WidgetsBinding.instance.removeObserver(_KeyboardDismissObserver(this));
     _shareSubscription?.cancel();
     _shareReceive.dispose();
+    _teardownWidgetPusher();
     _inputController.dispose();
     _inputFocusNode.dispose();
     _drawerBatchMode.dispose();
@@ -131,11 +141,48 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
+  /// P2：初始化 widget 推送器（读 SharedPreferences → 订阅会话变化 → 首推）
+  Future<void> _setupWidgetPusher() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      final pusher = WidgetDataPusher(
+        service: WidgetDataService(),
+        prefs: prefs,
+      );
+      final sessions = context.read<SessionsProvider>();
+      void listener() => pusher.onSessionsChanged(sessions.sessions);
+      sessions.addListener(listener);
+      setState(() {
+        _widgetPusher = pusher;
+        _sessionsListener = listener;
+      });
+      // 首推：不等防抖，widget 放上桌面即有数据
+      await pusher.pushNow();
+    } catch (_) {
+      // SharedPreferences 不可用（测试环境）——widget 功能静默降级
+    }
+  }
+
+  /// P2：移除会话监听并释放推送器
+  void _teardownWidgetPusher() {
+    final listener = _sessionsListener;
+    if (listener != null) {
+      context.read<SessionsProvider>().removeListener(listener);
+    }
+    _widgetPusher?.dispose();
+    _widgetPusher = null;
+    _sessionsListener = null;
+  }
+
   /// F9/F7 分享即问：收到系统分享载荷 → 按类型分发。
-  /// 文本预填输入框；图片进附件队列（聊天态）或暂存（空闲态随首条消息发出）
+  /// 文本预填输入框；图片进附件队列（聊天态）或暂存（空闲态随首条消息发出）；
+  /// P2 link：widget deep link 路由（新对话/进会话/简报）
   void _onSharedPayload(SharePayload payload) {
     if (!mounted) return;
     switch (payload) {
+      case ShareLinkPayload(:final link):
+        _handleWidgetLink(link);
       case ShareTextPayload(:final text):
         final existing = _inputController.text;
         _inputController.text = existing.isEmpty ? text : '$existing\n$text';
@@ -144,6 +191,36 @@ class _HomePageState extends State<HomePage> {
         showAppToast(context, '已填入分享内容，可直接发送或让 AI 处理');
       case ShareImagePayload(:final base64, :final mime):
         _onSharedImage(base64: base64, mime: mime);
+    }
+  }
+
+  /// P2 桌面小组件 deep link 路由：
+  /// - `liangai://new` → 新对话预设弹窗（与主页新建按钮同流程）
+  /// - `liangai://chat/<id>` → 进入对应会话（会话已删则静默忽略）
+  /// - `liangai://briefing` → 展示当天简报问候（无缓存静默忽略）
+  Future<void> _handleWidgetLink(String link) async {
+    final uri = Uri.tryParse(link);
+    if (uri == null || uri.scheme != 'liangai') return;
+    switch (uri.host) {
+      case 'new':
+        await _newChat();
+      case 'chat':
+        final id = uri.path.replaceFirst('/', '');
+        if (id.isEmpty) return;
+        await _openChat(id);
+      case 'briefing':
+        final prefs = await SharedPreferences.getInstance();
+        final today = DateTime.now();
+        final dateKey = '${today.year}-${today.month.toString().padLeft(2, '0')}-'
+            '${today.day.toString().padLeft(2, '0')}';
+        final cached = prefs.getString('widgetBriefingDate');
+        final text = prefs.getString('widgetBriefingText');
+        if (!mounted) return;
+        if (cached == dateKey && text != null && text.isNotEmpty) {
+          // 缓存只有 greeting 一行（完整简报 sheet 需重建 MorningBriefing，
+          // 成本高且跨天即失效）——widget 点击场景轻量展示即可
+          showAppToast(context, text);
+        }
     }
   }
 
@@ -316,6 +393,14 @@ class _HomePageState extends State<HomePage> {
     }
     if (!mounted) return;
     await settings.setLastBriefingDate(today);
+    // P2：简报 greeting 段缓存进 widget 可读键（桌面小组件简报行数据源）
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await cacheBriefingForWidget(prefs, briefing);
+      await _widgetPusher?.pushNow();
+    } catch (_) {
+      // prefs 不可用（测试环境）——widget 简报行静默降级
+    }
     await showMorningBriefingSheet(context, briefing);
   }
 

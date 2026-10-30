@@ -21,6 +21,13 @@ class ShareImagePayload extends SharePayload {
   Uint8List get bytes => base64Decode(base64);
 }
 
+/// P2 桌面小组件 deep link：widget 点击 → ACTION_VIEW liangai://…
+/// （new / chat/<id> / briefing），原生缓存后按 {type: "link"} 推送
+class ShareLinkPayload extends SharePayload {
+  const ShareLinkPayload(this.link);
+  final String link;
+}
+
 /// F9/F7 分享即问：接收系统分享（文本/图片）的 Flutter 侧桥。
 ///
 /// 与 MainActivity（MethodChannel `ai_chat_app/share`）配对：
@@ -78,10 +85,16 @@ class ShareReceiveService {
     return _payloadFromMap(map);
   }
 
-  /// 解析原生 payload map：{type: text, text} / {type: image, uri}
+  /// 解析原生 payload map：{type: text, text} / {type: image, uri} /
+  /// {type: link, link}（P2 widget deep link）
   Future<SharePayload?> _payloadFromMap(Object? map) async {
     if (map is! Map) return null;
     final type = map['type'];
+    if (type == 'link') {
+      final link = map['link'];
+      if (link is String && link.isNotEmpty) return ShareLinkPayload(link);
+      return null;
+    }
     if (type == 'text') {
       final text = map['text'];
       if (text is String && text.isNotEmpty) return ShareTextPayload(text);
@@ -116,6 +129,9 @@ class ShareReceiveService {
   /// 测试辅助：模拟原生推送图片
   void debugEmitImage({required String base64, String mime = 'image/png'}) =>
       _controller.add(ShareImagePayload(base64: base64, mime: mime));
+
+  /// 测试辅助：模拟原生推送 widget deep link
+  void debugEmitLink(String link) => _controller.add(ShareLinkPayload(link));
 
   void dispose() {
     _channel.setMethodCallHandler(null);

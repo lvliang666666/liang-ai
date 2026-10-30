@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- P2 小组件选择器描述文案 -->
+    <string name="widget_description">最近会话与快速新对话</string>
+</resources>

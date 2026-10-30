@@ -8,7 +8,19 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.27.0**（2026-10-30 发布）
+**当前版本：v2.28.0**（2026-10-30 发布）
+
+v2.28.0 在 v2.27.0 基础上新增（feat/home-widget 分支，roadmap P2 → MINOR）：
+
+- **P2 桌面小组件（最近会话 + 快速新对话 + 简报行）**：桌面即达——不用打开 App 就能看到最近 3 个会话、当天简报问候，一键新对话或直达某个会话
+- **零新插件架构**：原生 AppWidgetProvider + RemoteViews 渲染；数据经 SharedPreferences（flutter. 前缀键）跨进程持久——widget 更新可能在 App 进程死亡后由系统触发，此时 MethodChannel 不可用，SharedPreferences 是最简可靠通道；MethodChannel 复用 F9 的 `ai_chat_app/share`（updateWidgetData 推送 / getWidgetData 读回）
+- **deep link 路由**：widget 点击 → `liangai://new`（新对话预设弹窗）/ `liangai://chat/<id>`（直达会话，已删静默忽略）/ `liangai://briefing`（简报问候）；MainActivity 缓存 + 推送 {type: link}，冷启动/热启动（singleTop）同一路径，与 F9/F7 分享接收共用 ShareReceiveService（新增 ShareLinkPayload）
+- **数据推送式更新**（updatePeriodMillis=0 不轮询）：WidgetDataPusher 订阅 SessionsProvider 变化防抖 500ms 推送 + 启动首推；WidgetDataService 组装 JSON（briefing 当天校验 + sessions 截 3 条，过滤空标题）；平台不可用静默降级（widget 是增强不是门槛）
+- **简报行数据源**：P1 晨间简报生成完成后缓存 greeting 段（cacheBriefingForWidget），widget 显示当天问候；跨天不显示过期简报
+- **空态设计**：无简报无会话时显示「打开 Liang AI 开始对话」引导，点击即新对话
+- 1109 项测试全绿（新增 12：widget 数据 9 + link 载荷 3）；flutter analyze 零 error/warning（59 条 info）
+
+### v2.27.0（2026-10-30）
 
 v2.27.0 在 v2.26.0 基础上新增（feat/output-contract 分支，roadmap F10 收官 → MINOR）：
 
