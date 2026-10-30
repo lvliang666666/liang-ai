@@ -809,7 +809,8 @@ void main() {
     });
 
     test('v16 老库迁移到 v17：memories 加 layer 列（M3）', () async {
-      // 手写 v16 历史 schema（memories 无 layer 列），升级走生产 onUpgrade
+      // 手写 v16 历史 schema（memories 无 layer 列），升级走生产 onUpgrade。
+      // messages 表 v1 就存在（v19 迁移步会 ALTER 它补双答列），必须建出
       final dir = await databaseFactory.getDatabasesPath();
       final dbPath = '$dir/v16_to_v17_test.db';
       await databaseFactory.deleteDatabase(dbPath);
@@ -817,6 +818,25 @@ void main() {
         dbPath,
         options: OpenDatabaseOptions(version: 16),
       );
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          thinking_seconds INTEGER,
+          generation_seconds INTEGER,
+          interrupted INTEGER NOT NULL DEFAULT 0,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )
+      ''');
       await old.execute('''
         CREATE TABLE memories (
           id TEXT PRIMARY KEY,
@@ -892,7 +912,8 @@ void main() {
 
     test('v17 老库迁移到 v18：新建 cards 表（M5）', () async {
       // 手写 v17 历史 schema（无 cards 表），升级走生产 onUpgrade 本尊。
-      // memories 表含 layer 列（v17 已迁移），v18 步只建 cards
+      // memories 表含 layer 列（v17 已迁移），v18 步只建 cards。
+      // messages 表 v1 就存在（v19 迁移步会 ALTER 它补双答列），必须建出
       final dir = await databaseFactory.getDatabasesPath();
       final dbPath = '$dir/v17_to_v18_test.db';
       await databaseFactory.deleteDatabase(dbPath);
@@ -900,6 +921,25 @@ void main() {
         dbPath,
         options: OpenDatabaseOptions(version: 17),
       );
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          thinking_seconds INTEGER,
+          generation_seconds INTEGER,
+          interrupted INTEGER NOT NULL DEFAULT 0,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )
+      ''');
       await old.execute('''
         CREATE TABLE memories (
           id TEXT PRIMARY KEY,
@@ -1071,6 +1111,154 @@ void main() {
       expect(await db.getSession('s1'), isNull);
       expect((await db.getAllCards()).length, 1,
           reason: '卡片不随会话级联删除（与 session_summaries 派生数据不同）');
+    });
+  });
+
+  group('F6 同问双答（v19）', () {
+    test('v18 老库迁移到 v19：messages 补 dual_of/source_label 列，老数据保留',
+        () async {
+      // 手写 v18 历史 schema（无双答列），升级走生产 onUpgrade 本尊
+      final dir = await databaseFactory.getDatabasesPath();
+      final dbPath = '$dir/v18_to_v19_test.db';
+      await databaseFactory.deleteDatabase(dbPath);
+      final old = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(version: 18),
+      );
+      await old.execute('''
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL DEFAULT '',
+          reasoning TEXT NOT NULL DEFAULT '',
+          attachments TEXT NOT NULL DEFAULT '[]',
+          tool_calls TEXT NOT NULL DEFAULT '[]',
+          tool_call_id TEXT,
+          prompt_tokens INTEGER,
+          completion_tokens INTEGER,
+          thinking_seconds INTEGER,
+          generation_seconds INTEGER,
+          interrupted INTEGER NOT NULL DEFAULT 0,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          created_at INTEGER NOT NULL
+        )
+      ''');
+      await old.insert('messages', {
+        'id': 'm1',
+        'session_id': 's1',
+        'role': 'assistant',
+        'content': '老回答',
+        'reasoning': '',
+        'attachments': '[]',
+        'tool_calls': '[]',
+        'tool_call_id': null,
+        'prompt_tokens': null,
+        'completion_tokens': null,
+        'thinking_seconds': null,
+        'generation_seconds': null,
+        'interrupted': 0,
+        'pinned': 0,
+        'created_at': 1,
+      });
+      await old.close();
+
+      final upgraded = await databaseFactory.openDatabase(
+        dbPath,
+        options: OpenDatabaseOptions(
+          version: DatabaseService.dbVersion,
+          onCreate: DatabaseService.onCreate,
+          onUpgrade: DatabaseService.onUpgrade,
+        ),
+      );
+
+      // 新列可写可读（双答行）
+      await upgraded.insert('messages', {
+        'id': 'm2',
+        'session_id': 's1',
+        'role': 'assistant',
+        'content': '对侧回答',
+        'reasoning': '',
+        'attachments': '[]',
+        'tool_calls': '[]',
+        'tool_call_id': null,
+        'prompt_tokens': null,
+        'completion_tokens': null,
+        'thinking_seconds': null,
+        'generation_seconds': null,
+        'interrupted': 0,
+        'pinned': 0,
+        'dual_of': 'm3',
+        'source_label': '公司 GLM · glm5.1',
+        'created_at': 2,
+      });
+      final rows = await upgraded.query('messages',
+          where: 'id = ?', whereArgs: ['m2']);
+      expect(rows.single['dual_of'], 'm3');
+      expect(rows.single['source_label'], '公司 GLM · glm5.1');
+
+      // 老消息数据无损（新列 NULL）
+      final oldRows = await upgraded.query('messages',
+          where: 'id = ?', whereArgs: ['m1']);
+      expect(oldRows.single['content'], '老回答');
+      expect(oldRows.single['dual_of'], isNull);
+
+      await upgraded.close();
+      await databaseFactory.deleteDatabase(dbPath);
+    });
+
+    test('v19 新装库：messages 表含双答列', () async {
+      final db = await openTestDb();
+      final cols = await db.rawQuery('PRAGMA table_info(messages)');
+      expect(
+        cols.map((c) => c['name']).toList(),
+        containsAll(['dual_of', 'source_label']),
+      );
+      await db.close();
+    });
+
+    test('双答字段随消息 CRUD 往返（insert/getMessages）', () async {
+      await db.insertSession(session('s1'));
+      final left = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '左侧回答',
+        dualOf: 'm2',
+        sourceLabel: '公司 GLM · glm5.1',
+        createdAt: 1000,
+      );
+      final right = ChatMessage(
+        id: 'm2',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '右侧回答',
+        dualOf: 'm1',
+        sourceLabel: 'DeepSeek · deepseek-chat',
+        createdAt: 1001,
+      );
+      await db.insertMessage(left);
+      await db.insertMessage(right);
+
+      final msgs = await db.getMessages('s1');
+      expect(msgs.length, 2);
+      expect(msgs[0].dualOf, 'm2');
+      expect(msgs[0].sourceLabel, '公司 GLM · glm5.1');
+      expect(msgs[1].dualOf, 'm1');
+      expect(msgs[1].sourceLabel, 'DeepSeek · deepseek-chat');
+
+      // 普通消息（无双答字段）读回为 null
+      final plain = ChatMessage(
+        id: 'm3',
+        sessionId: 's1',
+        role: 'assistant',
+        content: '普通',
+        createdAt: 1002,
+      );
+      await db.insertMessage(plain);
+      final msgs2 = await db.getMessages('s1');
+      expect(msgs2[2].dualOf, isNull);
+      expect(msgs2[2].sourceLabel, isNull);
     });
   });
 }

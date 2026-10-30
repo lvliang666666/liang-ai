@@ -909,6 +909,8 @@ class _HomePageState extends State<HomePage> {
                                   },
                                   // M5 沉淀为卡片入口
                                   onSaveAsCard: _saveMessageAsCard,
+                                  // F6 同问双答「用这个继续」入口
+                                  onChooseDualMessage: _chooseDualForHome,
                                 ),
                               ),
                       ),
@@ -929,6 +931,8 @@ class _HomePageState extends State<HomePage> {
                         onPickAgent: _pickAgentForHome,
                         onPickModel: _pickModelForHome,
                         onPickEffort: _pickEffortForHome,
+                        // F6 同问双答：双答 tag 点击弹对侧供应商选择
+                        onPickDual: _pickDualForHome,
                         // I4 编辑态 / I5 引用态
                         editingMessage: _editingMessage,
                         onCancelEdit: _exitEditMode,
@@ -1110,6 +1114,108 @@ class _HomePageState extends State<HomePage> {
       }
     } else {
       setState(() => _selectedModel = selected);
+    }
+  }
+
+  /// F6 同问双答：双答 tag 点击 → 选对侧供应商 → 设一次性双答目标
+  ///
+  /// 下一条消息经 sendDualMessage 并行发给当前供应商与对侧，双气泡
+  /// 对照。目标一次性消费：发送后 tag 回到「双答」，再点再选。
+  Future<void> _pickDualForHome() async {
+    Haptics.light();
+    _unfocus();
+    final chat = _chat;
+    if (chat == null) return;
+    final providersProvider = context.read<ProviderProvider>();
+    if (!providersProvider.loaded) await providersProvider.load();
+    if (!mounted) return;
+
+    final selected = await showModalBottomSheet<(ProviderProfile, String)>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Text('同问双答 · 选择对照方',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    '下一条消息将同时发给「${chat.profile.name} · ${chat.model}」'
+                    '与所选方，双气泡对照后点选其一继续',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final p in providersProvider.profiles) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+                      child: Text(
+                        p.name,
+                        style:
+                            Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color:
+                                      Theme.of(context).colorScheme.primary,
+                                ),
+                      ),
+                    ),
+                    if (p.defaultModel.isNotEmpty)
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.compare_arrows, size: 20),
+                        title: Text(p.defaultModel),
+                        // 当前会话供应商 = 主侧，列表里仍可选（同模型
+                        // 双采样对照），不置灰
+                        onTap: () =>
+                            Navigator.pop(context, (p, p.defaultModel)),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    await chat.setDualTarget(selected.$1, selected.$2);
+    if (mounted) {
+      showAppToast(context,
+          '已设对照方：${selected.$1.name} · ${selected.$2}，发送即双答');
+    }
+  }
+
+  /// F6 同问双答「用这个继续」：点选一侧回答，姊妹删除、会话回单线
+  ///
+  /// chooseDual 返回切换目标（选中侧来源 ≠ 当前供应商时非空）——
+  /// 复用 switchProvider 管线切换，后续对话延续所选供应商。
+  Future<void> _chooseDualForHome(ChatMessage msg) async {
+    Haptics.light();
+    final chat = _chat;
+    if (chat == null) return;
+    final switchTo = await chat.chooseDual(msg);
+    if (!mounted) return;
+    if (switchTo != null) {
+      final ok = await chat.switchProvider(switchTo.$1, switchTo.$2);
+      if (mounted && !ok) {
+        showAppToast(context, '已保留该回答，但切换供应商失败（生成中）');
+      }
     }
   }
 

@@ -24,7 +24,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 18;
+  static const int dbVersion = 19;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -135,6 +135,8 @@ class DatabaseService {
         generation_seconds INTEGER,
         interrupted INTEGER NOT NULL DEFAULT 0,
         pinned INTEGER NOT NULL DEFAULT 0,
+        dual_of TEXT,
+        source_label TEXT,
         created_at INTEGER NOT NULL
       )
     ''');
@@ -280,6 +282,13 @@ class DatabaseService {
     if (oldVersion < 18 && newVersion >= 18) {
       // v17 → v18：对话炼金炉（M5）——新建 cards 表（用户策展知识卡片）
       await _createCardsTable(db);
+    }
+    if (oldVersion < 19 && newVersion >= 19) {
+      // v18 → v19：同问双答（F6）——messages 加 dual_of（姊妹回答 id，
+      // 两侧互指 = 待选择态）与 source_label（来源徽标文本）。NULL =
+      // 普通消息，老数据零影响
+      await db.execute('ALTER TABLE messages ADD COLUMN dual_of TEXT');
+      await db.execute('ALTER TABLE messages ADD COLUMN source_label TEXT');
     }
   }
 

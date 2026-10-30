@@ -24,6 +24,15 @@ class MockApiService implements ApiService {
   final _controller = StreamController<SseEvent>.broadcast();
   int chatStreamCalls = 0;
 
+  /// F6 双答按调用序号分流：第 N 次请求（0 起）返回独立流的脚本。
+  /// 非空时 chatStream 优先走脚本（独立 controller，事件互不串扰）；
+  /// 脚本耗尽的请求回退共享广播流。双答两侧请求几乎同时建立订阅，
+  /// 共享流无法区分两侧——脚本流让每侧拿到自己的事件序列
+  final List<List<SseEvent>> scriptsByCall = [];
+
+  /// 各次请求的独立 controller（脚本流用，测试后不留悬挂）
+  final List<StreamController<SseEvent>> _scriptControllers = [];
+
   /// 记录最近一次请求的 profile（方言断言用）
   ProviderProfile? lastProfile;
 
@@ -40,6 +49,23 @@ class MockApiService implements ApiService {
 
   void emitError(Object error) => _controller.addError(error);
 
+  /// 向第 [callIndex] 次请求的脚本流投递事件（F6 双答用）
+  void emitToCall(int callIndex, SseEvent event) {
+    if (callIndex < _scriptControllers.length) {
+      _scriptControllers[callIndex].add(event);
+    }
+  }
+
+  /// 向第 [callIndex] 次请求的脚本流投递错误（cancel 模拟等）
+  void emitErrorToCall(int callIndex, Object error) {
+    if (callIndex < _scriptControllers.length) {
+      _scriptControllers[callIndex].addError(error);
+    }
+  }
+
+  /// 已建立的脚本流数量（轮询双答两侧订阅就绪用）
+  int get scriptControllerCount => _scriptControllers.length;
+
   @override
   Stream<SseEvent> chatStream({
     required ProviderProfile profile,
@@ -50,11 +76,24 @@ class MockApiService implements ApiService {
     double temperature = 0.7,
     List<Map<String, Object?>>? tools,
   }) {
+    final callIndex = chatStreamCalls;
     chatStreamCalls++;
     lastProfile = profile;
     lastTools = tools;
     lastMessages = messages;
     lastEffort = effort;
+    if (callIndex < scriptsByCall.length) {
+      final c = StreamController<SseEvent>.broadcast();
+      _scriptControllers.add(c);
+      // 微任务后投递：调用方拿到流后才能建立订阅（广播流不缓存）
+      scheduleMicrotask(() {
+        for (final e in scriptsByCall[callIndex]) {
+          c.add(e);
+        }
+        // 不 close：双答侧 completer 由事件驱动收尾，close 会提前触发 onDone
+      });
+      return c.stream;
+    }
     return _controller.stream;
   }
 
@@ -1018,6 +1057,283 @@ void main() {
       expect(msgs[1].toolCalls.first.name, 'run_skill');
       expect(msgs[2].content, 'Hello'); // 子 loop 最终汇报进主会话
       expect(msgs[3].content, '翻译完成：Hello');
+      p.dispose();
+    });
+  });
+
+  group('F6 同问双答', () {
+    /// 建一个带双答 mock 工厂的 provider（对侧请求也走同一 MockApiService，
+    /// 事件经 scriptsByCall 按调用序号分流）
+    ChatProvider dualProvider() => ChatProvider(
+          database: db,
+          api: api,
+          session: ChatSession(
+            id: 's-dual',
+            title: '新对话',
+            createdAt: 1000,
+            updatedAt: 1000,
+          ),
+          profile: ProviderProfile.builtinCompany(),
+          model: 'glm5.1',
+          dualApiFactory: (profile) => api,
+        );
+
+    /// 轮询等待条件成立（双答收尾是异步链，固定拍数不可靠）
+    Future<void> waitUntil(bool Function() cond,
+        {String failMessage = '条件未达成'}) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (!cond()) {
+        if (DateTime.now().isAfter(deadline)) fail(failMessage);
+        await Future.delayed(const Duration(milliseconds: 5));
+      }
+    }
+
+    test('双流完成：两侧落库互指 dualOf，进入待选择态', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      // 第 0 次请求 = 主侧，第 1 次 = 对侧（脚本流各自独立）
+      api.scriptsByCall
+        ..add([
+          const SseDeltaContent('主侧回答'),
+          const SseDone(),
+        ])
+        ..add([
+          const SseDeltaContent('对侧回答'),
+          const SseDone(),
+        ]);
+
+      await p.sendDualMessage('同一个问题');
+
+      // 两侧都收尾后进入待选择态（异步收尾，轮询）
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: '双答未进入待选择态');
+      expect(p.status, ChatStatus.idle);
+      expect(p.isDualRunning, isFalse);
+
+      // DB：user + 两侧 assistant，互指 dualOf + 来源徽标
+      final msgs = await db.getMessages('s-dual');
+      expect(msgs.length, 3);
+      expect(msgs[0].role, 'user');
+      expect(msgs[0].content, '同一个问题');
+      final left = msgs[1];
+      final right = msgs[2];
+      expect(left.dualOf, right.id);
+      expect(right.dualOf, left.id);
+      expect(left.sourceLabel, contains('公司 GLM'));
+      expect(right.sourceLabel, contains('公司 GLM'));
+      expect(left.content, '主侧回答');
+      expect(right.content, '对侧回答');
+      p.dispose();
+    });
+
+    test('chooseDual：删姊妹清标记，返回对侧切换目标', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      // 对侧用不同名字的 profile（切换目标反解验证）
+      final other = ProviderProfile(
+        id: 'ds',
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        defaultModel: 'deepseek-chat',
+      );
+      await db.insertProvider(other);
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主侧'), const SseDone()])
+        ..add([const SseDeltaContent('对侧'), const SseDone()]);
+
+      await p.setDualTarget(other, 'deepseek-chat');
+      await p.sendDualMessage('问题');
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: '双答未进入待选择态');
+
+      // 选中对侧（右侧）：姊妹删除 + 标记清空 + 返回切换目标
+      final msgs = await db.getMessages('s-dual');
+      final right = msgs.last;
+      final switchTo = await p.chooseDual(right);
+      expect(switchTo, isNotNull);
+      expect(switchTo!.$1.id, 'ds');
+      expect(switchTo.$2, 'deepseek-chat');
+
+      final after = await db.getMessages('s-dual');
+      expect(after.length, 2, reason: '姊妹回答已删除');
+      expect(after.last.dualOf, isNull, reason: '本侧标记已清');
+      expect(p.isAwaitingDualChoice, isFalse);
+      p.dispose();
+    });
+
+    test('chooseDual：选主侧（当前供应商）返回 null 不切换', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主侧'), const SseDone()])
+        ..add([const SseDeltaContent('对侧'), const SseDone()]);
+
+      await p.sendDualMessage('问题');
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: '双答未进入待选择态');
+
+      final msgs = await db.getMessages('s-dual');
+      final left = msgs[1];
+      final switchTo = await p.chooseDual(left);
+      expect(switchTo, isNull, reason: '主侧 = 当前供应商，无需切换');
+
+      final after = await db.getMessages('s-dual');
+      expect(after.length, 2);
+      expect(after[1].dualOf, isNull);
+      p.dispose();
+    });
+
+    test('对侧失败：错误占位落库，主侧保留，状态 error 可关闭', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主侧正常'), const SseDone()])
+        ..add([const SseError('网关 500')]);
+
+      await p.sendDualMessage('问题');
+      await waitUntil(() => p.status == ChatStatus.error,
+          failMessage: '对侧失败未进入 error 态');
+
+      // 主侧内容保留 + 对侧错误占位（无 dualOf 互指——单侧结果无需选择）
+      final msgs = await db.getMessages('s-dual');
+      expect(msgs.length, 3);
+      expect(msgs[1].content, '主侧正常');
+      expect(msgs[1].dualOf, isNull);
+      expect(msgs[2].content, contains('请求失败'));
+      expect(p.errorMessage, contains('对侧'));
+      p.clearError();
+      expect(p.status, ChatStatus.idle);
+      p.dispose();
+    });
+
+    test('双答目标一次性消费：第二次发送回到普通单流', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      final other = ProviderProfile(
+        id: 'ds',
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        defaultModel: 'deepseek-chat',
+      );
+      await db.insertProvider(other);
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主1'), const SseDone()])
+        ..add([const SseDeltaContent('对1'), const SseDone()]);
+
+      await p.setDualTarget(other, 'deepseek-chat');
+      await p.sendDualMessage('第一问');
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: '第一次双答未完成');
+      final callsAfterDual = api.chatStreamCalls;
+
+      // 第二次发送：目标已消费，走普通 sendMessage 单流
+      await p.sendMessage('第二问');
+      expect(api.chatStreamCalls, callsAfterDual + 1);
+      api.emit(const SseDeltaContent('普通回答'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      expect(p.status, ChatStatus.idle);
+      p.dispose();
+    });
+
+    test('流式中 setDualTarget 被拒绝', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      await p.sendMessage('普通消息');
+      expect(p.isStreaming, isTrue);
+
+      final other = ProviderProfile(
+        id: 'ds',
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+      );
+      await p.setDualTarget(other, 'deepseek-chat');
+      // 流式中拒绝：目标未设置，后续 sendDualMessage 走自答
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      // call 0 已被上面的普通消息消费——垫空脚本占位，双答两侧用索引 1/2
+      api.scriptsByCall
+        ..add(const [])
+        ..add([const SseDeltaContent('自答'), const SseDone()])
+        ..add([const SseDeltaContent('自答2'), const SseDone()]);
+      await p.sendDualMessage('双答');
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: '自答双答未完成');
+      // 自答 = 同供应商同模型（sourceLabel 相同）
+      // 消息序：user(普通) / user(双答) / 自答×2——普通消息只发了
+      // SseDone 无内容，空占位被删除，无 assistant 回复
+      final msgs = await db.getMessages('s-dual');
+      expect(msgs.length, 4);
+      expect(msgs[2].sourceLabel, isNotNull);
+      expect(msgs[2].sourceLabel, msgs[3].sourceLabel);
+      p.dispose();
+    });
+
+    test('停止生成：两侧令牌同时取消，已收内容保留', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      // 脚本只给内容不给收尾事件——停止驱动收尾
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主侧半截')])
+        ..add([const SseDeltaContent('对侧半截')]);
+
+      // sendDualMessage 会 await 到双流收尾（脚本无收尾事件 = 挂起），
+      // 不能直接 await——后台启动，轮询等两侧脚本流订阅建立后再停止
+      unawaited(p.sendDualMessage('问题'));
+      await waitUntil(() => api.scriptControllerCount >= 2,
+          failMessage: '双答脚本流未建立');
+      expect(p.isDualRunning, isTrue);
+
+      p.stopGeneration();
+      // 两侧 cancel 错误经 onError 收尾（保留已收内容）
+      api.emitErrorToCall(0, DioException(
+        requestOptions: RequestOptions(path: '/'),
+        type: DioExceptionType.cancel,
+      ));
+      api.emitErrorToCall(1, DioException(
+        requestOptions: RequestOptions(path: '/'),
+        type: DioExceptionType.cancel,
+      ));
+      await waitUntil(() => !p.isDualRunning, failMessage: '双答未停止');
+
+      // 已收内容保留（手动停止 ≠ 中断态）
+      final msgs = await db.getMessages('s-dual');
+      expect(msgs.length, 3);
+      expect(msgs[1].content, '主侧半截');
+      expect(msgs[2].content, '对侧半截');
+      expect(msgs[1].interrupted, isFalse);
+      expect(p.isAwaitingDualChoice, isTrue, reason: '两侧都有内容 = 待选择');
+      p.dispose();
+    });
+
+    test('regenerateFrom 重答双答一侧：姊妹一并删除', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主侧'), const SseDone()])
+        ..add([const SseDeltaContent('对侧'), const SseDone()]);
+
+      await p.sendDualMessage('问题');
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: '双答未进入待选择态');
+
+      // 重答主侧：姊妹（对侧）一并删除，重新生成
+      final msgs = await db.getMessages('s-dual');
+      final left = msgs[1];
+      await p.regenerateFrom(left);
+      api.emit(const SseDeltaContent('重答内容'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      final after = await db.getMessages('s-dual');
+      // user + 重答 assistant（对侧已删）
+      expect(after.length, 2);
+      expect(after.last.content, '重答内容');
+      expect(after.last.dualOf, isNull);
       p.dispose();
     });
   });

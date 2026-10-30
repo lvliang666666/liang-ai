@@ -41,6 +41,7 @@ class ChatProvider extends ChangeNotifier {
     bool smartRouting = false,
     bool keepaliveNotification = false,
     AgentService? agentService,
+    ApiService Function(ProviderProfile profile)? dualApiFactory,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -65,6 +66,10 @@ class ChatProvider extends ChangeNotifier {
       sessionId: session.id,
       runSkillDelegate: _runSkillDelegate,
     );
+    // F6 双答对侧连接工厂（null = 默认按 profile 新建；测试注入 mock）
+    _dualApiFactory = dualApiFactory ??
+        (profile) =>
+            ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
   }
 
   final DatabaseService _db;
@@ -152,6 +157,17 @@ class ChatProvider extends ChangeNotifier {
   /// 当前流式中的 assistant 消息（未落库，done 时落库）
   ChatMessage? _streamingMessage;
 
+  /// F6 双答对侧的流式消息（与 _streamingMessage 并存渲染两条流式气泡；
+  /// 非双答时为 null）
+  ChatMessage? _dualStreamingMessage;
+
+  /// F6 双答对侧的取消令牌（停止键同时停两侧）
+  CancelToken? _dualCancelToken;
+
+  /// F6 双答对侧 ApiService 工厂（生产按 profile 新建；测试注入 mock。
+  /// 对侧供应商 baseUrl/Key 与主侧不同，不能复用主连接池）
+  late ApiService Function(ProviderProfile profile) _dualApiFactory;
+
   CancelToken? _cancelToken;
   StreamSubscription<SseEvent>? _subscription;
   DateTime? _thinkingStart;
@@ -209,10 +225,16 @@ class ChatProvider extends ChangeNotifier {
   /// 最近一次发起工具调用的 assistant 消息 ID（UI 工具卡片归属判断）
   String? get lastToolCallMessageId => _lastToolCallMessageId;
 
-  /// 页面渲染用的完整消息列表（含流式中消息）
+  /// 页面渲染用的完整消息列表（含流式中消息；双答时两条流式占位都在尾部）
   List<ChatMessage> get displayMessages {
-    if (_streamingMessage == null) return _messages;
-    return [..._messages, _streamingMessage!];
+    if (_streamingMessage == null && _dualStreamingMessage == null) {
+      return _messages;
+    }
+    return [
+      ..._messages,
+      if (_streamingMessage != null) _streamingMessage!,
+      if (_dualStreamingMessage != null) _dualStreamingMessage!,
+    ];
   }
 
   /// 会话累计 token 消耗（输入+输出，落库消息求和；F3 Token 水位仪表盘）
@@ -344,6 +366,315 @@ class ChatProvider extends ChangeNotifier {
     }));
   }
 
+  /// F6 同问双答：同一条消息并发发给两个供应商，双气泡对照，点选其一继续
+  ///
+  /// 与 [sendMessage] 共用前置（落库 user 消息/标题/压缩/记忆预取），
+  /// 之后**两侧并发纯文本流**（tools: null——对照场景要的是模型本色，
+  /// 工具编排是主 loop 的职责）。每侧独立 CancelToken：停止键同时停
+  /// 两侧；一侧失败不拖垮另一侧（失败侧落错误占位，成功侧照常待选）。
+  ///
+  /// 双答目标由 [setDualTarget] 预设（一次性消费）；未预设 = 当前会话
+  /// 供应商自答（同模型双采样对照）。
+  ///
+  /// 两侧都收尾后交叉标记 dualOf（互指 = 待选择态），[chooseDual]
+  /// 删姊妹清标记回到单线。全程不落会话级状态——重启后待选择态由
+  /// 消息数据派生，天然恢复。
+  Future<void> sendDualMessage(String text) async {
+    final content = text.trim();
+    if (content.isEmpty || isStreaming || _dualRunning) return;
+
+    // 消费一次性双答目标（读后即清，下次发送回到普通单流）
+    final target = _dualTarget;
+    _dualTarget = null;
+
+    _errorMessage = '';
+    _lastRoundInterrupted = false;
+    final now = DateTime.now().millisecondsSinceEpoch;
+
+    // 1. 落库 user 消息（双答不支持附件——对照场景以文本为主）
+    final userMsg = ChatMessage(
+      id: _genId(),
+      sessionId: _session.id,
+      role: 'user',
+      content: content,
+      createdAt: now,
+    );
+    await _db.insertMessage(userMsg);
+    _messages = [..._messages, userMsg];
+
+    // 首条消息自动生成会话标题（与 sendMessage 同规则）
+    if (_session.title.isEmpty || _session.title == '新对话') {
+      _session.title =
+          content.length > 20 ? content.substring(0, 20) : content;
+      await _db.updateSessionTitle(_session.id, _session.title);
+    }
+    await _db.touchSession(_session.id);
+
+    // 2. 水位检查 + 记忆预取（与 sendMessage 同前置；压缩失败静默）
+    await _maybeCompressContext();
+    await _refreshMemoryText();
+
+    // 3. 双侧并发流。对侧供应商走独立 ApiService（baseUrl/Key 不同，
+    //    不能复用主连接池）；同供应商自答时也走独立实例——连接池隔离，
+    //    两侧取消互不干扰。生命周期归本方法（finally dispose）
+    final (otherProfile, otherModel) = target ?? (_profile, _model);
+    final otherApi = _dualApiFactory(otherProfile);
+    _dualRunning = true;
+    _status = ChatStatus.thinking;
+    _notify();
+    try {
+      await _runDualStreams(otherApi, otherProfile, otherModel, content);
+    } finally {
+      otherApi.dispose();
+      _dualRunning = false;
+      if (!_disposed) _notify();
+    }
+  }
+
+  /// 双侧并发流式：每侧独立占位消息 + CancelToken + 订阅，两侧都收尾
+  /// 后交叉标记 dualOf 进入待选择态
+  Future<void> _runDualStreams(
+    ApiService otherApi,
+    ProviderProfile otherProfile,
+    String otherModel,
+    String task,
+  ) async {
+    // 两侧占位消息（E5 同款：interrupted 预置 true，收尾覆写复位）
+    final leftMsg = ChatMessage(
+      id: _genId(),
+      sessionId: _session.id,
+      role: 'assistant',
+      interrupted: true,
+      sourceLabel: '${_profile.name} · $_model',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    final rightMsg = ChatMessage(
+      id: _genId(),
+      sessionId: _session.id,
+      role: 'assistant',
+      interrupted: true,
+      sourceLabel: '${otherProfile.name} · $otherModel',
+      createdAt: DateTime.now().millisecondsSinceEpoch + 1,
+    );
+    // 主侧流式占位走 _streamingMessage（复用既有渲染管线），对侧挂
+    // _dualStreamingMessage（列表渲染第二条流式气泡）
+    _streamingMessage = leftMsg;
+    _dualStreamingMessage = rightMsg;
+    _persistQuietly(_db.insertMessage(leftMsg));
+    _persistQuietly(_db.insertMessage(rightMsg));
+    _notify();
+
+    final leftToken = CancelToken();
+    final rightToken = CancelToken();
+    _cancelToken = leftToken;
+    _dualCancelToken = rightToken;
+
+    final history = _buildApiMessages();
+    final leftEstimate = estimatePromptTokens(history);
+
+    // 单侧执行：流式收包 → 收尾落库。返回是否成功（失败侧落错误占位）
+    Future<bool> runSide({
+      required ApiService api,
+      required ProviderProfile profile,
+      required String model,
+      required ChatMessage msg,
+      required CancelToken token,
+      required int promptEstimate,
+    }) async {
+      final completer = Completer<void>();
+      Object? streamError;
+      var finished = false;
+
+      // 收尾：成功/取消保留内容，错误标错误占位（不进 _messages——
+      // 双答收尾统一在两侧都完成后处理）
+      void finish({String? error}) {
+        if (finished) return;
+        finished = true;
+        if (error != null) streamError = error;
+        if (!completer.isCompleted) completer.complete();
+      }
+
+      final sub = api
+          .chatStream(
+        profile: profile,
+        messages: history,
+        model: model,
+        effort: _effectiveEffort,
+        cancelToken: token,
+        temperature: _effectiveTemperature,
+        tools: null, // 双答纯文本对照，无工具
+      )
+          .listen(
+        (event) {
+          switch (event) {
+            case SseDeltaReasoning(:final text):
+              msg.reasoning += text;
+              if (!_disposed) _notify();
+            case SseDeltaContent(:final text):
+              msg.content += text;
+              if (!_disposed) _notify();
+            case SseUsage(:final promptTokens, :final completionTokens):
+              msg.promptTokens = promptTokens;
+              msg.completionTokens = completionTokens;
+            case SseDone():
+              finish();
+            case SseInterrupted():
+              finish();
+            case SseError(:final message):
+              finish(error: message);
+            default:
+              break;
+          }
+        },
+        onError: (Object e) {
+          if (e is DioException && e.type == DioExceptionType.cancel) {
+            finish(); // 手动停止：保留已收内容
+          } else if (e is ApiException) {
+            finish(error: e.message);
+          } else {
+            finish(error: '请求失败：$e');
+          }
+        },
+        onDone: finish,
+      );
+
+      await completer.future;
+      await sub.cancel();
+
+      if (_disposed) return false;
+
+      // 收尾落库：有内容（或思考）= 覆写占位；空 + 出错 = 错误占位；
+      // 空 + 无错（取消时刚建）= 删占位
+      final hasContent =
+          msg.content.isNotEmpty || msg.reasoning.isNotEmpty;
+      if (hasContent) {
+        msg.promptTokens ??= promptEstimate > 0 ? promptEstimate : null;
+        msg.completionTokens ??= () {
+          final est = estimateTextTokens(msg.reasoning + msg.content);
+          return est > 0 ? est : null;
+        }();
+        msg.interrupted = streamError != null;
+        _persistQuietly(_db.insertMessage(msg));
+        return streamError == null;
+      }
+      if (streamError != null) {
+        msg.content = '（该侧请求失败：$streamError）';
+        msg.interrupted = true;
+        _persistQuietly(_db.insertMessage(msg));
+        return false;
+      }
+      _persistQuietly(_db.deleteMessage(msg.id));
+      return false;
+    }
+
+    // 两侧真并发：Future.wait 同时跑（对照体验 = 同时出字）。
+    // 任一侧抛异常按失败处理（runSide 内部已兜住流错误，这里防漏网）
+    var leftOk = false;
+    var rightOk = false;
+    try {
+      final results = await Future.wait([
+        runSide(
+          api: _api,
+          profile: _profile,
+          model: _model,
+          msg: leftMsg,
+          token: leftToken,
+          promptEstimate: leftEstimate,
+        ),
+        runSide(
+          api: otherApi,
+          profile: otherProfile,
+          model: otherModel,
+          msg: rightMsg,
+          token: rightToken,
+          promptEstimate: leftEstimate,
+        ),
+      ]);
+      leftOk = results[0];
+      rightOk = results[1];
+    } catch (e) {
+      debugPrint('ChatProvider 双答流异常（按失败收尾）：$e');
+    }
+    if (_disposed) return;
+
+    // 两侧都收尾：进消息列表 + 交叉标记 dualOf（互指 = 待选择态）。
+    // 仅两侧都成功收尾（runSide true = 有真实内容且无错误）才互指——
+    // 失败侧的错误占位不参与选择（没人会在真答案和报错之间纠结），
+    // 空侧占位已删除；单侧结果直接当普通消息用，无需选择
+    final leftKept = leftMsg.content.isNotEmpty;
+    final rightKept = rightMsg.content.isNotEmpty;
+    if (leftOk && rightOk) {
+      leftMsg.dualOf = rightMsg.id;
+      rightMsg.dualOf = leftMsg.id;
+      _persistQuietly(_db.insertMessage(leftMsg));
+      _persistQuietly(_db.insertMessage(rightMsg));
+    }
+    _messages = [..._messages, if (leftKept) leftMsg, if (rightKept) rightMsg];
+
+    // 双答收尾状态：两侧都成功 = idle 待选择；有失败侧 = error 提示
+    //（成功侧仍展示，错误条可关闭）
+    _streamingMessage = null;
+    _dualStreamingMessage = null;
+    _cancelToken = null;
+    _dualCancelToken = null;
+    if (!leftOk || !rightOk) {
+      _status = ChatStatus.error;
+      _errorMessage = leftOk
+          ? '对侧（${otherProfile.name}）请求失败，本侧结果已保留'
+          : '本侧（${_profile.name}）请求失败，对侧结果已保留';
+    } else {
+      _status = ChatStatus.idle;
+    }
+    _thinkingStart = null;
+    _generationStart = null;
+    _lastRoundInterrupted = false;
+    _notify();
+  }
+
+  /// F6 点选其一继续会话：删除姊妹回答，清本侧标记，返回应切换到的
+  /// 供应商与模型（选中侧的来源；null = 保持当前）
+  ///
+  /// 待选择态下气泡上的「用这个继续」按钮调用。切换由宿主执行
+  /// （switchProvider 需要重建 ApiService，UI 层已有成熟管线）。
+  Future<(ProviderProfile, String)?> chooseDual(ChatMessage keep) async {
+    if (!isAwaitingDualChoice) return null;
+    final siblingId = keep.dualOf;
+    if (siblingId == null) return null;
+
+    // 删姊妹（DB + 内存），清本侧标记（DB + 内存）。
+    // keep 可能是宿主传入的 DB 新实例（非 _messages 内对象），
+    // 标记清除按 id 定位内存实例，保证渲染态与 DB 一致
+    await _db.deleteMessage(siblingId);
+    _messages = [
+      for (final m in _messages)
+        if (m.id != siblingId) m,
+    ];
+    for (final m in _messages) {
+      if (m.id == keep.id) m.dualOf = null;
+    }
+    keep.dualOf = null;
+    await _db.insertMessage(keep); // replace 覆写清 dual_of
+    _notify(); // 列表重建：姊妹气泡消失 + 本侧按钮隐藏（待选择态解除）
+
+    // 选中侧来源 = 会话后续走向（来源徽标已把出处告诉用户，切换让
+    // 后续对话延续同一供应商）
+    final label = keep.sourceLabel;
+    if (label == null) return null;
+    // sourceLabel 格式「{name} · {model}」；反解 name 找 profile
+    final sep = label.lastIndexOf(' · ');
+    if (sep < 0) return null;
+    final providerName = label.substring(0, sep);
+    final model = label.substring(sep + 3);
+    // 当前会话供应商名字匹配 = 保持现状（无需切换）
+    if (providerName == _profile.name && model == _model) return null;
+    // 找不到对应 profile（如已删除）= 保持现状
+    final profiles = await _db.getAllProviders();
+    for (final p in profiles) {
+      if (p.name == providerName) return (p, model);
+    }
+    return null;
+  }
+
   /// F2 分层上下文压缩：水位检查 → 触发摘要生成 → 更新注入状态
   ///
   /// 触发条件：最近一轮 prompt token ≥ 水位线（名义 32k 的 75%）且
@@ -438,10 +769,16 @@ class ChatProvider extends ChangeNotifier {
     }
     if (lastUserId == null) return;
 
-    // 删除该 assistant 消息及其后全部消息（含 tool 结果等中间产物）
+    // 删除该 assistant 消息及其后全部消息（含 tool 结果等中间产物；
+    // F6：双答姊妹在前面时同样被删——重答任一侧 = 整轮重来）
     final orphans = _messages.skip(idx).toList();
     for (final m in orphans) {
       await _db.deleteMessage(m.id);
+    }
+    // 姊妹回答在重答目标之前（重答左侧时右侧还在列表前段）：一并删除
+    final siblingId = assistantMsg.dualOf;
+    if (siblingId != null) {
+      await _db.deleteMessage(siblingId);
     }
     final userIdx = _messages.indexWhere((m) => m.id == lastUserId);
     _messages = _messages.sublist(0, userIdx + 1);
@@ -693,9 +1030,10 @@ class ChatProvider extends ChangeNotifier {
     return true;
   }
 
-  /// 停止生成（保留已收内容）
+  /// 停止生成（保留已收内容；双答时同时停两侧）
   void stopGeneration() {
     _cancelToken?.cancel();
+    _dualCancelToken?.cancel();
   }
 
   /// 断流续传（I10）：对最后一条 user 消息重新发起生成
@@ -1027,6 +1365,38 @@ class ChatProvider extends ChangeNotifier {
   bool get lastRoundInterrupted => _lastRoundInterrupted;
   bool _lastRoundInterrupted = false;
 
+  // ===== F6 同问双答 =====
+
+  /// 双答目标（一次性消费）：sendDualMessage 读取后立即置 null。
+  /// null = 用当前会话供应商自答（对照自身风格）；非空 = 跨厂商对照。
+  /// 不持久化——双答是即时动作，重启后残留目标无意义
+  (ProviderProfile, String)? _dualTarget;
+
+  /// 双答进行中标记（UI：双答 tag 显示「双答中…」并禁点）
+  bool _dualRunning = false;
+
+  /// 双答进行中（两侧任一流未收尾都算；UI 显隐依据）
+  bool get isDualRunning => _dualRunning;
+
+  /// 待选择态：最后两条 assistant 消息互为姊妹（dualOf 互指）。
+  /// 派生值无陈旧风险——chooseDual 删姊妹清标记后自然回到 false
+  bool get isAwaitingDualChoice {
+    final n = _messages.length;
+    if (n < 2) return false;
+    final a = _messages[n - 2];
+    final b = _messages[n - 1];
+    return a.role == 'assistant' &&
+        b.role == 'assistant' &&
+        a.dualOf == b.id &&
+        b.dualOf == a.id;
+  }
+
+  /// 设置一次性双答目标（home_page 选择 sheet 调用；流式中禁止）
+  Future<void> setDualTarget(ProviderProfile profile, String model) async {
+    if (isStreaming || _dualRunning) return;
+    _dualTarget = (profile, model);
+  }
+
   String _genId() =>
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +
       (_messages.length.toString()) +
@@ -1044,6 +1414,7 @@ class ChatProvider extends ChangeNotifier {
     _disposed = true;
     _subscription?.cancel();
     _cancelToken?.cancel();
+    _dualCancelToken?.cancel();
     // dispose 硬边界：后台 loop 的挂起链（工具执行/收尾写库）恢复时
     // 检查 _disposed 即退出，不再产生任何 DB 写（CI 取证：挂起链在
     // 测试 tearDown 换库后恢复，把上一用例残留写进新库）
