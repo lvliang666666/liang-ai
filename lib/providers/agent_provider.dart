@@ -15,6 +15,9 @@ class AgentProvider extends ChangeNotifier {
   List<Agent> get agents => _agents;
   bool get loaded => _loaded;
 
+  /// 底层服务（T2 run_skill 委派桥：ChatProvider 按 id 查 Skill 用）
+  AgentService get service => _service;
+
   /// 内置 Agent（列表前段）
   List<Agent> get builtins =>
       _agents.where((s) => s.isBuiltin).toList();

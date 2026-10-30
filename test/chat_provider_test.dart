@@ -1,10 +1,12 @@
 import 'dart:async';
 
+import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/context_summary.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
+import 'package:ai_chat_app/services/agent_service.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:ai_chat_app/services/generation_keepalive.dart';
@@ -877,6 +879,145 @@ void main() {
       await Future.delayed(Duration.zero);
       await Future.delayed(Duration.zero);
       expect(GenerationKeepalive.active, isFalse);
+      p.dispose();
+    });
+  });
+
+  group('T2 run_skill 注册表接线', () {
+    /// 建一个带/不带 AgentService 的 provider（复用 setUp 的 db/api）
+    ChatProvider skillProvider({required bool withAgentService}) => ChatProvider(
+          database: db,
+          api: api,
+          session: ChatSession(
+            id: 's-skill',
+            title: '新对话',
+            createdAt: 1000,
+            updatedAt: 1000,
+          ),
+          profile: ProviderProfile.builtinCompany(),
+          model: 'glm5.1',
+          agentService: withAgentService ? AgentService(database: db) : null,
+        );
+
+    test('注入 agentService：注册表含 run_skill', () async {
+      final p = skillProvider(withAgentService: true);
+      await p.loadMessages();
+      expect(p.toolCount, greaterThan(0));
+      // run_skill 在注册表里 → 请求的 tools 数组带它
+      await p.sendMessage('委派任务');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      final names = [
+        for (final t in api.lastTools!)
+          (t['function'] as Map)['name'] as String,
+      ];
+      expect(names, contains('run_skill'));
+      p.dispose();
+    });
+
+    test('不注入 agentService：注册表不含 run_skill（向后兼容）', () async {
+      final p = skillProvider(withAgentService: false);
+      await p.loadMessages();
+      await p.sendMessage('普通消息');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      if (api.lastTools != null) {
+        final names = [
+          for (final t in api.lastTools!)
+            (t['function'] as Map)['name'] as String,
+        ];
+        expect(names, isNot(contains('run_skill')));
+      }
+      p.dispose();
+    });
+
+    test('setAgent 切换后 run_skill 仍在（重建注册表不丢委派桥）', () async {
+      final p = skillProvider(withAgentService: true);
+      await p.loadMessages();
+      // 切到只允许 get_current_time 的 Agent
+      await p.setAgent(Agent(
+        id: 'timer',
+        name: '计时器',
+        prompt: '只报时间',
+        toolNames: ['get_current_time'],
+      ));
+      await p.sendMessage('现在几点');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+      final names = [
+        for (final t in api.lastTools!)
+          (t['function'] as Map)['name'] as String,
+      ];
+      expect(names, ['get_current_time', 'run_skill']);
+      p.dispose();
+    });
+
+    test('端到端：主 loop 收到 run_skill 调用 → 子 loop 跑完 → 汇报落库',
+        () async {
+      final p = skillProvider(withAgentService: true);
+      // 预置一个 Skill（子 loop 的 system prompt 来源）
+      final service = AgentService(database: db);
+      await service.create(
+          name: '翻译官', prompt: '你是翻译官，只输出译文。');
+      // create 的 id 是时间戳随机串，查回来
+      final agents = await service.getAll();
+      final translator = agents.firstWhere((a) => a.name == '翻译官');
+      await p.loadMessages();
+      await p.sendMessage('把这句话翻译成英文：你好');
+
+      // 主 loop 第一轮：模型请求 run_skill
+      api.emit(SseToolCallDelta(
+        index: 0,
+        id: 'call_1',
+        name: 'run_skill',
+        argumentsFragment:
+            '{"skill_id": "${translator.id}", "task": "翻译：你好"}',
+      ));
+      api.emit(const SseToolCallsFinished());
+      await Future.delayed(Duration.zero);
+
+      // 子 loop 是独立请求（复用宿主 api = 同一 MockApiService）：
+      // 轮询等它发起请求，再喂子 loop 的最终汇报（广播流不缓存事件）
+      final deadline = DateTime.now().add(const Duration(seconds: 2));
+      while (api.chatStreamCalls < 2) {
+        if (DateTime.now().isAfter(deadline)) fail('子 loop 未发起请求');
+        await Future.delayed(const Duration(milliseconds: 5));
+      }
+      api.emit(const SseDeltaContent('Hello'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+
+      // 主 loop 第二轮：等请求发起（订阅就绪）再喂事件
+      final deadline2 = DateTime.now().add(const Duration(seconds: 2));
+      while (api.chatStreamCalls < 3) {
+        if (DateTime.now().isAfter(deadline2)) fail('主 loop 第二轮未发起');
+        await Future.delayed(const Duration(milliseconds: 5));
+      }
+      api.emit(const SseDeltaContent('翻译完成：Hello'));
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      // 最终 assistant 落库是异步收尾，轮询等齐 4 条
+      List<dynamic> msgs = [];
+      final deadline3 = DateTime.now().add(const Duration(seconds: 2));
+      while (true) {
+        msgs = await db.getMessages('s-skill');
+        if (msgs.length >= 4 ||
+            DateTime.now().isAfter(deadline3)) {
+          break;
+        }
+        await Future.delayed(const Duration(milliseconds: 5));
+      }
+
+      // user + assistant(tool_calls) + tool(汇报) + assistant(最终)
+      expect(msgs.length, 4);
+      expect(msgs[1].toolCalls.first.name, 'run_skill');
+      expect(msgs[2].content, 'Hello'); // 子 loop 最终汇报进主会话
+      expect(msgs[3].content, '翻译完成：Hello');
       p.dispose();
     });
   });
