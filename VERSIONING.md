@@ -8,7 +8,18 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.20.0**（2026-10-30 发布）
+**当前版本：v2.21.0**（2026-10-30 发布）
+
+v2.21.0 在 v2.20.0 基础上新增（feat/skill-orchestration 分支，roadmap T2 → MINOR）：
+
+- **T2 Skill 链式编排（run_skill 子 agent）**：新增 `run_skill` 内置工具——主 agent 把任意 Skill（Agent 人格）作为子任务委派到隔离子 loop 跑完汇报。Skill 从静态模板升维成「可被模型调度的能力包」，零服务端代价的多 agent 最小形态
+- **隔离子 loop**：独立消息历史（system = Skill prompt，user = 委派任务，不携带主会话上下文）；Skill.toolNames 白名单从主目录选取（null = 全部）；轮数上限 4，末轮注入系统提示强制收尾；effort=low；全程内存态不落库，只有最终汇报以 tool 结果消息进入主会话
+- **防递归**：子 loop 工具目录**永不注册 run_skill**（深度限制 1 的结构保证，目录里混入同名工具也会被过滤）
+- **RunSkillDelegate 委派桥**：工具类保持纯 Dart 可单测，宿主 ChatProvider 注入 api/profile/model/取消令牌/工具目录；子 loop 复用主 loop 的 ApiService 连接池；主 loop 被用户停止时子 loop 同步终止（取消令牌透传，返回部分结果）
+- **ChatProvider 接线**：构造注入 agentService 时注册 run_skill（null 不注册，向后兼容）；setAgent 切换重建注册表不丢委派桥
+- 932 项测试全绿（新增 17：工具 13 + Provider 接线 4，含端到端「主 loop → run_skill → 子 loop → 汇报落库」链路）；flutter analyze 零 error/warning（56 条 info 持平）
+
+### v2.20.0（2026-10-30）
 
 v2.20.0 在 v2.19.0 基础上新增（feat/morning-briefing 分支，roadmap P1 → MINOR）：
 

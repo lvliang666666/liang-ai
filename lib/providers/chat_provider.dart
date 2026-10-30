@@ -11,6 +11,7 @@ import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
 import '../models/agent.dart';
 import '../models/tool_call.dart';
+import '../services/agent_service.dart';
 import '../services/api_service.dart';
 import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
@@ -20,6 +21,7 @@ import '../services/smart_router.dart';
 import '../services/sse_parser.dart';
 import '../services/tool_registry.dart';
 import '../services/tools/builtin_tools.dart';
+import '../services/tools/run_skill_tool.dart';
 
 /// 聊天流式状态
 enum ChatStatus { idle, thinking, answering, toolCalling, error }
@@ -38,6 +40,7 @@ class ChatProvider extends ChangeNotifier {
     ContextSummaryService? summaryService,
     bool smartRouting = false,
     bool keepaliveNotification = false,
+    AgentService? agentService,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -50,7 +53,19 @@ class ChatProvider extends ChangeNotifier {
             ContextSummaryService(api: api, database: database),
         _smartRoutingEnabled = smartRouting,
         _keepaliveNotification = keepaliveNotification,
-        _tools = _buildRegistry(agent, toolCatalog, sessionId: session.id);
+        _runSkillDelegate = agentService == null
+            ? null
+            : _HostRunSkillDelegate(agentService) {
+    // 委派桥绑定宿主（初始化列表不能引用 this，构造体补挂）
+    _runSkillDelegate?._bindHost(this);
+    // 注册表在构造体构建：run_skill 需要已绑定的委派桥实例
+    _tools = _buildRegistry(
+      agent,
+      toolCatalog,
+      sessionId: session.id,
+      runSkillDelegate: _runSkillDelegate,
+    );
+  }
 
   final DatabaseService _db;
   ApiService _api;
@@ -73,6 +88,10 @@ class ChatProvider extends ChangeNotifier {
   /// 工具目录（Agent 工具子集的选取范围）
   List<ToolHandler> _toolCatalog;
 
+  /// run_skill 委派桥（agentService 非空时构建并绑定宿主；null =
+  /// run_skill 不注册，兼容现有测试与「无 Agent 服务」场景）
+  _HostRunSkillDelegate? _runSkillDelegate;
+
   /// 工具注册表（按 Agent.toolNames 从目录构建；null = 不启用工具；
   /// 是否随请求发送还看 profile 能力）
   ToolRegistry? _tools;
@@ -83,9 +102,10 @@ class ChatProvider extends ChangeNotifier {
   /// [] = 无工具；非空 = 指定子集（目录中不存在的名字忽略）。
   /// memory_save 工具按当前 Agent 注入来源名（记忆溯源）；
   /// search_history 工具注入当前会话 id（检索时排除本会话）。
+  /// run_skill 仅在宿主提供 AgentService 时注册（T2 链式编排）。
   static ToolRegistry _buildRegistry(
       Agent? agent, List<ToolHandler> catalog,
-      {String? sessionId}) {
+      {String? sessionId, RunSkillDelegate? runSkillDelegate}) {
     final registry = ToolRegistry();
     final allowed = agent?.toolNames;
     final selected = allowed == null
@@ -99,6 +119,9 @@ class ChatProvider extends ChangeNotifier {
                 ? SearchHistoryTool(currentSessionId: sessionId)
                 : t,
     ]);
+    if (runSkillDelegate != null) {
+      registry.register(RunSkillTool(runSkillDelegate));
+    }
     return registry;
   }
 
@@ -843,7 +866,8 @@ class ChatProvider extends ChangeNotifier {
   Future<void> setAgent(Agent? agent) async {
     if (_agent?.id == agent?.id) return;
     _agent = agent;
-    _tools = _buildRegistry(agent, _toolCatalog, sessionId: _session.id);
+    _tools = _buildRegistry(agent, _toolCatalog,
+        sessionId: _session.id, runSkillDelegate: _runSkillDelegate);
     await _db.updateSessionAgent(_session.id, agent?.id);
     _notify();
   }
@@ -1036,6 +1060,38 @@ class _ToolCallAccumulator {
   String id = '';
   String name = '';
   final StringBuffer arguments = StringBuffer();
+}
+
+/// T2 run_skill 委派桥宿主实现：从 ChatProvider 运行时状态取
+/// profile/model/取消令牌，Skill 从 AgentService 查库
+///
+/// 宿主在构造后绑定（Dart 初始化列表不能引用 this）——绑定前调用
+/// 委派方法抛 StateError（实际不可达：工具只在 loop 执行期间被调）。
+class _HostRunSkillDelegate implements RunSkillDelegate {
+  _HostRunSkillDelegate(this._agentService);
+
+  final AgentService _agentService;
+
+  ChatProvider? _host;
+
+  /// 构造体补挂宿主（Dart 初始化列表不能引用 this）
+  void _bindHost(ChatProvider host) => _host = host;
+
+  @override
+  (ProviderProfile, String) currentTarget() =>
+      (_host!._profile, _host!._model);
+
+  @override
+  ApiService api() => _host!._api;
+
+  @override
+  CancelToken? currentCancelToken() => _host?._cancelToken;
+
+  @override
+  Future<Agent?> skillById(String id) => _agentService.getById(id);
+
+  @override
+  List<ToolHandler> toolCatalog() => _host!._toolCatalog;
 }
 
 /// 本地 token 估算：CJK 字符 ≈1 token/字，其他 ≈1 token/4 字符

@@ -342,6 +342,8 @@ class _HomePageState extends State<HomePage> {
       // I13 后台保活通知开关（设置页控制；关 = 不启动前台服务）
       keepaliveNotification:
           context.read<SettingsService>().keepaliveNotification,
+      // T2 run_skill 链式编排：Skill 查库服务（子 loop 委派桥）
+      agentService: context.read<AgentProvider>().service,
       toolCatalog: [
         ...builtinTools,
         for (final t in httpTools) HttpToolHandler(t),
