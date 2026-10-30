@@ -149,6 +149,18 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 截图描述（F7：分享图片自动视觉理解生成描述入搜索索引） =====
+  // 开 = 分享图片进来后台生成描述（可被全文搜索找回）；关 = 只收图不生成。
+  // 默认开
+  static const _kScreenshotDescription = 'screenshot_description';
+  bool get screenshotDescription =>
+      _prefs.getBool(_kScreenshotDescription) ?? true;
+  Future<void> setScreenshotDescription(bool v) async {
+    if (v == screenshotDescription) return;
+    await _prefs.setBool(_kScreenshotDescription, v);
+    notifyListeners();
+  }
+
   // 上次生成简报的日期（yyyy-MM-dd）；null = 从未生成过。
   // 「打开补算式」的核心状态：跨天即重新生成，当天内不重复打扰
   static const _kLastBriefingDate = 'last_briefing_date';
