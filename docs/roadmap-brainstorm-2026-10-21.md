@@ -107,7 +107,7 @@ FTS5 检索底座 → 备份/导出 → home_page 拆分 → 流式智能跟随
 | E6 | **API Key 加固** | 迁移 flutter_secure_storage（Android Keystore），启动一次性迁移删明文；立规矩：日志/导出/崩溃报告三处永不包含 key。单独排期不值，作为 E1 的前置顺手做 | 低 | 工程 | ✅ v2.3.8 |
 | E7 | **CI 门禁** | GitHub Actions 单 workflow：push/PR 触发 analyze+test（pub 缓存）；tag 可选 APK 冒烟构建。CI 的价值不是门禁是**防呆**——把「发版前必须验证」从记忆变成强制 | 低 | 工程 | ✅ v2.18.0 |
 | E8 | **发版脚本化** | 脚本串起五步的机械部分（版本号 bump/build/aapt 校验/归档命名/git tag），人工只留文档撰写。发版从「五步记忆」变「一条命令+写文档」 | 低 | 工程 | ✅ v2.3.6 |
-| E9 | **ChatProvider 瘦身** | agentic loop 抽成纯 Dart 编排器 ChatOrchestrator（不 import Flutter），输入消息+service 依赖输出事件流；ChatProvider 退化为订阅事件→映射状态机。loop 可用假 service 单测，复刻 SseParser 的架构决策。子 agent 方向进行中，loop 还会加功能——现在抽离是干净接口上做加法 | 中偏高 | 工程 | ☐ |
+| E9 | **ChatProvider 瘦身** | agentic loop 抽成纯 Dart 编排器 ChatOrchestrator（不 import Flutter），输入消息+service 依赖输出事件流；ChatProvider 退化为订阅事件→映射状态机。loop 可用假 service 单测，复刻 SseParser 的架构决策。子 agent 方向进行中，loop 还会加功能——现在抽离是干净接口上做加法 | 中偏高 | 工程 | ✅ v2.30.0（ChatOrchestrator 事件同步派发 + 17 单测，全量 1158 绿）|
 | E10 | **依赖体检机制** | 季度一次 pub outdated + 三规则：安全补丁立即升；核心链路依赖（dio/gpt_markdown）升级单独分支跑全量测试；Flutter SDK 滞后稳定版一个版本。pubspec.lock 务必入库 | 低 | 工程 | ✅ v2.24.0（首份报告 docs/dependency-review-2026-10-30.md，季度节奏 2027-01 复检）|
 | E11 | **性能检查点三件套** | ①流式气泡 key 隔离保证只重建最后一个 ②确认 ListView.builder+会话列表游标分页 ③构建加 --split-per-abi 出 arm64 独立包。现在改是几行代码，等卡了再查是性能考古 | 低 | 工程 | ✅ v2.18.0 |
 
