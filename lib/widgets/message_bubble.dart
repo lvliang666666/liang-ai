@@ -54,6 +54,7 @@ class MessageBubble extends StatefulWidget {
     this.onQuote,
     this.onRegenerate,
     this.onSaveAsCard,
+    this.onChooseDual,
   });
 
   final ChatMessage message;
@@ -94,6 +95,10 @@ class MessageBubble extends StatefulWidget {
 
   /// 沉淀为卡片（M5 对话炼金炉：user/assistant 消息均可，null = 无沉淀能力）
   final VoidCallback? onSaveAsCard;
+
+  /// F6 同问双答「用这个继续」（仅待选择态的 assistant 消息，null =
+  /// 无选择能力——姊妹气泡上的按钮不显示，普通消息不受影响）
+  final VoidCallback? onChooseDual;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -328,6 +333,30 @@ class _MessageBubbleState extends State<MessageBubble> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // F6 来源徽标：双答回答的出处（「公司 GLM · glm5.1」）。
+                // null = 普通消息无徽标；流式中也显示（对照时知道哪条是谁）
+                if (message.sourceLabel != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.verified_outlined,
+                            size: 12, color: colorScheme.primary),
+                        const SizedBox(width: 3),
+                        Flexible(
+                          child: Text(
+                            message.sourceLabel!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                 // 钉住标记（F2）：钉住消息所在轮永不压缩进前情摘要
                 if (message.pinned)
                   Padding(
@@ -461,6 +490,14 @@ class _MessageBubbleState extends State<MessageBubble> {
                 // I10 生成状态角标：token 数 + 耗时（非流式 assistant 消息）
                 if (!isStreaming && !widget.interrupted)
                   _GenerationBadge(message: message),
+                // F6 同问双答「用这个继续」：待选择态（dualOf 互指）时
+                // 显示——点选本侧，姊妹回答删除、会话回到单线。流式中
+                // 不显示（两侧都收尾后才进入待选择态）
+                if (!isStreaming && message.dualOf != null && widget.onChooseDual != null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: _ChooseDualButton(onTap: widget.onChooseDual!),
+                  ),
               ],
             ),
           ),
@@ -968,6 +1005,47 @@ class _GenerationBadge extends StatelessWidget {
     var s = (tokens / 1000).toStringAsFixed(1);
     if (s.endsWith('.0')) s = s.substring(0, s.length - 2);
     return '${s}k';
+  }
+}
+
+/// F6 同问双答「用这个继续」按钮：点选本侧回答继续会话
+///
+/// 主色描边胶囊（区别于普通按钮的填充态——选择是轻量动作，不该
+/// 抢正文视觉权重）；点击后宿主删姊妹清标记，按钮随 dualOf 清空消失
+class _ChooseDualButton extends StatelessWidget {
+  const _ChooseDualButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: cs.primary, width: 1),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle_outline, size: 14, color: cs.primary),
+            const SizedBox(width: 5),
+            Text(
+              '用这个继续',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: cs.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

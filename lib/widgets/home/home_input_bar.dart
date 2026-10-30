@@ -50,6 +50,7 @@ class HomeInputBar extends StatefulWidget {
     required this.onPickAgent,
     required this.onPickModel,
     required this.onPickEffort,
+    this.onPickDual,
     this.editingMessage,
     this.onCancelEdit,
     this.quotedMessage,
@@ -76,6 +77,9 @@ class HomeInputBar extends StatefulWidget {
   final VoidCallback onPickAgent;
   final VoidCallback onPickModel;
   final VoidCallback onPickEffort;
+
+  /// F6 同问双答：双答 tag 点击（弹对侧供应商选择 sheet；null = 不显示）
+  final VoidCallback? onPickDual;
 
   /// 编辑态（I4）：正在编辑的 user 消息（null = 非编辑态）。
   /// 编辑态下发送走编辑重发管线而非普通发送。
@@ -590,6 +594,16 @@ class _HomeInputBarState extends State<HomeInputBar> {
           icon: Icons.data_usage,
           label: formatTokenCount(chat.totalTokens),
           onTap: () => _openTokenUsageSheet(context, chat),
+        ),
+      // F6 同问双答：仅聊天态显示。双答进行中显示「双答中…」并禁点；
+      // 待选择态隐藏（选择走气泡上的「用这个继续」按钮）
+      if (inChat && widget.onPickDual != null && !chat.isAwaitingDualChoice)
+        ChatTag(
+          icon: Icons.compare_arrows,
+          label: chat.isDualRunning ? '双答中…' : '双答',
+          onTap: chat.isDualRunning || chat.isStreaming
+              ? () {}
+              : widget.onPickDual!,
         ),
     ]);
   }

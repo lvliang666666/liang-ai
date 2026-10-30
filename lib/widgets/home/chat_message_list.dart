@@ -31,6 +31,7 @@ class ChatMessageList extends StatefulWidget {
     this.onQuoteMessage,
     this.onRegenerateMessage,
     this.onSaveAsCard,
+    this.onChooseDualMessage,
   });
 
   /// 会话身份 key：AnimatedSwitcher 据此判断是否播过渡
@@ -51,6 +52,10 @@ class ChatMessageList extends StatefulWidget {
   /// 沉淀为卡片（M5：user/assistant 消息长按菜单「沉淀为卡片」入口；
   /// null = 无沉淀能力）
   final ValueChanged<ChatMessage>? onSaveAsCard;
+
+  /// F6 同问双答「用这个继续」（待选择态 assistant 气泡按钮入口；
+  /// null = 无选择能力）
+  final ValueChanged<ChatMessage>? onChooseDualMessage;
 
   @override
   State<ChatMessageList> createState() => ChatMessageListState();
@@ -345,6 +350,14 @@ class ChatMessageListState extends State<ChatMessageList> {
                               widget.chat.displayMessages.length - 1 - index];
                           if (msg.isToolResult) return const SizedBox.shrink();
                           final isLast = index == 0;
+                          // F6 双答：两条流式占位都在列表尾部（倒数第一/二
+                          // 条 assistant），都按流式渲染（打字机 + 光标）。
+                          // 普通单流时只有最后一条是流式
+                          final isStreamingMsg = widget.chat.isStreaming &&
+                              (isLast ||
+                                  (widget.chat.isDualRunning &&
+                                      index == 1 &&
+                                      msg.role == 'assistant'));
                           // 微信式时间戳：首条必显，之后与上一条间隔 >5 分钟才显示
                           final showTime = _shouldShowTime(index);
                           return Column(
@@ -357,8 +370,7 @@ class ChatMessageListState extends State<ChatMessageList> {
                                 //（ValueKey 保流式重建时的元素身份）
                                 key: _bubbleKey(msg.id),
                                 message: msg,
-                                isStreaming:
-                                    isLast && widget.chat.isStreaming,
+                                isStreaming: isStreamingMsg,
                                 thinkingSeconds:
                                     widget.chat.thinkingSeconds,
                                 toolResults: msg.id ==
@@ -398,6 +410,12 @@ class ChatMessageListState extends State<ChatMessageList> {
                                 // M5 沉淀为卡片：user/assistant 消息均可
                                 onSaveAsCard: widget.onSaveAsCard != null
                                     ? () => widget.onSaveAsCard!(msg)
+                                    : null,
+                                // F6 同问双答「用这个继续」：待选择态 assistant 气泡
+                                onChooseDual: !msg.isUser &&
+                                        msg.dualOf != null &&
+                                        widget.onChooseDualMessage != null
+                                    ? () => widget.onChooseDualMessage!(msg)
                                     : null,
                               ),
                             ],

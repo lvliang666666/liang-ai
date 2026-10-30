@@ -45,6 +45,15 @@ class ChatMessage {
   /// 用户钉住（F2：钉住消息所在轮永不压缩进前情摘要）
   bool pinned;
 
+  /// F6 同问双答：姊妹回答的消息 id（同一 user 消息的另一侧回答；
+  /// null = 普通消息）。两侧都带此标记 = 「待选择」态，用户点选其一
+  /// 后姊妹被删除、本侧标记清空，会话回到单线
+  String? dualOf;
+
+  /// F6 同问双答：来源徽标文本（如「公司 GLM · glm5.1」），气泡顶部
+  /// 展示回答出处。null = 普通消息无徽标
+  String? sourceLabel;
+
   final int createdAt;
 
   ChatMessage({
@@ -62,6 +71,8 @@ class ChatMessage {
     this.generationSeconds,
     this.interrupted = false,
     this.pinned = false,
+    this.dualOf,
+    this.sourceLabel,
     required this.createdAt,
   })  : attachments = attachments ?? const [],
         toolCalls = toolCalls ?? const [];
@@ -87,6 +98,8 @@ class ChatMessage {
         'generation_seconds': generationSeconds,
         'interrupted': interrupted ? 1 : 0,
         'pinned': pinned ? 1 : 0,
+        'dual_of': dualOf,
+        'source_label': sourceLabel,
         'created_at': createdAt,
       };
 
@@ -106,6 +119,8 @@ class ChatMessage {
         generationSeconds: map['generation_seconds'] as int?,
         interrupted: ((map['interrupted'] as int?) ?? 0) != 0,
         pinned: ((map['pinned'] as int?) ?? 0) != 0,
+        dualOf: map['dual_of'] as String?,
+        sourceLabel: map['source_label'] as String?,
         createdAt: map['created_at'] as int,
       );
 
