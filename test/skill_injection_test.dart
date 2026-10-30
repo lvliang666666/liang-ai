@@ -6,6 +6,7 @@ import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/services/api_service.dart';
 import 'package:ai_chat_app/services/database_service.dart';
+import 'package:ai_chat_app/services/output_contract.dart';
 import 'package:ai_chat_app/services/skill_variables.dart';
 import 'package:ai_chat_app/services/sse_parser.dart';
 import 'package:dio/dio.dart';
@@ -190,6 +191,39 @@ void main() {
       expect(provider.agentVariables, isEmpty);
       await sendAndWait('你好');
       expect(systemPrompt(), 'B ');
+    });
+  });
+
+  group('输出契约注入（F10）', () {
+    test('声明 output：格式指令作为独立 system 消息注入', () async {
+      final agent = Agent(
+        id: 'a1',
+        name: '提取',
+        prompt: '你是提取器',
+        outputContract: OutputContract.parse('count=张数, total=合计'),
+      );
+      await provider.setAgent(agent);
+      await sendAndWait('你好');
+      final systemMessages = [
+        for (final m in api.lastMessages!)
+          if (m['role'] == 'system') m['content'] as String,
+      ];
+      expect(systemMessages.length, 2); // prompt + 契约指令
+      expect(systemMessages[0], '你是提取器');
+      expect(systemMessages[1], contains('【输出格式】'));
+      expect(systemMessages[1], contains('```yaml'));
+      expect(systemMessages[1], contains('count: （张数）'));
+    });
+
+    test('未声明 output：无契约指令（零改动）', () async {
+      final agent = Agent(id: 'a1', name: 'x', prompt: '普通助手');
+      await provider.setAgent(agent);
+      await sendAndWait('你好');
+      final systemMessages = [
+        for (final m in api.lastMessages!)
+          if (m['role'] == 'system') m['content'] as String,
+      ];
+      expect(systemMessages, ['普通助手']);
     });
   });
 }

@@ -8,7 +8,20 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.26.0**（2026-10-30 发布）
+**当前版本：v2.27.0**（2026-10-30 发布）
+
+v2.27.0 在 v2.26.0 基础上新增（feat/output-contract 分支，roadmap F10 收官 → MINOR）：
+
+- **F10 输出契约（YAML 声明格式渲染专属卡片）**：Skill front matter `output: count=张数, total=合计` 声明输出契约 → system prompt 注入格式指令（要求回复末尾附 ```yaml 块）→ 回复解析渲染「结构化结果」专属卡片——Prompt 工程产品化三部曲（变量插槽/人格预设/输出契约）收官
+- **OutputContract 服务**（纯 Dart 可单测）：parse（字段=显示名逗号段，去重保序，无显示名回退字段名）+ instruction（格式指令生成：yaml 围栏示例 + 字段清单 + 「未确定」容错约定）+ extract（取最后一个 yaml/裸围栏块，key: value 行解析 + 缩进续行并入，**未声明字段的 key 行结算上一字段不并入值**——防噪音污染，只保留契约声明字段，空值不进 map，一个字段都没解析出 = 降级 null）
+- **降级语义（卡片是增强不是门槛）**：解析失败/未声明/流式中/user 消息 → 无卡片，markdown 正文照常渲染（yaml 块本身也是代码块，内容零丢失）
+- **Agent.outputContract 仅内存态**（同 personas 策略，DB 零迁移）：随 prompt 资产演进，启动重播种自动更新；AgentParser parse/分享码 roundtrip 透传（output 行输出/解析对称）
+- **ChatProvider**：_buildApiMessages 声明了才注入【输出格式】独立 system 消息（未声明零改动）
+- **OutputContractCard**：「结构化结果」徽标 + 字段行式布局（显示名固定列 + 值可换行，长按复制值）；MessageBubble 加 outputContract 参数，ChatMessageList 透传 chat.agent?.outputContract
+- **4 个 extractor 资产加 output 声明**：发票提取（count/totalAmount/uncertain）、账单提取（total/currency/uncertain）、待办提取（count/uncertain）、名片提取（count/uncertain）
+- 1097 项测试全绿（新增 29：契约 18 + 注入 2 + 卡片 9）；flutter analyze 零 error/warning（58 条 info）
+
+### v2.26.0（2026-10-30）
 
 v2.26.0 在 v2.25.0 基础上新增（feat/prompt-engineering 分支，roadmap F10 → MINOR）：
 
