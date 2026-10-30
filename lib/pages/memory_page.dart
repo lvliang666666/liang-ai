@@ -147,13 +147,11 @@ class _MemoryPanelState extends State<MemoryPanel> {
           ),
         ),
         // M2 自动记忆沉淀开关（会话结束自动提取记忆入库）
+        // v2.30.1：去掉 subtitle 说明文字（用户反馈占两行空间，挤压
+        // 记忆列表；功能语义保留在代码注释与验收文档）
         SwitchListTile(
           contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
           title: const Text('自动记忆沉淀'),
-          subtitle: const Text(
-            '会话结束后自动提取值得记住的信息入库（静默进行，'
-            '可在此删除）；关闭后仅手动「记住xxx」生效',
-          ),
           value: context.watch<SettingsService>().autoMemory,
           onChanged: (v) {
             Haptics.selection();
@@ -164,10 +162,6 @@ class _MemoryPanelState extends State<MemoryPanel> {
         SwitchListTile(
           contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
           title: const Text('情景记忆'),
-          subtitle: const Text(
-            '会话结束后自动生成标题与摘要入库，模型可经 search_history '
-            '工具回顾「之前聊过什么」（静默进行）；关闭后不生成不检索',
-          ),
           value: context.watch<SettingsService>().episodicMemory,
           onChanged: (v) {
             Haptics.selection();
