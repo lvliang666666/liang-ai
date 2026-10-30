@@ -8,6 +8,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/card.dart';
+import '../models/commitment.dart';
 import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
@@ -44,6 +45,7 @@ class BackupService {
     final providers = await _db.getAllProviders();
     final httpTools = await _db.getAllHttpTools();
     final cards = await _db.getAllCards();
+    final commitments = await _db.getAllCommitments();
 
     return {
       'schema': schemaVersion,
@@ -56,6 +58,7 @@ class BackupService {
         'memories': [for (final m in memories) m.toMap()],
         'http_tools': [for (final t in httpTools) t.toMap()],
         'cards': [for (final c in cards) c.toMap()],
+        'commitments': [for (final c in commitments) c.toMap()],
         // E1 硬性要求：apiKey 强制置空，凭据绝不进备份文件。
         // 行格式用 DatabaseService.providerRow（capabilities/dialect 存
         // JSON 串，与 DB 列格式一致；toMap 的嵌套 Map 无法直接入库）
@@ -144,6 +147,9 @@ class BackupService {
     final cards = (data['cards'] as List? ?? const [])
         .whereType<Map<String, dynamic>>()
         .toList();
+    final commitments = (data['commitments'] as List? ?? const [])
+        .whereType<Map<String, dynamic>>()
+        .toList();
 
     final db = await _db.database;
     await db.transaction((txn) async {
@@ -155,6 +161,7 @@ class BackupService {
       await txn.delete('providers');
       await txn.delete('http_tools');
       await txn.delete('cards');
+      await txn.delete('commitments');
       // 重灌
       for (final m in sessions) {
         await txn.insert('sessions', ChatSession.fromMap(m).toMap(),
@@ -189,6 +196,10 @@ class BackupService {
         await txn.insert('cards', Card.fromMap(c).toMap(),
             conflictAlgorithm: ConflictAlgorithm.replace);
       }
+      for (final c in commitments) {
+        await txn.insert('commitments', Commitment.fromMap(c).toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
     });
 
     return BackupStats(
@@ -199,6 +210,7 @@ class BackupService {
       providers: providers.length,
       httpTools: httpTools.length,
       cards: cards.length,
+      commitments: commitments.length,
     );
   }
 
@@ -215,6 +227,7 @@ class BackupStats {
     required this.providers,
     this.httpTools = 0,
     this.cards = 0,
+    this.commitments = 0,
   });
 
   final int sessions;
@@ -224,6 +237,7 @@ class BackupStats {
   final int providers;
   final int httpTools;
   final int cards;
+  final int commitments;
 }
 
 /// 备份文件格式错误（导入校验失败）

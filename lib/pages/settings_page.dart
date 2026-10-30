@@ -912,6 +912,20 @@ class _SettingsPageState extends State<SettingsPage> {
             setState(() => _settings.setMorningBriefing(v));
           },
         ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('承诺跟进提醒'),
+          subtitle: const Text(
+            '聊天中提到的待办（如「周五前发周报」）自动记录，到期未完成'
+            '时每天最多提醒一次：可继续聊、标记完成或忽略。'
+            '关闭后不再提取与提醒（已记录的保留）',
+          ),
+          value: _settings.commitmentFollowUp,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setCommitmentFollowUp(v));
+          },
+        ),
         const SizedBox(height: 16),
         Text('输入辅助', style: theme.textTheme.titleSmall),
         const SizedBox(height: 8),

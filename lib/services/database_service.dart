@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/card.dart';
+import '../models/commitment.dart';
 import '../models/context_summary.dart';
 import '../models/doc_chunk.dart';
 import '../models/http_tool.dart';
@@ -25,7 +26,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 20;
+  static const int dbVersion = 21;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -152,6 +153,7 @@ class DatabaseService {
     await _createSessionSummariesTable(db);
     await _createCardsTable(db);
     await _createDocChunksTable(db);
+    await _createCommitmentsTable(db);
     await _createFtsTables(db);
   }
 
@@ -296,6 +298,11 @@ class DatabaseService {
       // v19 → v20：长文工作台（F8）——新建 doc_chunks 表（PDF 分块索引，
       // 派生数据：可由原文件重新索引重建，不进备份、deleteSession 级联删）
       await _createDocChunksTable(db);
+    }
+    if (oldVersion < 21 && newVersion >= 21) {
+      // v20 → v21：承诺跟进（P3）——新建 commitments 表（对话中提取的
+      // 待办/承诺：到期日 + 状态流转 + 跟进语；deleteSession 级联删）
+      await _createCommitmentsTable(db);
     }
   }
 
@@ -505,6 +512,32 @@ class DatabaseService {
     await _createChunksFtsTable(db);
   }
 
+  /// 承诺跟进表（P3）：对话中提取的待办/承诺
+  ///
+  /// - due_date：yyyy-MM-dd（null = 无明确期限，不参与到期扫描）
+  /// - status：pending/done/dismissed（非法值由模型层回退 pending）
+  /// - follow_up/follow_up_date：到期跟进语 + 生成日期（同天不重复生成）
+  /// - 会话删除级联删（承诺是会话的衍生事项，会话没了跟进失去上下文）
+  static Future<void> _createCommitmentsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS commitments (
+        id TEXT PRIMARY KEY,
+        session_id TEXT,
+        content TEXT NOT NULL,
+        due_date TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        follow_up TEXT,
+        follow_up_date TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_commitments_status '
+      'ON commitments(status, due_date)',
+    );
+  }
+
   /// chunks_fts：doc_chunks 的 FTS5 索引（bigram 自管，同 messages_fts 模式）
   ///
   /// rowid 映射直接用 doc_chunks.id（TEXT）→ chunks_fts_rowid 桥表。
@@ -626,6 +659,7 @@ class DatabaseService {
           where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('session_summaries',
           where: 'session_id = ?', whereArgs: [id]);
+      await txn.delete('commitments', where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('sessions', where: 'id = ?', whereArgs: [id]);
     });
   }
@@ -1173,6 +1207,52 @@ class DatabaseService {
   Future<void> deleteAllCards() async {
     final db = await database;
     await db.delete('cards');
+  }
+
+  // ===== Commitments（P3 承诺跟进）=====
+
+  Future<void> insertCommitment(Commitment commitment) async {
+    final db = await database;
+    await db.insert('commitments', commitment.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 全部承诺（到期日在前：pending 的按 due_date 升序，已了结的按更新时间倒序垫底）
+  Future<List<Commitment>> getAllCommitments() async {
+    final db = await database;
+    final rows = await db.query('commitments',
+        orderBy: "CASE WHEN status = 'pending' THEN 0 ELSE 1 END, "
+            'due_date IS NULL, due_date, updated_at DESC');
+    return rows.map(Commitment.fromMap).toList();
+  }
+
+  /// 待跟进且到期的承诺（到期扫描：pending + due_date ≤ today）
+  Future<List<Commitment>> getDueCommitments(String todayKey) async {
+    final db = await database;
+    final rows = await db.query(
+      'commitments',
+      where: "status = 'pending' AND due_date IS NOT NULL AND due_date <= ?",
+      whereArgs: [todayKey],
+      orderBy: 'due_date',
+    );
+    return rows.map(Commitment.fromMap).toList();
+  }
+
+  Future<void> updateCommitment(Commitment commitment) async {
+    final db = await database;
+    await db.update('commitments', commitment.toMap(),
+        where: 'id = ?', whereArgs: [commitment.id]);
+  }
+
+  Future<void> deleteCommitment(String id) async {
+    final db = await database;
+    await db.delete('commitments', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 清空全部承诺（备份 restore 用）
+  Future<void> deleteAllCommitments() async {
+    final db = await database;
+    await db.delete('commitments');
   }
 
   // ===== HttpTools（T1 自定义 HTTP 工具）=====

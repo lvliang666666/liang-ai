@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/card.dart';
+import 'package:ai_chat_app/models/commitment.dart';
 import 'package:ai_chat_app/models/http_tool.dart';
 import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
@@ -100,6 +101,16 @@ void main() {
       createdAt: 1,
       updatedAt: 1,
     ));
+    await db.insertCommitment(Commitment(
+      id: 'cm1',
+      sessionId: 's1',
+      content: '周五前发周报',
+      dueDate: '2026-10-31',
+      followUp: '周报发了吗',
+      followUpDate: '2026-10-31',
+      createdAt: 1,
+      updatedAt: 1,
+    ));
     await settings.setThemeId('deepseek');
     await settings.setDefaultEffort('high');
     await settings.setTemperature(0.9);
@@ -123,6 +134,7 @@ void main() {
       expect((data['providers'] as List).length, 2);
       expect((data['http_tools'] as List).length, 1);
       expect((data['cards'] as List).length, 1);
+      expect((data['commitments'] as List).length, 1);
     });
 
     test('http_tools 段：字段完整往返', () async {
@@ -184,6 +196,7 @@ void main() {
       expect(stats.providers, 2);
       expect(stats.httpTools, 1);
       expect(stats.cards, 1);
+      expect(stats.commitments, 1);
 
       // 数据完整
       final sessions = await db.getAllSessions();
@@ -201,6 +214,10 @@ void main() {
       final cards = await db.getAllCards();
       expect(cards.single.title, '报销发票要求');
       expect(cards.single.tags, '财务,报销');
+      final commitments = await db.getAllCommitments();
+      expect(commitments.single.content, '周五前发周报');
+      expect(commitments.single.dueDate, '2026-10-31');
+      expect(commitments.single.followUp, '周报发了吗');
     });
 
     test('E1 双保险：导入的 provider Key 强制为空', () async {

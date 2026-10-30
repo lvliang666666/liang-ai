@@ -1,6 +1,7 @@
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
 import 'package:ai_chat_app/models/card.dart';
+import 'package:ai_chat_app/models/commitment.dart';
 import 'package:ai_chat_app/models/memory.dart';
 import 'package:ai_chat_app/services/database_service.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -218,7 +219,8 @@ void main() {
       final migrated = await openTestDbFromVersion(1);
 
       // 迁移后的表集合与新装库一致（sessions/messages/skills/providers/
-      // memories/http_tools/context_summaries/session_summaries/cards）
+      // memories/http_tools/context_summaries/session_summaries/cards/
+      // commitments）
       final tables = await migrated.rawQuery(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
       );
@@ -234,13 +236,15 @@ void main() {
           'context_summaries',
           'session_summaries',
           'cards',
+          'commitments',
         ]),
       );
       // v13 起新增 FTS5 虚表 + 影子表（_data/_idx/_content/_docsize/_config）
       // + rowid 映射表；v16 起新增 session_summaries；v18 起新增 cards；
-      // v20 起新增 doc_chunks + chunks_fts（FTS5 虚表 5 影子 + rowid 映射）
-      //（10 业务表 + 12 FTS 相关 + 2 rowid 映射）
-      expect(tables.length, 24); // agents 表应已在 v6 迁移中删除
+      // v20 起新增 doc_chunks + chunks_fts（FTS5 虚表 5 影子 + rowid 映射）；
+      // v21 起新增 commitments
+      //（11 业务表 + 12 FTS 相关 + 2 rowid 映射）
+      expect(tables.length, 25); // agents 表应已在 v6 迁移中删除
 
       // 迁移后可正常写入读出（走一遍核心链路）
       await migrated.insert('sessions', {
@@ -1260,6 +1264,127 @@ void main() {
       final msgs2 = await db.getMessages('s1');
       expect(msgs2[2].dualOf, isNull);
       expect(msgs2[2].sourceLabel, isNull);
+    });
+  });
+
+  group('Commitments CRUD（P3 承诺跟进，v21）', () {
+    Commitment commitment(String id,
+            {String? sessionId = 's1',
+            String content = '周五前发周报',
+            String? dueDate = '2026-10-31',
+            String status = Commitment.statusPending,
+            String? followUp,
+            String? followUpDate,
+            int at = 1000}) =>
+        Commitment(
+          id: id,
+          sessionId: sessionId,
+          content: content,
+          dueDate: dueDate,
+          status: status,
+          followUp: followUp,
+          followUpDate: followUpDate,
+          createdAt: at,
+          updatedAt: at,
+        );
+
+    test('插入 + 全量读取：pending 在前按到期日升序，已了结垫底', () async {
+      await db.insertCommitment(commitment('c1', dueDate: '2026-11-02'));
+      await db.insertCommitment(commitment('c2', dueDate: '2026-10-30'));
+      await db.insertCommitment(commitment('c3', dueDate: null));
+      await db.insertCommitment(
+          commitment('c4', dueDate: '2026-10-01', status: Commitment.statusDone));
+
+      final all = await db.getAllCommitments();
+      expect(all.map((c) => c.id).toList(), ['c2', 'c1', 'c3', 'c4'],
+          reason: 'pending 按到期日升序（null 最后），done 垫底');
+    });
+
+    test('toMap/fromMap 往返一致（含可空字段与状态容错）', () async {
+      await db.insertCommitment(commitment('c1',
+          followUp: '周报发了吗', followUpDate: '2026-10-31'));
+      await db.insertCommitment(commitment('c2',
+          sessionId: null, dueDate: null, status: 'bogus'));
+
+      final all = await db.getAllCommitments();
+      final a = all.firstWhere((c) => c.id == 'c1');
+      expect(a.sessionId, 's1');
+      expect(a.dueDate, '2026-10-31');
+      expect(a.followUp, '周报发了吗');
+      expect(a.followUpDate, '2026-10-31');
+
+      final b = all.firstWhere((c) => c.id == 'c2');
+      expect(b.sessionId, isNull);
+      expect(b.dueDate, isNull);
+      expect(b.status, Commitment.statusPending,
+          reason: '非法状态回退 pending');
+    });
+
+    test('getDueCommitments：pending + due_date ≤ today，按到期日升序', () async {
+      await db.insertCommitment(commitment('c1', dueDate: '2026-10-29'));
+      await db.insertCommitment(commitment('c2', dueDate: '2026-10-31'));
+      await db.insertCommitment(commitment('c3', dueDate: '2026-11-05'));
+      await db.insertCommitment(commitment('c4', dueDate: null));
+      await db.insertCommitment(commitment('c5',
+          dueDate: '2026-10-28', status: Commitment.statusDone));
+      await db.insertCommitment(commitment('c6',
+          dueDate: '2026-10-27', status: Commitment.statusDismissed));
+
+      final due = await db.getDueCommitments('2026-10-31');
+      expect(due.map((c) => c.id).toList(), ['c1', 'c2'],
+          reason: '过期 + 今天到期命中；未来/null/已了结不命中');
+    });
+
+    test('更新承诺：状态流转 + 跟进语写入', () async {
+      await db.insertCommitment(commitment('c1'));
+
+      final c1 = (await db.getAllCommitments()).single;
+      await db.updateCommitment(c1.copyWith(
+        status: Commitment.statusDone,
+        followUp: '周报发了吗',
+        followUpDate: '2026-10-31',
+        updatedAt: 2000,
+      ));
+
+      final updated = (await db.getAllCommitments()).single;
+      expect(updated.status, Commitment.statusDone);
+      expect(updated.followUp, '周报发了吗');
+      expect(updated.isSettled, isTrue);
+      expect(updated.createdAt, 1000, reason: 'createdAt 不可变');
+    });
+
+    test('删除单条 + 清空全部', () async {
+      await db.insertCommitment(commitment('c1'));
+      await db.insertCommitment(commitment('c2'));
+
+      await db.deleteCommitment('c1');
+      expect((await db.getAllCommitments()).map((c) => c.id), ['c2']);
+
+      await db.deleteAllCommitments();
+      expect(await db.getAllCommitments(), isEmpty);
+    });
+
+    test('会话删除级联删承诺（承诺是会话衍生事项）', () async {
+      await db.insertSession(session('s1'));
+      await db.insertCommitment(commitment('c1', sessionId: 's1'));
+      await db.insertCommitment(commitment('c2', sessionId: 's2'));
+
+      await db.deleteSession('s1');
+      expect((await db.getAllCommitments()).map((c) => c.id), ['c2'],
+          reason: '仅删该会话的承诺，其他会话承诺保留');
+    });
+
+    test('v20 新装库：commitments 表存在且含全部列', () async {
+      final testDb = await openTestDb();
+      final cols = await testDb.rawQuery('PRAGMA table_info(commitments)');
+      expect(
+        cols.map((c) => c['name']).toList(),
+        containsAll([
+          'id', 'session_id', 'content', 'due_date', 'status',
+          'follow_up', 'follow_up_date', 'created_at', 'updated_at',
+        ]),
+      );
+      await testDb.close();
     });
   });
 }
