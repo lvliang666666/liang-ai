@@ -126,6 +126,24 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 晨间简报（P1：每天首次打开 App 生成个性化今日简报） =====
+  // 开 = 跨天后首次打开自动生成简报（黄历/灵签/记忆/上周今天）并弹出；
+  // 关 = 永不生成。默认开
+  static const _kMorningBriefing = 'morning_briefing';
+  bool get morningBriefing => _prefs.getBool(_kMorningBriefing) ?? true;
+  Future<void> setMorningBriefing(bool v) async {
+    if (v == morningBriefing) return;
+    await _prefs.setBool(_kMorningBriefing, v);
+    notifyListeners();
+  }
+
+  // 上次生成简报的日期（yyyy-MM-dd）；null = 从未生成过。
+  // 「打开补算式」的核心状态：跨天即重新生成，当天内不重复打扰
+  static const _kLastBriefingDate = 'last_briefing_date';
+  String? get lastBriefingDate => _prefs.getString(_kLastBriefingDate);
+  Future<void> setLastBriefingDate(String v) =>
+      _prefs.setString(_kLastBriefingDate, v);
+
   // ===== 最近使用的 Agent（LRU，最多 recentAgentLimit 个） =====
   // 存储键沿用 recent_agent_ids：v6 迁移后 Agent id 与旧 Agent id 一致，
   // 老用户的最近使用列表无缝延续

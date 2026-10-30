@@ -895,6 +895,23 @@ class _SettingsPageState extends State<SettingsPage> {
             setState(() => _settings.setKeepaliveNotification(v));
           },
         ),
+        const SizedBox(height: 16),
+        Text('晨间简报', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('每日晨间简报'),
+          subtitle: const Text(
+            '每天首次打开 App 自动生成今日简报：黄历宜忌、每日一签、'
+            '结合长期记忆的贴心提醒、上周今天聊过什么。'
+            '生成失败自动回退离线简报（素材直出）',
+          ),
+          value: _settings.morningBriefing,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setMorningBriefing(v));
+          },
+        ),
       ],
     );
   }
