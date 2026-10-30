@@ -21,6 +21,7 @@ import '../services/generation_keepalive.dart';
 import '../services/memory_service.dart';
 import '../services/smart_router.dart';
 import '../services/sse_parser.dart';
+import '../services/skill_variables.dart';
 import '../services/tool_registry.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/run_skill_tool.dart';
@@ -1238,13 +1239,64 @@ class ChatProvider extends ChangeNotifier {
   /// 切换会话绑定的 Agent（null = 默认助手）
   ///
   /// 同步按新 Agent 的工具子集重建注册表，下一轮请求即生效。
-  Future<void> setAgent(Agent? agent) async {
-    if (_agent?.id == agent?.id) return;
+  /// [variables] 为该 Agent 的变量值（F10；null = 清空沿用旧值不合适，
+  /// 直接清空——换 Skill 后旧变量语义失效）。
+  Future<void> setAgent(Agent? agent, {Map<String, String>? variables}) async {
+    if (_agent?.id == agent?.id &&
+        (variables == null || _mapEquals(variables, _agentVariables))) {
+      return;
+    }
     _agent = agent;
+    _agentVariables = variables ?? const {};
     _tools = _buildRegistry(agent, _toolCatalog,
         sessionId: _session.id, runSkillDelegate: _runSkillDelegate);
     await _db.updateSessionAgent(_session.id, agent?.id);
     _notify();
+  }
+
+  /// F10：当前 Agent 的变量值（选 Skill 时表单填写；渲染 prompt 用）
+  Map<String, String> _agentVariables = const {};
+
+  /// 设置/更新当前 Agent 的变量值（不换 Agent，只改值——表单二次打开）
+  void setAgentVariables(Map<String, String> values) {
+    _agentVariables = Map.of(values);
+    _notify();
+  }
+
+  /// 当前 Agent 的变量值（UI 表单回显用；只读副本）
+  Map<String, String> get agentVariables => Map.unmodifiable(_agentVariables);
+
+  /// 该 Agent 是否声明了自定义变量（UI 判断是否需要表单）
+  bool get agentHasVariables => _agent != null && _agent!.customVariables.isNotEmpty;
+
+  /// 该 Agent 的人格预设清单（F10；空 = 未声明）
+  List<SkillPersona> get agentPersonas => _agent?.personas ?? const [];
+
+  /// 当前生效的 persona 预设名（null = 未选预设/未声明）
+  String? get activePersonaName => _activePersonaName;
+  String? _activePersonaName;
+
+  /// 切换人格预设（F10）：等价于设置 persona 变量值 + 记住预设名
+  ///
+  /// [persona] 为 null = 取消预设（persona 变量回空串）。
+  void setPersona(SkillPersona? persona) {
+    _activePersonaName = persona?.name;
+    final values = Map.of(_agentVariables);
+    if (persona == null) {
+      values.remove('persona');
+    } else {
+      values['persona'] = persona.value;
+    }
+    _agentVariables = values;
+    _notify();
+  }
+
+  static bool _mapEquals(Map<String, String> a, Map<String, String> b) {
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      if (b[e.key] != e.value) return false;
+    }
+    return true;
   }
 
   /// 当前生效的模型名
@@ -1326,7 +1378,12 @@ class ChatProvider extends ChangeNotifier {
   /// 摘要边界（firstKeptId）之后的原文——早期历史已被压缩进摘要；
   /// 钉住轮（pinnedIds 清单）在边界之前但原文保留，按原顺序捞回。
   List<Map<String, Object?>> _buildApiMessages({bool forceSummary = false}) {
-    final prompt = _agent?.prompt;
+    // F10 变量插槽：发送时刻渲染（内置变量按当前时间求值——
+    // 「今天日期」跨天自动正确；自定义变量用表单填写值）
+    final rawPrompt = _agent?.prompt;
+    final prompt = rawPrompt == null || rawPrompt.isEmpty
+        ? rawPrompt
+        : SkillVariables.render(rawPrompt, values: _agentVariables);
     final summary = _contextSummary;
     // 摘要边界之后的历史（边界消息被删时按时间兜底）
     final history = summary == null
