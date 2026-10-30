@@ -125,10 +125,10 @@ packages:
     dependency: "direct main"
     description:
       name: crypto
-      sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
+      sha256: e3626ae6270383c9e3a549f34c9e4cd26c09ae6a9adaab2bf4737a00340efdc4
       url: "https://pub.flutter-io.cn"
     source: hosted
-    version: "3.0.7"
+    version: "3.0.8"
   cupertino_icons:
     dependency: "direct main"
     description:
@@ -950,10 +950,10 @@ packages:
     dependency: "direct dev"
     description:
       name: sqflite_common_ffi
-      sha256: "4cb6179390549743fc1a5a2fb8f134e5ad87ce459f6f4e563531487dadd81710"
+      sha256: "119d730460264a1f11f414d9eaa43fb686789357e81ce35f9e8ccb66ddd040e4"
       url: "https://pub.flutter-io.cn"
     source: hosted
-    version: "2.4.4"
+    version: "2.4.5"
   sqflite_darwin:
     dependency: transitive
     description:
@@ -1006,18 +1006,18 @@ packages:
     dependency: transitive
     description:
       name: syncfusion_flutter_core
-      sha256: e2a87c7560af15bce6f05983c65dd598953d24132d1a5cf4675928aa76198a34
+      sha256: "366faa4c374fdc0a789eb1d234c78ddbaca34ae575fe8a6481f9f72db5eb0d69"
       url: "https://pub.flutter-io.cn"
     source: hosted
-    version: "35.1.41"
+    version: "35.1.42"
   syncfusion_flutter_pdf:
     dependency: "direct main"
     description:
       name: syncfusion_flutter_pdf
-      sha256: "866419e2826acf887db56256d9b263da7d4c0e61032d8a25d638050fec80dbf8"
+      sha256: "4830485a8f447141ee68af5209e1b5660538cd1d4e6a982c8c969ec67f3e1b23"
       url: "https://pub.flutter-io.cn"
     source: hosted
-    version: "35.1.41"
+    version: "35.1.42"
   synchronized:
     dependency: transitive
     description:
