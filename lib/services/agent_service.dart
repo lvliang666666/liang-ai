@@ -18,6 +18,11 @@ class AgentService {
     'assets/agents/tutor.md',
     'assets/agents/brainstorm.md',
     'assets/agents/translator.md',
+    // T4 结构化提取工具集：输入乱七八糟、输出严格 JSON 的提取类 Skill
+    'assets/agents/bill_extractor.md',
+    'assets/agents/invoice_extractor.md',
+    'assets/agents/contact_extractor.md',
+    'assets/agents/todo_extractor.md',
   ];
 
   /// 内置 Agent 以资产为准入库（幂等，随版本演进）

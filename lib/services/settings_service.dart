@@ -137,6 +137,18 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ===== 剪贴板建议（F9：聚焦时检测剪贴板长文本浮出「帮你总结？」胶囊） =====
+  // 开 = 输入框聚焦且剪贴板有 ≥200 字文本时提示；关 = 不检测不提示。
+  // 默认开
+  static const _kClipboardSuggestion = 'clipboard_suggestion';
+  bool get clipboardSuggestion =>
+      _prefs.getBool(_kClipboardSuggestion) ?? true;
+  Future<void> setClipboardSuggestion(bool v) async {
+    if (v == clipboardSuggestion) return;
+    await _prefs.setBool(_kClipboardSuggestion, v);
+    notifyListeners();
+  }
+
   // 上次生成简报的日期（yyyy-MM-dd）；null = 从未生成过。
   // 「打开补算式」的核心状态：跨天即重新生成，当天内不重复打扰
   static const _kLastBriefingDate = 'last_briefing_date';

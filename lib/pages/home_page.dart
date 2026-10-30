@@ -22,6 +22,7 @@ import '../services/morning_briefing_service.dart';
 import '../services/session_summary_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
+import '../services/share_receive_service.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/http_tool_handler.dart';
 import '../utils/haptics.dart';
@@ -82,12 +83,20 @@ class _HomePageState extends State<HomePage> {
   // I5 引用态：被引用的 assistant 消息（null = 无引用）
   ChatMessage? _quotedMessage;
 
+  // F9 分享即问：系统分享文本接收服务 + 订阅句柄
+  final ShareReceiveService _shareReceive = ShareReceiveService();
+  StreamSubscription<String>? _shareSubscription;
+
   @override
   void initState() {
     super.initState();
     context.read<SessionsProvider>().loadSessions();
     // 启动即加载 Agent 列表：否则 tags 行的 Agent 图标在首次懒加载前显示兜底 emoji
     context.read<AgentProvider>().load();
+    // F9 分享即问：注册分享文本接收（冷启动兜底拉取 + 热启动推送），
+    // 收到后预填输入框并提示（fire-and-forget，不阻塞首帧）
+    _shareSubscription = _shareReceive.stream.listen(_onSharedText);
+    unawaited(_shareReceive.init());
     // P1 晨间简报：跨天后首次打开自动生成并弹出（fire-and-forget，
     // 生成完成才弹；开关关闭/当天已生成过则零操作）
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -103,12 +112,25 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(_KeyboardDismissObserver(this));
+    _shareSubscription?.cancel();
+    _shareReceive.dispose();
     _inputController.dispose();
     _inputFocusNode.dispose();
     _drawerBatchMode.dispose();
     _chat?.dispose();
     _chat = null;
     super.dispose();
+  }
+
+  /// F9 分享即问：收到系统分享文本 → 预填输入框 + toast 提示。
+  /// 编辑态/引用态优先级更高，分享文本追加不覆盖用户正在编辑的内容。
+  void _onSharedText(String text) {
+    if (!mounted) return;
+    final existing = _inputController.text;
+    _inputController.text = existing.isEmpty ? text : '$existing\n$text';
+    _inputController.selection = TextSelection.collapsed(
+        offset: _inputController.text.length);
+    showAppToast(context, '已填入分享内容，可直接发送或让 AI 处理');
   }
 
   /// 导航前收起键盘，避免返回主页时自动弹键盘

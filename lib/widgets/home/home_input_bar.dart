@@ -115,16 +115,75 @@ class _HomeInputBarState extends State<HomeInputBar> {
   /// 空闲态草稿防抖保存（I6）：停顿 800ms 才落盘，避免每键一写 prefs
   Timer? _idleDraftDebounce;
 
+  /// F9 剪贴板胶囊：检测到的剪贴板长文本（null = 无可提示内容）。
+  /// 记录已提示过的文本——同一段内容只提示一次（复制→粘贴→再聚焦不重弹）
+  String? _clipboardCandidate;
+  String? _lastPromptedClipboard;
+
+  /// 剪贴板胶囊触发阈值（字符数）：短文本用户自己粘贴更顺手
+  static const int _clipboardThreshold = 200;
+
   @override
   void initState() {
     super.initState();
     _initAttachmentStorage();
+    widget.focusNode.addListener(_onFocusChanged);
   }
 
   @override
   void dispose() {
     _idleDraftDebounce?.cancel();
+    widget.focusNode.removeListener(_onFocusChanged);
     super.dispose();
+  }
+
+  /// F9 剪贴板胶囊：聚焦时检测剪贴板长文本。
+  /// 只在聚焦瞬间检测（不轮询不监听系统剪贴板事件——Android 无该 API），
+  /// 输入框已有内容/流式中不提示（避免打扰正在进行的操作）
+  Future<void> _onFocusChanged() async {
+    if (!widget.focusNode.hasFocus) return;
+    if (!mounted) return;
+    // 开关关闭（设置页「剪贴板建议」）→ 不检测
+    if (!context.read<SettingsService>().clipboardSuggestion) return;
+    // 输入框已有内容 → 不打扰
+    if (widget.controller.text.trim().isNotEmpty) return;
+    if (widget.chat?.isStreaming ?? false) return;
+    final text = await Clipboard.getData('text/plain')
+        .then((d) => d?.text)
+        .catchError((_) => null);
+    if (!mounted || !widget.focusNode.hasFocus) return;
+    if (text == null || text.trim().length < _clipboardThreshold) {
+      setState(() => _clipboardCandidate = null);
+      return;
+    }
+    // 同一段内容只提示一次
+    if (text == _lastPromptedClipboard) {
+      setState(() => _clipboardCandidate = null);
+      return;
+    }
+    setState(() => _clipboardCandidate = text);
+  }
+
+  /// F9 剪贴板胶囊：点击「帮你总结？」→ 预填文本 + 关闭胶囊
+  void _useClipboardText() {
+    final text = _clipboardCandidate;
+    if (text == null) return;
+    Haptics.light();
+    widget.controller.text = text;
+    widget.controller.selection =
+        TextSelection.collapsed(offset: text.length);
+    setState(() {
+      _lastPromptedClipboard = text;
+      _clipboardCandidate = null;
+    });
+  }
+
+  /// F9 剪贴板胶囊：关闭（本次不再提示该内容）
+  void _dismissClipboard() {
+    setState(() {
+      _lastPromptedClipboard = _clipboardCandidate;
+      _clipboardCandidate = null;
+    });
   }
 
   /// 上一次输入是否以「/」开头（斜杠面板边沿触发用）
@@ -428,6 +487,13 @@ class _HomeInputBarState extends State<HomeInputBar> {
           else
             _buildTagsRow(context, chat),
           const SizedBox(height: 6),
+          // F9 剪贴板胶囊：聚焦 + 剪贴板有长文本时浮出（输入框上方）
+          if (_clipboardCandidate != null)
+            _ClipboardSuggestionBar(
+              preview: _clipboardCandidate!,
+              onUse: _useClipboardText,
+              onDismiss: _dismissClipboard,
+            ),
           // 浮起输入框：圆角主题（默认/DeepSeek）外层容器即唯一输入框（豆包式）；
           // 直角主题（Minecraft）无外框，内层填充为输入区域
           Container(
@@ -725,6 +791,76 @@ class _EditQuoteBar extends StatelessWidget {
                 size: 16, color: colorScheme.onSurfaceVariant),
             tooltip: '取消',
             onPressed: onClose,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// F9 剪贴板建议胶囊：聚焦时检测到剪贴板长文本 → 输入框上方浮出。
+/// 「帮你总结？」点击预填全文；× 关闭（同段内容不再提示）
+class _ClipboardSuggestionBar extends StatelessWidget {
+  const _ClipboardSuggestionBar({
+    required this.preview,
+    required this.onUse,
+    required this.onDismiss,
+  });
+
+  /// 剪贴板全文（预填用；UI 只显示首行缩略）
+  final String preview;
+  final VoidCallback onUse;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final firstLine =
+        preview.trim().split('\n').firstWhere((l) => l.trim().isNotEmpty,
+            orElse: () => preview.trim());
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+      padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+      decoration: BoxDecoration(
+        color: colorScheme.primaryContainer.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.content_paste_go,
+              size: 14, color: colorScheme.onPrimaryContainer),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              firstLine,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onPrimaryContainer,
+              ),
+            ),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            onPressed: onUse,
+            child: Text(
+              '帮你总结？',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            icon: Icon(Icons.close,
+                size: 16, color: colorScheme.onSurfaceVariant),
+            tooltip: '关闭',
+            onPressed: onDismiss,
           ),
         ],
       ),
