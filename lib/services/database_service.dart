@@ -7,6 +7,7 @@ import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/card.dart';
 import '../models/context_summary.dart';
+import '../models/doc_chunk.dart';
 import '../models/http_tool.dart';
 import '../models/memory.dart';
 import '../models/provider_profile.dart';
@@ -24,7 +25,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 19;
+  static const int dbVersion = 20;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -150,6 +151,7 @@ class DatabaseService {
     await _createContextSummariesTable(db);
     await _createSessionSummariesTable(db);
     await _createCardsTable(db);
+    await _createDocChunksTable(db);
     await _createFtsTables(db);
   }
 
@@ -289,6 +291,11 @@ class DatabaseService {
       // 普通消息，老数据零影响
       await db.execute('ALTER TABLE messages ADD COLUMN dual_of TEXT');
       await db.execute('ALTER TABLE messages ADD COLUMN source_label TEXT');
+    }
+    if (oldVersion < 20 && newVersion >= 20) {
+      // v19 → v20：长文工作台（F8）——新建 doc_chunks 表（PDF 分块索引，
+      // 派生数据：可由原文件重新索引重建，不进备份、deleteSession 级联删）
+      await _createDocChunksTable(db);
     }
   }
 
@@ -472,6 +479,50 @@ class DatabaseService {
     );
   }
 
+  /// 长文工作台表（F8）：PDF 分块索引（派生数据）
+  ///
+  /// - 派生数据：可由原文件重新索引重建——不进备份、deleteSession 级联删
+  /// - source_path：原文件沙箱路径（引用 Sheet「打开原文件」用）
+  /// - page：1 起始页码（引用标注【文件名·第N页】）；seq：块序（同页多块）
+  /// - 检索走 chunks_fts（bigram，与 messages_fts 同模式）+ LIKE 兜底
+  static Future<void> _createDocChunksTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS doc_chunks (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        doc_name TEXT NOT NULL,
+        source_path TEXT NOT NULL DEFAULT '',
+        page INTEGER NOT NULL DEFAULT 1,
+        seq INTEGER NOT NULL DEFAULT 0,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_doc_chunks_session '
+      'ON doc_chunks(session_id, doc_name)',
+    );
+    await _createChunksFtsTable(db);
+  }
+
+  /// chunks_fts：doc_chunks 的 FTS5 索引（bigram 自管，同 messages_fts 模式）
+  ///
+  /// rowid 映射直接用 doc_chunks.id（TEXT）→ chunks_fts_rowid 桥表。
+  /// FTS5 不可用时跳过（检索降级 LIKE）。
+  static Future<void> _createChunksFtsTable(Database db) async {
+    if (ftsAvailable != true) return;
+    await db.execute(
+      "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5("
+      "content, tokenize='unicode61 remove_diacritics 2')",
+    );
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS chunks_fts_rowid (
+        id TEXT PRIMARY KEY,
+        rowid INTEGER NOT NULL UNIQUE
+      )
+    ''');
+  }
+
   // ===== Sessions =====
 
   Future<void> insertSession(ChatSession session) async {
@@ -560,6 +611,8 @@ class DatabaseService {
     final db = await database;
     // F1：先同步删该会话全部消息的 FTS 索引（事务删表后查不到归属了）
     await ftsOrNull?.removeSession(id);
+    // F8：文档分块索引级联删（派生数据，原文件仍在沙箱）
+    await _deleteDocChunksForSession(id);
     await db.transaction((txn) async {
       await txn.delete('messages', where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('context_summaries',
@@ -615,6 +668,151 @@ class DatabaseService {
   Future<void> clearSessionSummaries() async {
     final db = await database;
     await db.delete('session_summaries');
+  }
+
+  // ===== Doc chunks（F8 长文工作台） =====
+
+  /// 批量写入文档分块（幂等：同会话同文档先清旧块再插——重复挂载同一
+  /// PDF 覆盖旧索引；FTS 同步重建）
+  ///
+  /// chunks 已按 (page, seq) 排好序；id 由调用方生成（doc_{ts}_{seq}）。
+  Future<void> replaceDocChunks(
+      String sessionId, String docName, List<DocChunk> chunks) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final olds = await txn.query('doc_chunks',
+          columns: ['id'],
+          where: 'session_id = ? AND doc_name = ?',
+          whereArgs: [sessionId, docName]);
+      for (final row in olds) {
+        final id = row['id'] as String;
+        // FTS 同步（chunks_fts 缺表时静默跳过——派生索引可重建）
+        try {
+          final maps = await txn.query('chunks_fts_rowid',
+              where: 'id = ?', whereArgs: [id]);
+          if (maps.isNotEmpty) {
+            await txn.execute('DELETE FROM chunks_fts WHERE rowid = ?',
+                [maps.first['rowid']]);
+            await txn.delete('chunks_fts_rowid',
+                where: 'id = ?', whereArgs: [id]);
+          }
+        } catch (_) {}
+      }
+      await txn.delete('doc_chunks',
+          where: 'session_id = ? AND doc_name = ?',
+          whereArgs: [sessionId, docName]);
+      for (final chunk in chunks) {
+        await txn.insert('doc_chunks', chunk.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+        try {
+          final rowid = await txn
+              .insert('chunks_fts', {'content': FtsService.bigram(chunk.content)});
+          await txn.insert('chunks_fts_rowid', {
+            'id': chunk.id,
+            'rowid': rowid,
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        } catch (_) {}
+      }
+    });
+  }
+
+  /// 检索文档分块（top-K 相关片段）
+  ///
+  /// ≥2 字走 FTS bigram；1 字/FTS 缺表走 LIKE 兜底。
+  /// [docName] 限定单文档（null = 会话内全部文档）。
+  /// 返回按 (page, seq) 排序的命中块。
+  Future<List<DocChunk>> searchDocChunks(String sessionId, String query,
+      {String? docName, int limit = 6}) async {
+    final q = query.trim();
+    if (q.isEmpty) return const [];
+    final db = await database;
+    final docFilter = docName != null ? 'AND c.doc_name = ?' : '';
+
+    if (q.runes.length >= 2 && ftsAvailable != false) {
+      final match = FtsService.bigramQuery(q);
+      if (match != null) {
+        final args = <Object?>[match, sessionId];
+        if (docName != null) args.add(docName);
+        args.add(limit);
+        try {
+          final rows = await db.rawQuery('''
+            SELECT c.* FROM chunks_fts f
+            JOIN doc_chunks c ON c.id =
+              (SELECT id FROM chunks_fts_rowid WHERE rowid = f.rowid)
+            WHERE chunks_fts MATCH ? AND c.session_id = ? $docFilter
+            ORDER BY c.page, c.seq
+            LIMIT ?
+          ''', args);
+          return rows.map(DocChunk.fromMap).toList();
+        } catch (_) {
+          // chunks_fts 缺表（真机无 FTS5 / 测试注入库）→ LIKE 兜底
+        }
+      }
+    }
+    return _likeDocChunks(q, sessionId,
+        docName: docName, limit: limit);
+  }
+
+  /// LIKE 兜底（单字查询 + FTS 缺表降级共用）
+  Future<List<DocChunk>> _likeDocChunks(String q, String sessionId,
+      {String? docName, required int limit}) async {
+    final db = await database;
+    final docFilter = docName != null ? 'AND doc_name = ?' : '';
+    final args = <Object?>['%$q%', sessionId];
+    if (docName != null) args.add(docName);
+    args.add(limit);
+    final rows = await db.rawQuery('''
+      SELECT * FROM doc_chunks
+      WHERE content LIKE ? AND session_id = ? $docFilter
+      ORDER BY page, seq
+      LIMIT ?
+    ''', args);
+    return rows.map(DocChunk.fromMap).toList();
+  }
+
+  /// 会话内全部文档名（去重，首块时间倒序——最近挂载的在前）
+  Future<List<String>> getDocNames(String sessionId) async {
+    final db = await database;
+    final rows = await db.rawQuery('''
+      SELECT doc_name, MIN(created_at) AS first_at
+      FROM doc_chunks WHERE session_id = ?
+      GROUP BY doc_name ORDER BY first_at DESC
+    ''', [sessionId]);
+    return rows.map((r) => r['doc_name'] as String).toList();
+  }
+
+  /// 按 id 取块（引用 Sheet 展示原文）
+  Future<DocChunk?> getDocChunk(String id) async {
+    final db = await database;
+    final rows = await db
+        .query('doc_chunks', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : DocChunk.fromMap(rows.first);
+  }
+
+  /// 会话删除级联：清 doc_chunks + FTS 索引（deleteSession 调用）
+  Future<void> _deleteDocChunksForSession(String sessionId) async {
+    final db = await database;
+    try {
+      final maps = await db.query('chunks_fts_rowid');
+      final ids = maps.map((m) => m['id'] as String).toSet();
+      if (ids.isNotEmpty) {
+        final rows = await db.query('doc_chunks',
+            columns: ['id'],
+            where: 'session_id = ?',
+            whereArgs: [sessionId]);
+        for (final row in rows) {
+          final id = row['id'] as String;
+          if (!ids.contains(id)) continue;
+          final m = maps.firstWhere((m) => m['id'] == id);
+          await db.execute(
+              'DELETE FROM chunks_fts WHERE rowid = ?', [m['rowid']]);
+          await db
+              .delete('chunks_fts_rowid', where: 'id = ?', whereArgs: [id]);
+        }
+      }
+    } catch (_) {}
+    await db
+        .delete('doc_chunks', where: 'session_id = ?', whereArgs: [sessionId]);
   }
 
   // ===== Messages =====
