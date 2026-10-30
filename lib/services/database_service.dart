@@ -509,7 +509,14 @@ class DatabaseService {
   ///
   /// rowid 映射直接用 doc_chunks.id（TEXT）→ chunks_fts_rowid 桥表。
   /// FTS5 不可用时跳过（检索降级 LIKE）。
+  ///
+  /// **探测时序**：本表在 onCreate 里先于 [_createFtsTables] 执行
+  ///（doc_chunks 建表即带 FTS），flag 可能还是 null——先探测再判定，
+  /// 否则 null != true 恒跳过建表，检索永远走 LIKE。
   static Future<void> _createChunksFtsTable(Database db) async {
+    if (ftsAvailable == null) {
+      await _probeFtsAvailable(db);
+    }
     if (ftsAvailable != true) return;
     await db.execute(
       "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5("
@@ -718,9 +725,12 @@ class DatabaseService {
 
   /// 检索文档分块（top-K 相关片段）
   ///
-  /// ≥2 字走 FTS bigram；1 字/FTS 缺表走 LIKE 兜底。
+  /// 查询是**自然语言问句**（用户整条消息），与搜索框短词不同——
+  /// 整句 bigram AND 匹配几乎必空（「报销流程是怎样的」含「是的」
+  /// 等文档里没有的 bigram）。策略：**bigram OR 匹配 + FTS5 rank
+  /// 相关性排序**（命中 bigram 越多越靠前，等价 BM25 粗排），
+  /// 单字/FTS 缺表走 LIKE 兜底。
   /// [docName] 限定单文档（null = 会话内全部文档）。
-  /// 返回按 (page, seq) 排序的命中块。
   Future<List<DocChunk>> searchDocChunks(String sessionId, String query,
       {String? docName, int limit = 6}) async {
     final q = query.trim();
@@ -729,7 +739,7 @@ class DatabaseService {
     final docFilter = docName != null ? 'AND c.doc_name = ?' : '';
 
     if (q.runes.length >= 2 && ftsAvailable != false) {
-      final match = FtsService.bigramQuery(q);
+      final match = _orMatch(q);
       if (match != null) {
         final args = <Object?>[match, sessionId];
         if (docName != null) args.add(docName);
@@ -740,7 +750,7 @@ class DatabaseService {
             JOIN doc_chunks c ON c.id =
               (SELECT id FROM chunks_fts_rowid WHERE rowid = f.rowid)
             WHERE chunks_fts MATCH ? AND c.session_id = ? $docFilter
-            ORDER BY c.page, c.seq
+            ORDER BY rank, c.page, c.seq
             LIMIT ?
           ''', args);
           return rows.map(DocChunk.fromMap).toList();
@@ -751,6 +761,23 @@ class DatabaseService {
     }
     return _likeDocChunks(q, sessionId,
         docName: docName, limit: limit);
+  }
+
+  /// 自然语言问句 → FTS OR 匹配表达式
+  ///
+  /// 整句切 bigram 后 OR 连接（去重）：任意 bigram 命中即候选，
+  /// rank 按命中数排序保证「含关键词多的块」优先。剥引号防语法错误。
+  static String? _orMatch(String query) {
+    final q = query.replaceAll('"', '').trim();
+    if (q.isEmpty) return null;
+    final runes = q.runes.toList();
+    if (runes.length < 2) return null;
+    final grams = <String>{};
+    for (var i = 0; i + 2 <= runes.length; i++) {
+      grams.add(String.fromCharCodes(runes.sublist(i, i + 2)));
+    }
+    if (grams.isEmpty) return null;
+    return grams.map((g) => '"$g"').join(' OR ');
   }
 
   /// LIKE 兜底（单字查询 + FTS 缺表降级共用）

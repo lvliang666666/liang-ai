@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
 import '../models/context_summary.dart';
+import '../models/doc_chunk.dart';
 import '../models/message_attachment.dart';
 import '../models/provider_profile.dart';
 import '../models/agent.dart';
@@ -15,6 +16,7 @@ import '../services/agent_service.dart';
 import '../services/api_service.dart';
 import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
+import '../services/document_index_service.dart';
 import '../services/generation_keepalive.dart';
 import '../services/memory_service.dart';
 import '../services/smart_router.dart';
@@ -42,6 +44,7 @@ class ChatProvider extends ChangeNotifier {
     bool keepaliveNotification = false,
     AgentService? agentService,
     ApiService Function(ProviderProfile profile)? dualApiFactory,
+    DocumentIndexService? documentIndex,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -54,6 +57,7 @@ class ChatProvider extends ChangeNotifier {
             ContextSummaryService(api: api, database: database),
         _smartRoutingEnabled = smartRouting,
         _keepaliveNotification = keepaliveNotification,
+        _documentIndex = documentIndex,
         _runSkillDelegate = agentService == null
             ? null
             : _HostRunSkillDelegate(agentService) {
@@ -83,6 +87,13 @@ class ChatProvider extends ChangeNotifier {
 
   /// F2 上下文压缩服务（水位检查 + 摘要生成）
   final ContextSummaryService _summaryService;
+
+  /// F8 长文工作台索引服务（null = 不索引不注入，兼容现有测试）
+  final DocumentIndexService? _documentIndex;
+
+  /// 本轮检索注入文本（sendMessage 预取，_buildApiMessages 消费；
+  /// null = 无文档资料）
+  String? _docContextText;
 
   /// 当前会话的前情摘要（null = 未压缩过；loadMessages 时从 DB 读）
   ContextSummary? _contextSummary;
@@ -270,14 +281,37 @@ class ChatProvider extends ChangeNotifier {
   bool get hasPendingAttachments => _pendingAttachments.isNotEmpty;
 
   /// 添加附件（图片 ≤3、文件 ≤3，超限返回 false）
+  ///
+  /// F8：PDF 附件（有沙箱路径）后台分块索引——fire-and-forget，
+  /// 索引完成前发送也能走 extractedText 全量注入的老路径（索引是
+  /// 增强不是门槛）。
   bool addAttachment(MessageAttachment attachment) {
     final images = _pendingAttachments.where((a) => a.isImage).length;
     final files = _pendingAttachments.where((a) => a.isFile).length;
     if (attachment.isImage && images >= 3) return false;
     if (attachment.isFile && files >= 3) return false;
     _pendingAttachments = [..._pendingAttachments, attachment];
+    _maybeIndexPdfAttachment(attachment);
     _notify();
     return true;
+  }
+
+  /// PDF 附件后台索引（F8）：有原文件路径且是 .pdf 才索引
+  void _maybeIndexPdfAttachment(MessageAttachment attachment) {
+    final index = _documentIndex;
+    if (index == null) return;
+    if (!attachment.isFile) return;
+    final path = attachment.filePath;
+    if (path == null || path.isEmpty) return;
+    if (!attachment.name.toLowerCase().endsWith('.pdf')) return;
+    unawaited(index
+        .indexPdfFile(
+            sessionId: _session.id,
+            docName: attachment.name,
+            sourcePath: path)
+        .then((count) {
+      if (count > 0) debugPrint('文档索引完成：${attachment.name}（$count 块）');
+    }));
   }
 
   /// 移除待发送附件
@@ -354,6 +388,9 @@ class ChatProvider extends ChangeNotifier {
     // 建立流订阅之间不能有 await，否则测试/调用方在 sendMessage 返回后
     // 立即 emit 的事件会因订阅未建立而丢失）
     await _refreshMemoryText();
+
+    // 3.5 F8：按本轮消息检索文档片段（同上，loop 启动前完成）
+    await _refreshDocContext(content);
 
     // 4. 启动 agentic loop（fire-and-forget：sendMessage 立即返回，
     // loop 在后台推进，与旧版「启动流即返回」语义一致）。
@@ -1242,6 +1279,44 @@ class ChatProvider extends ChangeNotifier {
     return memory.recentText().then((text) => _memoryText = text);
   }
 
+  /// F8：按本轮消息内容检索文档片段，生成注入文本
+  ///
+  /// 会话内已索引文档时，取用户消息关键词检索 top-K 块组装
+  /// 【文档资料】块（含引用标注指令）。无索引服务/无文档/检索空
+  /// 均返回 null（不注入，行为与无文档会话一致）。
+  Future<String?> _refreshDocContext(String query) async {
+    final index = _documentIndex;
+    if (index == null) {
+      _docContextText = null;
+      return null;
+    }
+    final q = query.trim();
+    if (q.isEmpty) {
+      _docContextText = null;
+      return null;
+    }
+    final chunks = await _db.searchDocChunks(_session.id, q, limit: 6);
+    if (chunks.isEmpty) {
+      _docContextText = null;
+      return null;
+    }
+    _docContextText = buildDocContextText(chunks);
+    return _docContextText;
+  }
+
+  /// 组装【文档资料】注入文本（公开给测试断言格式）
+  static String buildDocContextText(List<DocChunk> chunks) {
+    final buf = StringBuffer('【文档资料】\n'
+        '以下是本会话上传文档中与用户问题最相关的片段（按相关性选取）：\n\n');
+    for (final c in chunks) {
+      buf.writeln('${c.citation}\n${c.content}\n');
+    }
+    buf.write('回答时如引用上述内容，请在对应句子末尾标注来源，'
+        '格式严格为【文件名·第N页】（如【报销制度.pdf·第3页】），'
+        '未在上述片段中的信息不要标注，也不要编造页码。');
+    return buf.toString();
+  }
+
   /// 组装 API 请求消息：Agent system prompt 在头部 + 记忆注入 + 前情摘要 + 历史
   ///
   /// [forceSummary] 为 true 时（loop 轮数耗尽）追加系统提示强制模型总结。
@@ -1275,6 +1350,8 @@ class ChatProvider extends ChangeNotifier {
         {'role': 'system', 'content': prompt},
       if (_memoryText != null && _memoryText!.isNotEmpty)
         {'role': 'system', 'content': _memoryText!},
+      if (_docContextText != null && _docContextText!.isNotEmpty)
+        {'role': 'system', 'content': _docContextText!},
       if (summary != null && summary.summary.isNotEmpty)
         {
           'role': 'system',
