@@ -8,7 +8,20 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.23.0**（2026-10-30 发布）
+**当前版本：v2.24.0**（2026-10-30 发布）
+
+v2.24.0 在 v2.23.0 基础上新增（feat/screenshot-memory 分支，roadmap F7+E10 → MINOR）：
+
+- **F7 截图视觉记忆**：系统分享图片到 Liang AI → 多模态视觉理解生成描述 → FTS 全文索引（可搜索找回）→ 记忆池沉淀（tag=截图）——截图从「看过即忘」变成「可检索的记忆」
+- **原生桥扩展（零新插件）**：MainActivity 注册 image/* intent-filter；分享图片只传 content:// Uri，Flutter 侧经 readShareImage 桥方法读字节（UI 线程 contentResolver → Base64.NO_WRAP + mime），PlatformException 静默降级；文本/图片并存时文本优先
+- **SharePayload 密封类**：ShareTextPayload / ShareImagePayload（base64/mime/bytes getter），_payloadFromMap 按 type 分发，未知类型忽略
+- **ScreenshotMemoryService**：describe（多模态数组请求，effort=low + 温度 0.2，SseDeltaContent 收集至流关闭，SseError/异常→null 不阻塞聊天，rune 安全截断 800 字）+ indexDescription（【截图描述】前缀消息落 messages 表 + FTS 索引，sessionId 空串兜底，id=shot_{ts}_{len} 防同毫秒撞车）+ saveToMemory（Memory.screenshotTag，非归档层参与注入）
+- **HomePage 接线**：分享图片→附件预览（chat.addAttachment 或空闲态暂存 _idleShareAttachments，_startChat 一次性并入）+ 后台描述生成（settings.screenshotDescription 开关 + profile.capabilities.vision 能力位双闸门，fire-and-forget 静默降级，完成 toast「已生成截图描述，可在搜索中找回」）
+- **设置页**：「输入辅助」区新增「截图自动描述」开关（默认开）
+- **E10 依赖体检**（docs/dependency-review-2026-10-30.md）：本批次零依赖变更；下批顺手项 crypto/syncfusion/sqflite_common_ffi 补丁级；单独批次候选 file_picker 13.3.0 / sqlite3 3.8.0（FTS 回归）/ SDK 升级；shared_preferences_android 2.5.x 永不升（白屏锁死）
+- 993 项测试全绿（新增 22：分享桥 10 + 截图记忆 12）；flutter analyze 零 error/warning（58 条 info 持平）
+
+### v2.23.0（2026-10-30）
 
 v2.23.0 在 v2.22.0 基础上新增（feat/share-intake 分支，roadmap F9+T4 → MINOR）：
 

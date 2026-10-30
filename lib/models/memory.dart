@@ -5,6 +5,9 @@ class Memory {
   /// 归档摘要行的固定标签（由 MemoryService 滚动压缩创建，永不二次压缩）
   static const archiveTag = '归档摘要';
 
+  /// 截图记忆的固定标签（F7：分享图片视觉理解沉淀，来源可辨）
+  static const screenshotTag = '截图';
+
   /// 冲突消解归档行的标签前缀（M3：被新记忆取代的旧条，原文保留可溯源）
   static const replacedTagPrefix = '已取代';
 

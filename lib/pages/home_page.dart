@@ -23,6 +23,7 @@ import '../services/session_summary_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
 import '../services/share_receive_service.dart';
+import '../services/screenshot_memory_service.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/http_tool_handler.dart';
 import '../utils/haptics.dart';
@@ -83,9 +84,12 @@ class _HomePageState extends State<HomePage> {
   // I5 引用态：被引用的 assistant 消息（null = 无引用）
   ChatMessage? _quotedMessage;
 
-  // F9 分享即问：系统分享文本接收服务 + 订阅句柄
+  // F9/F7 分享即问：系统分享接收服务 + 订阅句柄
   final ShareReceiveService _shareReceive = ShareReceiveService();
-  StreamSubscription<String>? _shareSubscription;
+  StreamSubscription<SharePayload>? _shareSubscription;
+
+  // F7 空闲态暂存的分享图片（聊天态直接进 ChatProvider 附件队列）
+  final List<MessageAttachment> _idleShareAttachments = [];
 
   @override
   void initState() {
@@ -93,9 +97,9 @@ class _HomePageState extends State<HomePage> {
     context.read<SessionsProvider>().loadSessions();
     // 启动即加载 Agent 列表：否则 tags 行的 Agent 图标在首次懒加载前显示兜底 emoji
     context.read<AgentProvider>().load();
-    // F9 分享即问：注册分享文本接收（冷启动兜底拉取 + 热启动推送），
-    // 收到后预填输入框并提示（fire-and-forget，不阻塞首帧）
-    _shareSubscription = _shareReceive.stream.listen(_onSharedText);
+    // F9/F7 分享即问：注册分享接收（冷启动兜底拉取 + 热启动推送），
+    // 收到后按类型分发（fire-and-forget，不阻塞首帧）
+    _shareSubscription = _shareReceive.stream.listen(_onSharedPayload);
     unawaited(_shareReceive.init());
     // P1 晨间简报：跨天后首次打开自动生成并弹出（fire-and-forget，
     // 生成完成才弹；开关关闭/当天已生成过则零操作）
@@ -122,15 +126,98 @@ class _HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  /// F9 分享即问：收到系统分享文本 → 预填输入框 + toast 提示。
-  /// 编辑态/引用态优先级更高，分享文本追加不覆盖用户正在编辑的内容。
-  void _onSharedText(String text) {
+  /// F9/F7 分享即问：收到系统分享载荷 → 按类型分发。
+  /// 文本预填输入框；图片进附件队列（聊天态）或暂存（空闲态随首条消息发出）
+  void _onSharedPayload(SharePayload payload) {
     if (!mounted) return;
-    final existing = _inputController.text;
-    _inputController.text = existing.isEmpty ? text : '$existing\n$text';
-    _inputController.selection = TextSelection.collapsed(
-        offset: _inputController.text.length);
-    showAppToast(context, '已填入分享内容，可直接发送或让 AI 处理');
+    switch (payload) {
+      case ShareTextPayload(:final text):
+        final existing = _inputController.text;
+        _inputController.text = existing.isEmpty ? text : '$existing\n$text';
+        _inputController.selection = TextSelection.collapsed(
+            offset: _inputController.text.length);
+        showAppToast(context, '已填入分享内容，可直接发送或让 AI 处理');
+      case ShareImagePayload(:final base64, :final mime):
+        _onSharedImage(base64: base64, mime: mime);
+    }
+  }
+
+  /// F7 截图视觉记忆：分享图片 → 附件队列 + 视觉理解描述（后台）。
+  /// 描述生成不阻塞发送——用户可直接问「这张图讲了什么」，描述服务
+  /// 同时把图片内容写进可搜索的描述文本（见 ScreenshotMemoryService）
+  Future<void> _onSharedImage(
+      {required String base64, required String mime}) async {
+    final ext = mime.contains('jpeg') || mime.contains('jpg')
+        ? 'jpg'
+        : mime.contains('webp')
+            ? 'webp'
+            : mime.contains('gif')
+                ? 'gif'
+                : 'png';
+    final attachment = MessageAttachment(
+      type: AttachmentType.image,
+      name: '分享图片_$ext',
+      base64Data: base64,
+    );
+    final chat = _chat;
+    if (chat != null) {
+      final ok = chat.addAttachment(attachment);
+      showAppToast(context,
+          ok ? '已加入待发送附件' : '图片附件已达上限（3 张），未加入');
+    } else {
+      // 空闲态：暂存输入栏本地队列，随首条消息经 onSendIdle 传入新会话
+      setState(() => _idleShareAttachments.add(attachment));
+      showAppToast(context, '已暂存分享图片，发送消息时一并带上');
+    }
+    // 后台视觉理解：描述入 FTS 可搜索（fire-and-forget，不阻塞发送）。
+    // 走当前供应商（聊天态）或默认供应商（空闲态）；供应商不支持视觉
+    // 或生成失败静默——描述是增强不是门槛
+    _describeScreenshotInBackground(base64, chat);
+  }
+
+  /// F7 后台描述生成：图片 → 视觉理解 → 描述文本入 FTS 索引。
+  /// 开关 screenshotDescription 关闭 / 供应商无视觉能力 / 生成失败均静默
+  void _describeScreenshotInBackground(String base64, ChatProvider? chat) {
+    final settings = context.read<SettingsService>();
+    if (!settings.screenshotDescription) return;
+    final profile = chat?.profile ?? _defaultProfile();
+    if (profile == null || !profile.capabilities.vision) return;
+    final model = chat?.model ?? _defaultModel(profile);
+    unawaited(() async {
+      final api = ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
+      try {
+        final service = ScreenshotMemoryService(
+          api: api,
+          db: DatabaseService.instance,
+        );
+        final description = await service.describe(
+          imageBase64: base64,
+          profile: profile,
+          model: model,
+        );
+        if (description == null || !mounted) return;
+        await service.indexDescription(
+          description: description,
+          sessionId: chat?.session.id,
+        );
+        if (mounted) {
+          showAppToast(context, '已生成截图描述，可在搜索中找回');
+        }
+      } finally {
+        api.dispose();
+      }
+    }());
+  }
+
+  /// 默认供应商（空闲态分享图片时描述请求的目标）；无任何供应商返回 null
+  ProviderProfile? _defaultProfile() {
+    final profiles = context.read<ProviderProvider>().profiles;
+    return profiles.isEmpty ? null : profiles.first;
+  }
+
+  /// 默认模型：供应商声明的默认模型
+  String _defaultModel(ProviderProfile profile) {
+    return profile.defaultModel.isEmpty ? 'glm5.1' : profile.defaultModel;
   }
 
   /// 导航前收起键盘，避免返回主页时自动弹键盘
@@ -280,6 +367,12 @@ class _HomePageState extends State<HomePage> {
     Haptics.light();
     _unfocus();
 
+    // F7 空闲态暂存的分享图片并入首条消息附件（一次性，取后即清）
+    final allAttachments = [...attachments, ..._idleShareAttachments];
+    if (_idleShareAttachments.isNotEmpty) {
+      setState(() => _idleShareAttachments.clear());
+    }
+
     final settings = context.read<SettingsService>();
     // 记录最近使用（LRU），供下次选择页展示
     if (agentId != null) {
@@ -297,7 +390,7 @@ class _HomePageState extends State<HomePage> {
 
     // 主页原地进入聊天态并自动发送首条消息（附件随首条消息发出）
     await _enterChat(session,
-        initialMessage: text, initialAttachments: attachments);
+        initialMessage: text, initialAttachments: allAttachments);
   }
 
   /// 进入聊天态：构建 ChatProvider 并加载消息

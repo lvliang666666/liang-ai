@@ -928,6 +928,20 @@ class _SettingsPageState extends State<SettingsPage> {
             setState(() => _settings.setClipboardSuggestion(v));
           },
         ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('截图自动描述'),
+          subtitle: const Text(
+            '分享截图到 App 时自动生成内容描述并加入搜索索引——'
+            '「上次那张讲报销流程的截图」可被全文搜索找回；'
+            '仅供应商支持视觉能力时生效',
+          ),
+          value: _settings.screenshotDescription,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setScreenshotDescription(v));
+          },
+        ),
       ],
     );
   }
