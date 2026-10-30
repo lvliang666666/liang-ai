@@ -18,6 +18,7 @@ import '../services/api_service.dart';
 import '../services/card_forge_service.dart';
 import '../services/database_service.dart';
 import '../services/memory_extraction_service.dart';
+import '../services/morning_briefing_service.dart';
 import '../services/session_summary_service.dart';
 import '../services/memory_service.dart';
 import '../services/settings_service.dart';
@@ -34,6 +35,7 @@ import '../widgets/home/home_input_bar.dart';
 import '../widgets/home/message_outline_sheet.dart';
 import '../widgets/home/new_chat_preset_sheet.dart';
 import '../widgets/home/session_drawer_panel.dart';
+import '../widgets/morning_briefing_sheet.dart';
 import '../widgets/home/agent_picker_sheet.dart';
 import 'settings_page.dart';
 
@@ -86,6 +88,11 @@ class _HomePageState extends State<HomePage> {
     context.read<SessionsProvider>().loadSessions();
     // 启动即加载 Agent 列表：否则 tags 行的 Agent 图标在首次懒加载前显示兜底 emoji
     context.read<AgentProvider>().load();
+    // P1 晨间简报：跨天后首次打开自动生成并弹出（fire-and-forget，
+    // 生成完成才弹；开关关闭/当天已生成过则零操作）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _maybeShowMorningBriefing();
+    });
     // 聚焦根治：键盘收起（ViewInsets 归零）时自动退出聚焦。
     // 场景：用户点输入框聚焦 → 点 tag 弹层（键盘收起）→ 弹层关闭后
     // FocusScope 会把焦点还给输入框并重新弹键盘——监听键盘收起主动
@@ -159,6 +166,43 @@ class _HomePageState extends State<HomePage> {
         api.dispose();
       }
     }());
+  }
+
+  /// P1 晨间简报：跨天后首次打开 App 时生成并弹出
+  ///
+  /// 「打开补算式」：不做定时任务（Android 后台限制），跨天判断 =
+  /// SettingsService.lastBriefingDate 与今天不等。生成走默认供应商
+  /// （low 档低温，失败本地回退）；完成后先落日期再弹 sheet——
+  /// 弹出期间崩溃/杀进程不会当天重复打扰。开关关闭则零操作。
+  Future<void> _maybeShowMorningBriefing() async {
+    final settings = context.read<SettingsService>();
+    if (!settings.morningBriefing) return;
+    final now = DateTime.now();
+    final today =
+        '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+        '${now.day.toString().padLeft(2, '0')}';
+    if (settings.lastBriefingDate == today) return;
+
+    final db = DatabaseService.instance;
+    final profiles = await db.getAllProviders();
+    if (!mounted || profiles.isEmpty) return;
+    final profile = profiles.first;
+    final model =
+        profile.defaultModel.isNotEmpty ? profile.defaultModel : 'glm5.1';
+
+    final api = ApiService(baseUrl: profile.baseUrl, apiKey: profile.apiKey);
+    MorningBriefing? briefing;
+    try {
+      briefing = await MorningBriefingService(
+        api: api,
+        database: db,
+      ).generate(profile: profile, model: model);
+    } finally {
+      api.dispose();
+    }
+    if (!mounted) return;
+    await settings.setLastBriefingDate(today);
+    await showMorningBriefingSheet(context, briefing);
   }
 
   /// 按时段问候语
