@@ -243,8 +243,8 @@ class ChatProvider extends ChangeNotifier {
     }
     return [
       ..._messages,
-      if (_streamingMessage != null) _streamingMessage!,
-      if (_dualStreamingMessage != null) _dualStreamingMessage!,
+      ?_streamingMessage,
+      ?_dualStreamingMessage,
     ];
   }
 

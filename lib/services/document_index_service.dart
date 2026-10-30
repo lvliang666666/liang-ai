@@ -37,7 +37,7 @@ class DocumentIndexService {
     String sourcePath = '',
   }) async {
     try {
-      final chunks = await extractChunks(bytes);
+      final chunks = extractChunks(bytes);
       if (chunks.isEmpty) return 0;
       final now = DateTime.now().millisecondsSinceEpoch;
       final docChunks = <DocChunk>[];
