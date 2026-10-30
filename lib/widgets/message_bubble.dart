@@ -12,6 +12,7 @@ import '../models/chat_message.dart';
 import '../models/doc_chunk.dart';
 import '../models/tool_call.dart';
 import '../services/file_export_service.dart';
+import '../services/output_contract.dart';
 import '../services/settings_service.dart';
 import '../utils/haptics.dart';
 import 'app_bottom_sheet.dart';
@@ -19,6 +20,7 @@ import 'app_toast.dart';
 import 'attachment_thumbnail.dart';
 import 'citation_chips.dart';
 import 'code_block_widget.dart';
+import 'output_contract_card.dart';
 import 'swipe_action.dart';
 import 'thinking_block.dart';
 import 'tool_call_block.dart';
@@ -58,6 +60,7 @@ class MessageBubble extends StatefulWidget {
     this.onSaveAsCard,
     this.onChooseDual,
     this.resolveChunk,
+    this.outputContract,
   });
 
   final ChatMessage message;
@@ -106,6 +109,10 @@ class MessageBubble extends StatefulWidget {
   /// F8 引用溯源：按 (docName, page) 查回 doc_chunks 原文块（null =
   /// 无检索能力，引用 chips 纯展示不可点）
   final Future<DocChunk?> Function(String docName, int page)? resolveChunk;
+
+  /// F10 输出契约：当前会话 Agent 声明的输出契约（null = 未声明，
+  /// 无卡片渲染）。assistant 非流式回复含合法 yaml 块时渲染专属卡片
+  final OutputContract? outputContract;
 
   @override
   State<MessageBubble> createState() => _MessageBubbleState();
@@ -475,6 +482,22 @@ class _MessageBubbleState extends State<MessageBubble> {
                           codeBuilder: (context, name, code, closed) =>
                               CodeBlockWidget(code: code, language: name),
                         ),
+                // F10 输出契约卡片：Agent 声明了 output 且回复含合法
+                // yaml 块时渲染专属字段卡片（流式中不显示——yaml 块
+                // 随打字机逐字出现会闪烁半截；解析失败静默无卡片，
+                // markdown 正文照常，卡片是增强不是门槛）
+                if (!isStreaming &&
+                    message.role == 'assistant' &&
+                    widget.outputContract != null)
+                  Builder(builder: (context) {
+                    final values = OutputContract.extract(
+                        message.content, widget.outputContract!);
+                    if (values == null) return const SizedBox.shrink();
+                    return OutputContractCard(
+                      contract: widget.outputContract!,
+                      values: values,
+                    );
+                  }),
                 // F8 引用来源 chips：回答含【文件名·第N页】标注时显示
                 //（流式中不显示——标注随打字机逐字出现会闪烁）
                 if (!isStreaming && message.role == 'assistant')

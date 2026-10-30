@@ -425,6 +425,10 @@ class ChatMessageListState extends State<ChatMessageList> {
                                     : null,
                                 // F8 引用溯源：assistant 气泡引用 chips 点击查原文
                                 resolveChunk: widget.resolveChunk,
+                                // F10 输出契约：Agent 声明了 output 时
+                                // assistant 回复渲染专属卡片
+                                outputContract:
+                                    widget.chat.agent?.outputContract,
                               ),
                             ],
                           );
