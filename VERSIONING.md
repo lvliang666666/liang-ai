@@ -8,7 +8,18 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.21.0**（2026-10-30 发布）
+**当前版本：v2.22.0**（2026-10-30 发布）
+
+v2.22.0 在 v2.21.0 基础上新增（feat/dual-answer 分支，roadmap F6 → MINOR）：
+
+- **F6 同问双答（跨厂商双流对照）**：输入栏「双答」tag 选定对照供应商后，下一条消息同时发给当前供应商与对照方，两条回答以双气泡并列呈现——同一问题的跨厂商直观对照
+- **双流引擎**：ChatProvider.sendDualMessage 双流并发，各侧独立 ApiService（dualApiFactory 可注入测试）+ 独立 CancelToken；tools 置空纯文本对照（工具轮会引入变量）；stopGeneration 双令牌齐停，已收内容保留
+- **待选择态**：两侧都成功收尾才互指 dualOf（错误占位不参与选择——没人会在真答案和报错之间纠结）；isAwaitingDualChoice 派生自最后两条 assistant 消息互指
+- **选择续聊**：气泡上「用这个继续」→ chooseDual 删姊妹清标记（按 id 定位内存实例，宿主传 DB 新实例也一致），反解 sourceLabel 返回 (profile, model)，宿主 switchProvider 让后续对话延续所选供应商
+- **UI**：assistant 气泡来源徽标（verified 图标 + 「{供应商} · {模型}」）；输入栏 tag 三态——空闲隐藏/「双答」可点/「双答中…」禁点，待选择态隐藏（选择走气泡按钮）；home_page 对侧供应商选择 sheet 带说明文案
+- 953 项测试全绿（新增 21：引擎 12 + DB 迁移 4 + UI 渲染接线 10）；flutter analyze 零 error/warning（58 条 info 持平）
+
+### v2.21.0（2026-10-30）
 
 v2.21.0 在 v2.20.0 基础上新增（feat/skill-orchestration 分支，roadmap T2 → MINOR）：
 
