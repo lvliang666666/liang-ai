@@ -1,4 +1,5 @@
 import '../models/agent.dart';
+import 'skill_variables.dart';
 
 /// Agent 提示词文档解析器
 ///
@@ -57,6 +58,7 @@ class AgentParser {
       temperature: _parseDouble(meta['temperature']),
       effort: _parseEffort(meta['effort']),
       toolNames: _parseTools(meta['tools']),
+      personas: SkillVariables.parsePersonas(meta['personas']),
       prompt: prompt,
     );
   }
@@ -73,6 +75,7 @@ class AgentParser {
       temperature: r.temperature,
       effort: r.effort,
       toolNames: r.toolNames,
+      personas: r.personas,
       isBuiltin: isBuiltin,
     );
   }
@@ -137,6 +140,11 @@ class AgentParser {
       buf.writeln(
           'tools: ${agent.toolNames!.isEmpty ? 'none' : agent.toolNames!.join(', ')}');
     }
+    // F10 人格预设：`名称=值` 逗号分隔（空清单不输出）
+    if (agent.personas.isNotEmpty) {
+      buf.writeln(
+          'personas: ${agent.personas.map((p) => '${p.name}=${p.value}').join(', ')}');
+    }
     buf.writeln('---');
     buf.write(agent.prompt);
     return buf.toString();
@@ -157,6 +165,7 @@ class AgentParser {
       temperature: r.temperature,
       effort: r.effort,
       toolNames: r.toolNames,
+      personas: r.personas,
       isBuiltin: false,
     );
   }
@@ -171,6 +180,7 @@ class AgentParseResult {
     this.temperature,
     this.effort,
     this.toolNames,
+    this.personas = const [],
     required this.prompt,
   });
 
@@ -182,5 +192,8 @@ class AgentParseResult {
 
   /// null = 未声明（全部工具）；[] = 无工具；非空 = 子集
   final List<String>? toolNames;
+
+  /// F10 人格预设（front matter personas 字段；空 = 未声明）
+  final List<SkillPersona> personas;
   final String prompt;
 }

@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import '../services/skill_variables.dart' show SkillPersona;
+
 /// Agent 模型：prompt + 工具子集 + 参数 的组合包（类 GPTs）
 ///
 /// 一个 Agent 声明自己的系统提示词、允许调用的内置工具、温度/推理档位预设。
@@ -32,6 +34,13 @@ class Agent {
   /// - 非空 = 指定子集
   List<String>? toolNames;
 
+  /// F10 人格预设（`{{persona}}` 变量的候选值；空 = 未声明）
+  ///
+  /// 仅内存态，DB 不加列：预设随 prompt 资产演进（front matter
+  /// personas 字段），启动重播种自动更新；自定义 Agent（编辑器创建）
+  /// 无 front matter，天然空清单。
+  List<SkillPersona> personas;
+
   /// 内置 Agent 不可删除，只可复制后修改
   final bool isBuiltin;
 
@@ -44,6 +53,7 @@ class Agent {
     this.temperature,
     this.effort,
     this.toolNames,
+    this.personas = const [],
     this.isBuiltin = false,
   });
 
@@ -94,6 +104,7 @@ class Agent {
         temperature: temperature,
         effort: effort,
         toolNames: toolNames == null ? null : List.of(toolNames!),
+        personas: List.of(personas),
         isBuiltin: false,
       );
 }

@@ -8,7 +8,19 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.25.0**（2026-10-30 发布）
+**当前版本：v2.26.0**（2026-10-30 发布）
+
+v2.26.0 在 v2.25.0 基础上新增（feat/prompt-engineering 分支，roadmap F10 → MINOR）：
+
+- **F10 Prompt 工程产品化（变量插槽 + 人格预设）**：Skill prompt 里写 `{{变量名}}` 占位符 → 选 Agent 时弹表单填写（会话内记住）→ 发送时渲染进 system prompt——从「写死一段提示词」到「可复用可配置的 Prompt 模板」
+- **SkillVariables 服务**：`{{x}}` 正则解析（去重保序、排除内置）；内置变量 date/weekday/time 发送时刻求值自动填充；render 单遍 replaceAllMapped（替换值里的 `{{}}` 不二次展开）；未填写替换为空串（不残留 `{{x}}` 误导模型）
+- **人格预设建立在变量系统上（零特殊路径）**：front matter `personas: 正式=正式商务,轻松=轻松口语` → SkillPersona 清单 → 选预设 = 写 persona 变量值 + 记住预设名（回显按值反查）；personas 仅内存态 DB 不加列（随 prompt 资产演进，启动重播种自动更新）
+- **AgentParser 集成**：parse 读 personas 元数据；分享码 roundtrip 输出 personas 行
+- **ChatProvider**：setAgent(variables:) / setAgentVariables / setPersona / restorePersonaName / agentVariables / agentPersonas / activePersonaName；_buildApiMessages 发送时渲染 prompt
+- **UI**：SkillVariablesSheet（变量输入框预填上次值 + 预设 FilterChip + 空态文案）；选 Agent 后弹表单，点遮罩取消 = 不切换（填一半的配置不生效）；agent tag 长按重开配置表单（聊天态写 provider，空闲态回调回传主页暂存）；标签显示「名字·预设」
+- 1068 项测试全绿（新增 36：数据层 18 + 注入 9 + sheet 5 + 长按 4）；flutter analyze 零 error/warning（57 条 info）
+
+### v2.25.0（2026-10-30）
 
 v2.25.0 在 v2.24.0 基础上新增（feat/doc-workbench 分支，roadmap F8 + E10 顺手项 → MINOR）：
 
