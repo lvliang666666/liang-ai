@@ -8,7 +8,20 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.28.0**（2026-10-30 发布）
+**当前版本：v2.29.0**（2026-10-30 发布）
+
+v2.29.0 在 v2.28.0 基础上新增（feat/commitment-followup 分支，roadmap P3 → MINOR）：
+
+- **P3 承诺跟进/回顾（主动智能收官）**：聊天中提到的待办（「周五前发周报」「下周约牙医」）自动记录，到期未完成时提醒一次——从「被动应答」到「主动跟进」的最后一块拼图，P 系列三项全部落地
+- **数据层（DB v20→v21）**：commitments 表（content/dueDate/status/followUp/followUpDate）+ 状态流转（pending/done/dismissed）+ deleteSession 级联删 + 备份纳入（导出/导入往返）
+- **提取（CommitmentService）**：会话结束后台跑（复用 M2 记忆提取时机，独立开关），LLM 强约束 JSON（期限以对话日期推算），解析失败回喂重试一次；dueDate 正则校验非法置 null；单次上限 3 条防刷屏
+- **到期扫描（打开补算式）**：不做定时任务（Android 后台限制），跨天首开查 pending 且 due_date ≤ 今天的承诺
+- **跟进语生成**：LLM 低温一句话（像朋友随口一问，不指责不施压），失败本地模板兜底；follow_up_date 同天去重
+- **防打扰生命线（roadmap 原文要求）**：开关可关（设置页「承诺跟进提醒」）+ 每天最多弹一次（lastFollowUpDate）+ 点遮罩关闭 = 剩余承诺保持待跟进明天再问（不强制处理）
+- **跟进 Sheet**：跟进语突出 + 承诺原文 + 到期日 + 三操作（继续聊→跳回来源会话 / 已完成 / 忽略）；全部处理完自动关闭
+- 1141 项测试全绿（新增 32：数据层 8 + 服务 17 + Sheet 8）；flutter analyze 零 error/warning（63 条 info）
+
+### v2.28.0（2026-10-30）
 
 v2.28.0 在 v2.27.0 基础上新增（feat/home-widget 分支，roadmap P2 → MINOR）：
 
