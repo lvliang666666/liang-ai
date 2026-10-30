@@ -912,6 +912,22 @@ class _SettingsPageState extends State<SettingsPage> {
             setState(() => _settings.setMorningBriefing(v));
           },
         ),
+        const SizedBox(height: 16),
+        Text('输入辅助', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('剪贴板长文本建议'),
+          subtitle: const Text(
+            '点输入框时若剪贴板有长文本（≥200 字），输入栏上方浮出'
+            '「帮你总结？」胶囊，点击即填入；同一段内容只提示一次',
+          ),
+          value: _settings.clipboardSuggestion,
+          onChanged: (v) {
+            Haptics.selection();
+            setState(() => _settings.setClipboardSuggestion(v));
+          },
+        ),
       ],
     );
   }
