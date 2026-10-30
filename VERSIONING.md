@@ -8,7 +8,13 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.30.1**（2026-10-30 发布）
+**当前版本：v2.30.2**（2026-10-30 发布）
+
+v2.30.2 在 v2.30.1 基础上修复（fix/sheet-fullscreen-statusbar 分支，用户反馈 → PATCH）：
+
+- **晨报/承诺跟进/Token 用量 Sheet 顶满屏遮挡通知栏修复**：用户反馈晨间简报 Sheet 占满屏幕、顶部被通知栏遮挡。根因 = SheetScaffold 的 Column+Expanded(ListView) 在 isScrollControlled 松约束下撑满全屏，v2.16.1 的状态栏保护只覆盖键盘在场场景；修复 = 三个 Sheet 的 show 入口包 SheetKeyboardInset（60% 屏高上限，与大纲/斜杠面板同款）+ 3 例接线级防回归测试（sheet_height_cap_test）
+
+### v2.30.1（2026-10-30）
 
 v2.30.1 在 v2.30.0 基础上修复（fix/memory-page-subtitle 分支，用户反馈 → PATCH）：
 
