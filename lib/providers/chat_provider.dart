@@ -1390,6 +1390,11 @@ class ChatProvider extends ChangeNotifier {
     final prompt = rawPrompt == null || rawPrompt.isEmpty
         ? rawPrompt
         : SkillVariables.render(rawPrompt, values: _agentVariables);
+    // F10 输出契约：声明了才注入格式指令（要求回复末尾附 yaml 块，
+    // UI 据此渲染专属卡片；未声明零改动）
+    final contract = _agent?.outputContract;
+    final contractInstruction =
+        (contract == null || !contract.hasFields) ? null : contract.instruction;
     final summary = _contextSummary;
     // 摘要边界之后的历史（边界消息被删时按时间兜底）
     final history = summary == null
@@ -1411,6 +1416,8 @@ class ChatProvider extends ChangeNotifier {
     return [
       if (prompt != null && prompt.isNotEmpty)
         {'role': 'system', 'content': prompt},
+      if (contractInstruction != null)
+        {'role': 'system', 'content': contractInstruction},
       if (_memoryText != null && _memoryText!.isNotEmpty)
         {'role': 'system', 'content': _memoryText!},
       if (_docContextText != null && _docContextText!.isNotEmpty)

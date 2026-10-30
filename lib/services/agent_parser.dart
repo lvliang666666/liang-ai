@@ -1,4 +1,5 @@
 import '../models/agent.dart';
+import 'output_contract.dart';
 import 'skill_variables.dart';
 
 /// Agent 提示词文档解析器
@@ -59,6 +60,7 @@ class AgentParser {
       effort: _parseEffort(meta['effort']),
       toolNames: _parseTools(meta['tools']),
       personas: SkillVariables.parsePersonas(meta['personas']),
+      outputContract: OutputContract.parse(meta['output']),
       prompt: prompt,
     );
   }
@@ -76,6 +78,7 @@ class AgentParser {
       effort: r.effort,
       toolNames: r.toolNames,
       personas: r.personas,
+      outputContract: r.outputContract,
       isBuiltin: isBuiltin,
     );
   }
@@ -145,6 +148,12 @@ class AgentParser {
       buf.writeln(
           'personas: ${agent.personas.map((p) => '${p.name}=${p.value}').join(', ')}');
     }
+    // F10 输出契约：`字段=显示名` 逗号分隔（未声明不输出）
+    final contract = agent.outputContract;
+    if (contract != null && contract.hasFields) {
+      buf.writeln(
+          'output: ${contract.fields.map((f) => '${f.name}=${f.label}').join(', ')}');
+    }
     buf.writeln('---');
     buf.write(agent.prompt);
     return buf.toString();
@@ -166,6 +175,7 @@ class AgentParser {
       effort: r.effort,
       toolNames: r.toolNames,
       personas: r.personas,
+      outputContract: r.outputContract,
       isBuiltin: false,
     );
   }
@@ -181,6 +191,7 @@ class AgentParseResult {
     this.effort,
     this.toolNames,
     this.personas = const [],
+    this.outputContract,
     required this.prompt,
   });
 
@@ -195,5 +206,8 @@ class AgentParseResult {
 
   /// F10 人格预设（front matter personas 字段；空 = 未声明）
   final List<SkillPersona> personas;
+
+  /// F10 输出契约（front matter output 字段；null = 未声明）
+  final OutputContract? outputContract;
   final String prompt;
 }

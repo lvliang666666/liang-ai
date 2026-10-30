@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import '../services/output_contract.dart' show OutputContract;
 import '../services/skill_variables.dart' show SkillPersona;
 
 /// Agent 模型：prompt + 工具子集 + 参数 的组合包（类 GPTs）
@@ -41,6 +42,12 @@ class Agent {
   /// 无 front matter，天然空清单。
   List<SkillPersona> personas;
 
+  /// F10 输出契约（front matter output 字段；null = 未声明）
+  ///
+  /// 仅内存态，DB 不加列（同 personas 策略）：契约随 prompt 资产演进，
+  /// 启动重播种自动更新。声明后回复末尾的 yaml 块渲染成专属卡片。
+  OutputContract? outputContract;
+
   /// 内置 Agent 不可删除，只可复制后修改
   final bool isBuiltin;
 
@@ -54,6 +61,7 @@ class Agent {
     this.effort,
     this.toolNames,
     this.personas = const [],
+    this.outputContract,
     this.isBuiltin = false,
   });
 
@@ -105,6 +113,7 @@ class Agent {
         effort: effort,
         toolNames: toolNames == null ? null : List.of(toolNames!),
         personas: List.of(personas),
+        outputContract: outputContract,
         isBuiltin: false,
       );
 }
