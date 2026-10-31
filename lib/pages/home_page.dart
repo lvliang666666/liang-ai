@@ -439,10 +439,9 @@ class _HomePageState extends State<HomePage> {
     if (settings.lastFollowUpDate == today) return;
 
     final db = DatabaseService.instance;
-    final due = await CommitmentService(api: ApiService(
-      baseUrl: 'unused',
-      apiKey: 'unused',
-    ), db: db).scanDue(now: now);
+    // scanDue 纯 DB 查询：不传 api（dio 5.11.1 构造即校验 baseUrl，
+    // 占位 URL 会在全新安装路径直接抛异常——v2.30.6 修复）
+    final due = await CommitmentService(db: db).scanDue(now: now);
     if (!mounted || due.isEmpty) return;
 
     // 跟进语生成：默认供应商（失败本地模板兜底）；无供应商全走模板
@@ -460,7 +459,7 @@ class _HomePageState extends State<HomePage> {
     List<Commitment> withFollowUps;
     try {
       withFollowUps = await CommitmentService(
-        api: api ?? ApiService(baseUrl: 'unused', apiKey: 'unused'),
+        api: api,
         db: db,
       ).generateFollowUps(
         due,

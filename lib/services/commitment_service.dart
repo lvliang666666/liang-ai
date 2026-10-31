@@ -21,11 +21,14 @@ import 'sse_parser.dart';
 /// 静默语义：网络失败/解析失败/无可提取内容一律安静返回，不抛异常
 /// 不弹提示——后台任务不打扰用户。
 class CommitmentService {
-  CommitmentService({required ApiService api, required DatabaseService db})
+  /// [api] 可选：scanDue 纯 DB 查询不需要网络；generateFollowUps 在
+  /// api 为 null 时全走本地模板（与 profile == null 同语义）。
+  /// dio 5.11.1 起构造时即校验 baseUrl，禁止再用占位 URL 凑数。
+  CommitmentService({ApiService? api, required DatabaseService db})
       : _api = api,
         _db = db;
 
-  final ApiService _api;
+  final ApiService? _api;
   final DatabaseService _db;
 
   /// 提取/生成请求推理档位（轻任务走 low，快且省 token）
@@ -216,7 +219,7 @@ class CommitmentService {
         continue;
       }
       String followUp;
-      if (profile != null) {
+      if (profile != null && _api != null) {
         final text = await _requestText(profile, model ?? profile.defaultModel, [
           {'role': 'system', 'content': _followUpPrompt},
           {
@@ -262,9 +265,11 @@ class CommitmentService {
     String model,
     List<Map<String, Object?>> messages,
   ) async {
+    final api = _api;
+    if (api == null) return null; // 无 api：调用方走本地模板兜底
     final buffer = StringBuffer();
     try {
-      await for (final event in _api.chatStream(
+      await for (final event in api.chatStream(
         profile: profile,
         messages: messages,
         model: model,
