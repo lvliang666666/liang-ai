@@ -8,7 +8,14 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.30.2**（2026-10-30 发布）
+**当前版本：v2.30.3**（2026-10-31 发布）
+
+v2.30.3 在 v2.30.2 基础上修复（fix/global-sheet-safe-area 分支，用户反馈 → PATCH）：
+
+- **全局 Sheet 安全区统一修复（用户验收要求：全局基类统一处理，不逐页打补丁）**：用户再次反馈 Token 用量页标题被状态栏遮挡（重复出现 bug）。框架级根因（SDK 源码确认）= showModalBottomSheet 默认 useSafeArea:false 且内部 removePadding(removeTop:true) 把弹层内 padding.top 与 viewPadding.top 双双清零（removePadding 的 viewPadding 计算 = max(0, viewPadding−padding)，真机两者相等相减为 0），SafeArea/paddingOf/viewPaddingOf 在弹层内全部失效——v2.16.0 的 keyboardCap 状态栏保护在真实弹层路径从未生效（组件级测试直 pump 读得到 24，掩盖了接线缺失）。修复 = showAppBottomSheet 设 useSafeArea:true（SDK 用 SafeArea(bottom:false) 从约束层扣掉状态栏高度）+ SheetKeyboardInset 下沉到入口统一包裹（9 处调用点去 wrapper，结构性杜绝漏包）+ settings_page 诊断日志 DraggableScrollableSheet 补 SafeArea（22 处弹层扫描唯一缺口）+ 消息操作/引用来源 Sheet 内容区补 SingleChildScrollView（矮屏 RenderFlex overflow）
+- **UI 批次 1 验收标准测试化**：code_block 复制反馈 4 例 + app_toast 4 例 + agent_picker_sheet 5 例（修复 DB IO 在 fakeAsync 区挂死 + Scaffold body 消费 viewInsets 的测试假象）+ sheet_global_safe_area 8 例（基线/接线/刘海/矮屏/上限/透传/键盘/双层防护，全部走真实弹出路径）；教训沉淀 D:\LvProject\lessons\2026-10-31-flutter-modal-sheet-removepadding-kills-safearea.md
+
+### v2.30.2（2026-10-30）
 
 v2.30.2 在 v2.30.1 基础上修复（fix/sheet-fullscreen-statusbar 分支，用户反馈 → PATCH）：
 
