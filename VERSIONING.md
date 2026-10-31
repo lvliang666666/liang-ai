@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.30.3**（2026-10-31 发布）
+**当前版本：v2.30.4**（2026-10-31 发布）
+
+v2.30.4 在 v2.30.3 基础上修复（fix/dual-dispatch-clipboard-timing 分支，用户 Bug 清单 → PATCH）：
+
+- **Bug 1 双答功能未触发**：F6 提交（5525e93）时引擎（sendDualMessage 双流管线）与 UI（双答 tag/选择 Sheet）两头齐备，但发送路径从未接线——_send() 恒走 sendMessage()，设好的对照方被静默忽略。修复 = sendMessage 入口分发（已设双答目标 + 纯文本 → sendDualMessage；带附件跳过且目标保留待下一条消费）+ isDualArmed getter + 双答 tag「双答·已设」确认态（发送即双答的可见反馈）
+- **Bug 3 剪贴板文字整理无反应**：Android 10+ 只允许「当前聚焦窗口」读剪贴板，而 Flutter 的 widget focus 先于系统窗口焦点建立（冷启动/后台回前台/键盘收起再弹出时尤其明显）——聚焦瞬间立刻读会撞上焦点检查窗口，getPrimaryClip 返回 null，胶囊永不出现。修复 = 延迟 400ms 再读 + 首读为空重试一次（再等 400ms）+ 可取消 Timer（dispose 清理），失焦/开始输入即放弃检测
+- 测试：chat_provider_test +2（sendMessage 分发双流 / 附件不触发目标保留）、dual_answer_ui_test +1（「双答·已设」确认态）、clipboard_suggestion_test +2（首读空重试仍弹 / 延迟期失焦不弹）；全量 1187 项测试绿；flutter analyze 零 error/warning（70 条 info）
+
+### v2.30.3（2026-10-31）
 
 v2.30.3 在 v2.30.2 基础上修复（fix/global-sheet-safe-area 分支，用户反馈 → PATCH）：
 
