@@ -68,14 +68,15 @@ class _SkillVariablesSheetState extends State<SkillVariablesSheet> {
     final theme = Theme.of(context);
     final personas = widget.agent.personas;
 
-    return SheetKeyboardInset(
-      child: SheetScaffold(
-        title: '配置「${widget.agent.name}」',
-        onClose: () => Navigator.pop(context),
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-          children: [
+    // v2.30.3：SheetKeyboardInset 已下沉到 showAppBottomSheet 入口
+    // 统一施加，组件内不再手动包裹
+    return SheetScaffold(
+      title: '配置「${widget.agent.name}」',
+      onClose: () => Navigator.pop(context),
+      child: ListView(
+        shrinkWrap: true,
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        children: [
             // ===== 人格预设（声明了才显示） =====
             if (personas.isNotEmpty) ...[
               Text('人格预设', style: theme.textTheme.titleSmall),
@@ -154,7 +155,6 @@ class _SkillVariablesSheetState extends State<SkillVariablesSheet> {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 }

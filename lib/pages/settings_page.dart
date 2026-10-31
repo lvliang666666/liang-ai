@@ -1141,7 +1141,12 @@ class _SettingsPageState extends State<SettingsPage> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => _DiagnosticLogSheet(initialText: text),
+      // v2.30.3：补顶部安全区——DraggableScrollableSheet 可拖到 90% 屏高，
+      // 标题行会顶进状态栏遮挡区（全 app 状态栏遮挡扫描发现的最后一处
+      // 裸弹层缺口；其余 10 处裸弹层均有 SafeArea）
+      builder: (context) => SafeArea(
+        child: _DiagnosticLogSheet(initialText: text),
+      ),
     );
   }
 

@@ -560,28 +560,33 @@ class _MessageBubbleState extends State<MessageBubble> {
     final canCard = widget.onSaveAsCard != null;
     final action = await showAppBottomSheet<String>(
       context: context,
+      // v2.30.3：键盘适配/60% 上限/状态栏保护已下沉到 showAppBottomSheet
+      // 入口统一施加，调用点不再手动包 SheetKeyboardInset
       builder: (context) => SheetScaffold(
         title: '消息操作',
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _actionTile(context, Icons.copy_outlined, '复制', 'copy'),
-            if (canEdit)
-              _actionTile(context, Icons.edit_outlined, '编辑重发', 'edit'),
-            if (canCard)
-              _actionTile(
-                  context, Icons.style_outlined, '沉淀为卡片', 'card'),
-            if (canPin)
-              _actionTile(
-                context,
-                message.pinned ? Icons.push_pin_outlined : Icons.push_pin,
-                message.pinned ? '取消钉住' : '钉住',
-                'pin',
-                iconColor: message.pinned
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-          ],
+        // SingleChildScrollView：矮屏防护（同助手菜单，v2.30.3）
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _actionTile(context, Icons.copy_outlined, '复制', 'copy'),
+              if (canEdit)
+                _actionTile(context, Icons.edit_outlined, '编辑重发', 'edit'),
+              if (canCard)
+                _actionTile(
+                    context, Icons.style_outlined, '沉淀为卡片', 'card'),
+              if (canPin)
+                _actionTile(
+                  context,
+                  message.pinned ? Icons.push_pin_outlined : Icons.push_pin,
+                  message.pinned ? '取消钉住' : '钉住',
+                  'pin',
+                  iconColor: message.pinned
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+            ],
+          ),
         ),
       ),
     );
@@ -633,33 +638,40 @@ class _MessageBubbleState extends State<MessageBubble> {
     final canCard = widget.onSaveAsCard != null;
     final action = await showAppBottomSheet<String>(
       context: context,
+      // v2.30.3：键盘适配/60% 上限/状态栏保护已下沉到 showAppBottomSheet
+      // 入口统一施加，调用点不再手动包 SheetKeyboardInset
       builder: (context) => SheetScaffold(
         title: '消息操作',
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _actionTile(context, Icons.copy_outlined, '复制全文', 'copy'),
-            _actionTile(context, Icons.highlight_alt, '选择文字', 'select'),
-            if (canQuote)
-              _actionTile(
-                  context, Icons.format_quote_outlined, '引用', 'quote'),
-            if (canRegen)
-              _actionTile(context, Icons.refresh_outlined, '重答', 'regen'),
-            if (canCard)
-              _actionTile(
-                  context, Icons.style_outlined, '沉淀为卡片', 'card'),
-            if (canPin)
-              _actionTile(
-                context,
-                message.pinned ? Icons.push_pin_outlined : Icons.push_pin,
-                message.pinned ? '取消钉住' : '钉住',
-                'pin',
-                iconColor: message.pinned
-                    ? Theme.of(context).colorScheme.primary
-                    : null,
-              ),
-            _actionTile(context, Icons.ios_share, '导出并分享', 'export'),
-          ],
+        // SingleChildScrollView：矮屏（60% 上限内放不下全部条目）时可滚动，
+        // 内容少时贴顶不拉伸（v2.30.3：六项 × 56dp = 336 > 600dp 屏的
+        // 304dp 内容区，裸 Column 会 RenderFlex overflow）
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _actionTile(context, Icons.copy_outlined, '复制全文', 'copy'),
+              _actionTile(context, Icons.highlight_alt, '选择文字', 'select'),
+              if (canQuote)
+                _actionTile(
+                    context, Icons.format_quote_outlined, '引用', 'quote'),
+              if (canRegen)
+                _actionTile(context, Icons.refresh_outlined, '重答', 'regen'),
+              if (canCard)
+                _actionTile(
+                    context, Icons.style_outlined, '沉淀为卡片', 'card'),
+              if (canPin)
+                _actionTile(
+                  context,
+                  message.pinned ? Icons.push_pin_outlined : Icons.push_pin,
+                  message.pinned ? '取消钉住' : '钉住',
+                  'pin',
+                  iconColor: message.pinned
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
+                ),
+              _actionTile(context, Icons.ios_share, '导出并分享', 'export'),
+            ],
+          ),
         ),
       ),
     );

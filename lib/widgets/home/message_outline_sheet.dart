@@ -22,7 +22,8 @@ Future<ChatMessage?> showMessageOutlineSheet(
   return showAppBottomSheet<ChatMessage>(
     context: context,
     // 大纲是轻量目录不是工作面板：限高 45% 屏高（默认 60% 会顶到
-    // 状态栏，用户验收反馈「页面占满屏幕被通知栏挡住」）
+    // 状态栏，用户验收反馈「页面占满屏幕被通知栏挡住」）。
+    // v2.30.3：上限/键盘适配由 showAppBottomSheet 入口统一施加。
     maxHeightRatio: 0.45,
     builder: (context) => MessageOutlineSheet(
       messages: messages,
@@ -120,55 +121,53 @@ class _MessageOutlineSheetState extends State<MessageOutlineSheet>
       opacity: _fade,
       child: SlideTransition(
         position: _slide,
-        child: SheetKeyboardInset(
-          // 限高 45%：与 showMessageOutlineSheet 的 maxHeightRatio 一致
-          maxHeightRatio: 0.45,
-          child: SheetScaffold(
-            title: '消息大纲',
-            onClose: () => Navigator.pop(context),
-            child: entries.isEmpty
-                ? Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24),
-                      child: Text(
-                        '还没有提问',
-                        style: theme.textTheme.bodyMedium
+        // v2.30.3：SheetKeyboardInset 已下沉到 showAppBottomSheet 入口
+        // 统一施加（45% 上限经 maxHeightRatio 透传），这里直接给骨架
+        child: SheetScaffold(
+          title: '消息大纲',
+          onClose: () => Navigator.pop(context),
+          child: entries.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      '还没有提问',
+                      style: theme.textTheme.bodyMedium
+                          ?.copyWith(color: cs.onSurfaceVariant),
+                    ),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  itemCount: entries.length,
+                  itemBuilder: (context, index) {
+                    final msg = entries[index];
+                    return ListTile(
+                      key: ValueKey('outline-${msg.id}'),
+                      leading: Text(
+                        '${index + 1}',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          color: cs.primary,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      title: Text(
+                        MessageOutlineSheet.previewOf(msg),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        MessageOutlineSheet.timeLabel(msg.createdAt),
+                        style: theme.textTheme.labelSmall
                             ?.copyWith(color: cs.onSurfaceVariant),
                       ),
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    itemCount: entries.length,
-                    itemBuilder: (context, index) {
-                      final msg = entries[index];
-                      return ListTile(
-                        key: ValueKey('outline-${msg.id}'),
-                        leading: Text(
-                          '${index + 1}',
-                          style: theme.textTheme.titleSmall?.copyWith(
-                            color: cs.primary,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        title: Text(
-                          MessageOutlineSheet.previewOf(msg),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          MessageOutlineSheet.timeLabel(msg.createdAt),
-                          style: theme.textTheme.labelSmall
-                              ?.copyWith(color: cs.onSurfaceVariant),
-                        ),
-                        onTap: () {
-                          Haptics.light();
-                          widget.onSelect(msg);
-                        },
-                      );
-                    },
-                  ),
-          ),
+                      onTap: () {
+                        Haptics.light();
+                        widget.onSelect(msg);
+                      },
+                    );
+                  },
+                ),
         ),
       ),
     );
