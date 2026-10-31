@@ -94,24 +94,25 @@ class _SlashCommandSheetState extends State<SlashCommandSheet>
         widget.settings.slashPhrases, _query);
     final empty = phrases.isEmpty;
 
-    return SheetKeyboardInset(
-      child: SheetScaffold(
-        title: '快捷短语',
-        onClose: () => Navigator.pop(context),
-        header: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-          child: TextField(
-            autofocus: false,
-            onChanged: (v) => setState(() => _query = v),
-            decoration: InputDecoration(
-              isDense: true,
-              hintText: '搜索短语',
-              prefixIcon: const Icon(Icons.search, size: 20),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 10),
-            ),
+    // v2.30.3：SheetKeyboardInset 已下沉到 showAppBottomSheet 入口
+    // 统一施加，组件内不再手动包裹
+    return SheetScaffold(
+      title: '快捷短语',
+      onClose: () => Navigator.pop(context),
+      header: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        child: TextField(
+          autofocus: false,
+          onChanged: (v) => setState(() => _query = v),
+          decoration: InputDecoration(
+            isDense: true,
+            hintText: '搜索短语',
+            prefixIcon: const Icon(Icons.search, size: 20),
+            contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 10),
           ),
         ),
+      ),
         child: empty
             ? Padding(
                 padding: const EdgeInsets.all(24),
@@ -152,7 +153,6 @@ class _SlashCommandSheetState extends State<SlashCommandSheet>
                     ),
                 ],
               ),
-      ),
     );
   }
 }

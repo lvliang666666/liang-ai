@@ -55,6 +55,20 @@ const AnimationStyle kSheetAnimationStyle = AnimationStyle(
 /// [maxHeightRatio] 覆盖默认最大高度比例（默认 60% 屏高）；
 /// [isScrollControlled] 必须为 true 才能突破半屏限制（本函数内部已设）。
 ///
+/// **键盘适配与高度上限在入口统一施加**（v2.30.3）：builder 返回的内容
+/// 自动被 [SheetKeyboardInset] 包裹——60% 屏高上限 + 键盘跟随 + 状态栏
+/// 保护一次到位，调用点**无需（也不应）再手动包裹**。此前由各调用点
+/// 自行包裹，v2.30.2/v2.30.3 两轮共发现 6 处漏包（晨报/承诺跟进/
+/// Token 用量/消息操作×2/引用来源），下沉到单一入口后结构性杜绝。
+///
+/// **useSafeArea: true（v2.30.3 全局安全区）**：showModalBottomSheet
+/// 默认 useSafeArea=false 且内部 removePadding(removeTop:true)——
+/// 弹层内 padding.top 与 viewPadding.top **双双清零**（removePadding
+/// 的 viewPadding 计算 = max(0, viewPadding − padding)，真机两者相等
+/// 相减为 0），SafeArea/paddingOf/viewPaddingOf 在弹层内全部失效，
+/// 这是状态栏遮挡 bug 反复出现的框架级根因。useSafeArea=true 让
+/// SDK 用 SafeArea(bottom:false) 包裹内容，状态栏保护由框架完成。
+///
 /// 注意：这里**不**给 showModalBottomSheet 传固定 constraints——高度上限
 /// 由 [SheetKeyboardInset] 在键盘 padding 内层施加（见其文档注释）。
 /// 若在此处传 maxHeight，键盘弹出时 padding 会挤占内容预算而非抬高面板
@@ -68,6 +82,7 @@ Future<T?> showAppBottomSheet<T>({
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true, // v2.30.3：状态栏保护下沉到框架（见文档注释）
     backgroundColor: Theme.of(context).colorScheme.surface,
     barrierColor: barrierColor,
     shape: const RoundedRectangleBorder(
@@ -75,13 +90,21 @@ Future<T?> showAppBottomSheet<T>({
     ),
     enableDrag: true,
     sheetAnimationStyle: kSheetAnimationStyle,
-    builder: builder,
+    builder: (context) => SheetKeyboardInset(
+      maxHeightRatio: maxHeightRatio,
+      child: builder(context),
+    ),
   );
 }
 
 /// Sheet 内容骨架：标题行（左标题 + 右关闭键）+ 固定顶部区 + 滚动内容区
 ///
 /// - 标题 16sp 加粗左对齐，右侧 24dp 关闭图标（需求规格）
+/// - **顶部安全区**：标题行上边距自动叠加 `MediaQuery.padding.top`
+///   （v2.30.3 全局修复——面板顶到屏幕顶时标题不被状态栏遮挡；
+///   配合 showAppBottomSheet 的 useSafeArea:true，弹层内 padding.top
+///   保留真实状态栏高度，刘海屏/横竖屏自适应，
+///   全 app 所有走 [SheetScaffold] 的弹层一次生效）
 /// - [header]（如搜索框）固定在标题下方，不随内容滚动——键盘弹出时
 ///   焦点元素（搜索框）始终在视口内
 /// - [child] 放进 Expanded，内容多时滚动，少时贴顶
@@ -109,13 +132,19 @@ class SheetScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // 顶部安全区（v2.30.3 全局修复）：Sheet 高度上限是比例值，在矮屏/
+    // 大内容下面板可顶到屏幕顶——标题行必须从状态栏下沿开始布局。
+    // showAppBottomSheet 已设 useSafeArea:true（弹层内 padding.top
+    // 保留真实状态栏高度），这里动态读取叠加，刘海屏/横竖屏自适应，
+    // 禁止硬编码 24dp（用户验收要求 #1）。
+    final topInset = MediaQuery.paddingOf(context).top;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 标题行：16sp 加粗左对齐 + 24dp 关闭图标
+        // 标题行：16sp 加粗左对齐 + 24dp 关闭图标；上边距 = 安全区 + 12dp
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+          padding: EdgeInsets.fromLTRB(16, 12 + topInset, 8, 4),
           child: Row(
             children: [
               Expanded(
@@ -164,6 +193,13 @@ class SheetScaffold extends StatelessWidget {
 /// 已沉淀 lessons：2026-10-29-flutter-sheet-keyboard-statusbar-overflow.md）。
 /// 无键盘时该值远大于 60% 上限，不改变既有布局。
 ///
+/// **v2.30.3 关键修复**：状态栏高度依赖 `showAppBottomSheet` 的
+/// `useSafeArea: true`——SDK 默认 useSafeArea=false 且内部
+/// `removePadding(removeTop: true)` 把弹层内 padding/viewPadding
+/// 双双清零，此前 `paddingOf` 读到的恒为 0，状态栏保护在真实弹层
+/// 路径从未生效（组件级测试直 pump 读得到 24，掩盖了这一点——
+/// 接线级测试才能暴露）。
+///
 /// 注意：本组件必须工作在**松约束**下（BottomSheet 内部是
 /// Align(heightFactor: 1.0) 的松约束）。若外层传紧约束
 /// （如 SizedBox.expand），ConstrainedBox 的上限会被紧约束吞掉。
@@ -183,6 +219,10 @@ class SheetKeyboardInset extends StatelessWidget {
   Widget build(BuildContext context) {
     final inset = MediaQuery.viewInsetsOf(context).bottom;
     final screenH = MediaQuery.heightOf(context);
+    // 状态栏高度：showAppBottomSheet 已设 useSafeArea:true，弹层内
+    // padding.top 保留真实值（默认 useSafeArea=false 时 SDK 内部
+    // removePadding(removeTop:true) 会把 padding/viewPadding 双双清零，
+    // 此前 paddingOf 读到的恒为 0，状态栏保护从未在真机生效——v2.30.3 修复）
     final statusBar = MediaQuery.paddingOf(context).top;
     // 常规上限：60% 屏高
     final ratioCap = math.max(0.0, screenH * maxHeightRatio);

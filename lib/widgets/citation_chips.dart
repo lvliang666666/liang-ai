@@ -96,39 +96,45 @@ class CitationChips extends StatelessWidget {
     }
     await showAppBottomSheet<void>(
       context: context,
+      // v2.30.3：键盘适配/60% 上限/状态栏保护已下沉到 showAppBottomSheet
+      // 入口统一施加，调用点不再手动包 SheetKeyboardInset
       builder: (context) => SheetScaffold(
         title: ref.label,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: SelectableText(
-                chunk.content,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyMedium
-                    ?.copyWith(height: 1.6),
-              ),
-            ),
-            if (chunk.sourcePath.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              SizedBox(
+        // SingleChildScrollView：引用原文可能很长，矮屏 60% 上限内放不下
+        // 时可滚动（v2.30.3 矮屏防护，同消息操作菜单）
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
                 width: double.infinity,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.open_in_new, size: 18),
-                  label: const Text('打开原文件'),
-                  onPressed: () => _openSource(context, chunk.sourcePath),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SelectableText(
+                  chunk.content,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(height: 1.6),
                 ),
               ),
+              if (chunk.sourcePath.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: const Text('打开原文件'),
+                    onPressed: () => _openSource(context, chunk.sourcePath),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
