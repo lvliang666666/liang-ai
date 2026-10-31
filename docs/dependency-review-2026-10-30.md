@@ -27,15 +27,13 @@
 
 ## 三、传递依赖要点
 
-- **sqlite3 3.5.2 → 3.8.0**（sqflite_common_ffi 底层）：**SDK 级死锁，暂缓**（2026-10-31 批次 T 求解器日志定位）——sqlite3 3.8.0 → hooks ^2.2.0 → record_use ^1.0.0 → meta ^1.19.0，但 Flutter 3.44.9 SDK 自身钉死 `meta 1.18.0`（flutter/packages/flutter pubspec），任何 pub 命令（含 --unlock-transitive 全链解锁）都解不开。**解锁条件 = Flutter SDK 升级到带 meta 1.19 的版本**（3.45+ 预期），届时与 SDK 升级同批次做，FTS5 回归（I7 全文搜索/F7 截图记忆）照旧。
+- **sqlite3 3.5.2 → 3.8.0**（sqflite_common_ffi 底层）：✅ **已解锁并升级（2026-10-31 批次 U，v2.30.6）**——Flutter SDK 3.44.9 → 3.47.9（Dart 3.13.7）带来 meta 1.19.0，死锁链（sqlite3 3.8.0 → hooks ^2.2.0 → record_use ^1.0.0 → meta ^1.19.0）自然解开；FTS5 回归 47 例绿（I7 全文搜索/F7 截图记忆照旧）。
 - **shared_preferences_foundation 2.5.7 → 2.6.1**：iOS 侧，Android 端无影响，随主包升级自然跟进。
 - **test_api 0.7.11 → 0.7.15**：随 Flutter SDK 版本走，不手动动。
 
 ## 四、Flutter SDK
 
-- 当前 **3.44.9 stable**（2026-08-05 发布，本机 3 个月前安装）。
-- 规则③「滞后稳定版一个版本」：需确认当前最新 stable。若最新为 3.45.x/3.46.x，本机滞后 1-2 版——**在容忍范围内**；若已落后 3+ 版，下批安排 SDK 升级（单独批次：`flutter upgrade` + 全量测试 + 模拟器冷启动冒烟）。
-- SDK 升级前置检查项：`flutter analyze` 新 lint 基线变化、`pubspec.lock` 全量重解析（镜像 URL 漂移检查）、release 构建产物 aapt 校验。
+- ✅ **已升级 3.44.9 → 3.47.9（2026-10-31 批次 U，v2.30.6）**：升级前滞后稳定版 3 个 minor（超规则③容忍），升级后 Dart 3.13.7；全量 1188 测试绿 + 模拟器冷启动冒烟通过（顺带发现并修复承诺跟进占位 baseUrl 潜伏 bug）。SDK 仓库手动 checkout tag + 恢复 gradle 阿里云镜像改动（`flutter upgrade` 会覆盖本地镜像补丁，故走 git checkout）。
 
 ## 五、结论与排期
 
@@ -43,8 +41,8 @@
 2. **下批顺手项**（低风险补丁级）：crypto 3.0.8 / syncfusion_flutter_pdf 35.1.42 / sqflite_common_ffi 2.4.5——一条 `pub upgrade` + 全量测试即可。
 3. **单独批次候选**（按优先级）：
    - ~~file_picker 13.3.0（附件核心链路 + 回归）~~ ✅ 已完成（2026-10-31 批次 T，v2.30.5，全量 1187 绿）
-   - ~~sqlite3 3.8.0（FTS 回归）~~ ⏸ SDK 级死锁（meta 1.18.0 钉死），等 Flutter SDK 升级解锁
-   - Flutter SDK 升级（若落后 3+ 版）——升级时连带解锁 sqlite3 3.8.0
+   - ~~sqlite3 3.8.0（FTS 回归）~~ ✅ 已完成（2026-10-31 批次 U，v2.30.6，SDK 升级解锁，FTS 47 绿）
+   - ~~Flutter SDK 升级（若落后 3+ 版）~~ ✅ 已完成（2026-10-31 批次 U，v2.30.6，3.44.9 → 3.47.9）
    - shared_preferences_android 解锁评估（模拟器冒烟 2.5.x）
 4. **永不升**：shared_preferences_android 2.5.x（白屏事故，锁死直至专项验证）。
 
