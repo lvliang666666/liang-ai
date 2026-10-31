@@ -282,6 +282,22 @@ void main() {
       expect(api.chatStreamCalls, 0);
     });
 
+    test('api 为 null（scanDue 路径构造）也全走本地模板（零网络请求）', () async {
+      // v2.30.6 回归：dio 5.11.1 构造即校验 baseUrl，home_page 的
+      // scanDue 路径不再传 api——api 为 null 时必须与 profile null
+      // 同语义（本地模板兜底），且不因 _api 空引用崩溃
+      final noApiService = CommitmentService(db: db);
+      final result = await noApiService.generateFollowUps(
+        [_cm('c1', dueDate: '2026-10-30')],
+        profile: ProviderProfile.builtinCompany(),
+        model: 'glm5.1',
+        now: DateTime(2026, 10, 30),
+      );
+      expect(result.single.followUp, contains('发周报'));
+      expect(result.single.followUpDate, '2026-10-30');
+      expect(api.chatStreamCalls, 0);
+    });
+
     test('LLM 成功：跟进语用生成值（剥引号）', () async {
       await db.insertCommitment(_cm('c1', dueDate: '2026-10-30'));
       api.responses.add('「周报发了吗？别忘了周五的截止时间」');
