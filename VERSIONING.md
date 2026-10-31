@@ -8,7 +8,14 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.30.4**（2026-10-31 发布）
+**当前版本：v2.30.5**（2026-10-31 发布）
+
+v2.30.5 在 v2.30.4 基础上升级依赖（chore/deps-filepicker-sqlite3 分支，E10 体检排期 → PATCH）：
+
+- **file_picker 13.1.0 → 13.3.0**（附件文件选取核心链路）：13.2.0 弃用 saveFile 的 type 参数（项目未用 saveFile）、13.3.0 新增 FilePickerViewScope（macOS 多窗口，Android 无关）——项目仅用 pickFiles(type: FileType.custom)，API 面零变化；连带 file_picker_darwin 2.3.2 → 2.4.0（iOS 侧）。附件全链路回归 39 例绿，全量 1187 项测试绿，analyze 零 error/warning
+- **sqlite3 3.8.0 评估结论：SDK 级死锁暂缓**——3.8.0 → hooks ^2.2.0 → record_use ^1.0.0 → meta ^1.19.0，但 Flutter 3.44.9 SDK 自身钉死 meta 1.18.0，任何 pub 命令（含 --unlock-transitive 全链解锁）都解不开；解锁条件 = Flutter SDK 升级（3.45+ 预期），届时与 SDK 升级同批次做，FTS5 回归照旧。体检报告 docs/dependency-review-2026-10-30.md 已更新
+
+### v2.30.4（2026-10-31）
 
 v2.30.4 在 v2.30.3 基础上修复（fix/dual-dispatch-clipboard-timing 分支，用户 Bug 清单 → PATCH）：
 
