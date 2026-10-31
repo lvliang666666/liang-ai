@@ -125,7 +125,7 @@ class DocumentIndexService {
   }) async {
     try {
       final bytes = await File(sourcePath).readAsBytes();
-      return indexPdf(
+      return await indexPdf(
           sessionId: sessionId,
           docName: docName,
           bytes: bytes,
