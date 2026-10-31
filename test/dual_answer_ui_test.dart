@@ -337,5 +337,21 @@ void main() {
       await tester.tap(find.text('双答中…'));
       expect(picked, isFalse, reason: '双答进行中禁点');
     });
+
+    testWidgets('目标已设显示「双答·已设」确认态（Bug 修复回归）', (tester) async {
+      await tester.runAsync(() async {
+        final other = ProviderProfile(
+          id: 'ds',
+          name: 'DeepSeek',
+          baseUrl: 'https://api.deepseek.com/v1',
+          defaultModel: 'deepseek-chat',
+        );
+        await db.insertProvider(other);
+        await provider.setDualTarget(other, 'deepseek-chat');
+      });
+      await pumpBar(tester, onPickDual: () {});
+      expect(find.text('双答·已设'), findsOneWidget,
+          reason: '已设对照方 = 发送即双答的确认态');
+    });
   });
 }

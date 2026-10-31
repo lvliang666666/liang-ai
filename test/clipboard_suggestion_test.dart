@@ -89,11 +89,11 @@ void main() {
     await tester.pump();
   }
 
-  /// 聚焦并等剪贴板检测完成（异步 Clipboard.getData）
+  /// 聚焦并等剪贴板检测完成（400ms 焦点延迟 + 首读 + 空读重试 400ms + 重读）
   Future<void> focusAndWait(WidgetTester tester) async {
     focusNode.requestFocus();
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pump(const Duration(milliseconds: 900));
     await tester.pump();
   }
 
@@ -176,6 +176,43 @@ void main() {
       expect(find.textContaining('首行内容摘要'), findsOneWidget);
       // 第二行不出现（只显示首行）
       expect(find.textContaining('第二行'), findsNothing);
+    });
+
+    testWidgets('首读为空重试一次后读到长文本 → 仍显示胶囊（Bug 修复回归）',
+        (tester) async {
+      // 模拟真机窗口焦点未就绪：第一次读返回 null，第二次读到内容
+      var reads = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(platform, (call) async {
+        if (call.method == 'Clipboard.getData') {
+          reads++;
+          return reads < 2
+              ? <String, dynamic>{'text': null}
+              : <String, dynamic>{'text': longText(300)};
+        }
+        return null;
+      });
+      await pumpBar(tester);
+      focusNode.requestFocus();
+      // 延迟 400ms + 首读 + 重试延迟 400ms + 重读
+      await tester.pump(const Duration(milliseconds: 450));
+      await tester.pump(const Duration(milliseconds: 450));
+      await tester.pump();
+      expect(find.text('帮你总结？'), findsOneWidget);
+      expect(reads, 2);
+    });
+
+    testWidgets('延迟期间失焦 → 不再读剪贴板不弹胶囊（焦点复查守卫）',
+        (tester) async {
+      clipboardContent = longText(300);
+      await pumpBar(tester);
+      focusNode.requestFocus();
+      await tester.pump();
+      // 400ms 延迟窗口内失焦（用户点了别处）
+      focusNode.unfocus();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+      expect(find.text('帮你总结？'), findsNothing);
     });
   });
 }

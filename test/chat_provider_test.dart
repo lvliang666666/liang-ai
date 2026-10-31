@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/chat_session.dart';
+import 'package:ai_chat_app/models/message_attachment.dart';
 import 'package:ai_chat_app/models/context_summary.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
@@ -1334,6 +1335,77 @@ void main() {
       expect(after.length, 2);
       expect(after.last.content, '重答内容');
       expect(after.last.dualOf, isNull);
+      p.dispose();
+    });
+
+    test('sendMessage 分发：已设双答目标时普通发送走双流（Bug 修复回归）', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      final other = ProviderProfile(
+        id: 'ds',
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        defaultModel: 'deepseek-chat',
+      );
+      await db.insertProvider(other);
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主侧'), const SseDone()])
+        ..add([const SseDeltaContent('对侧'), const SseDone()]);
+
+      // 用户操作序列：点双答 tag → 选对照方 → 直接在输入框发送
+      await p.setDualTarget(other, 'deepseek-chat');
+      expect(p.isDualArmed, isTrue, reason: '目标已设 = 已武装态');
+      await p.sendMessage('这个问题要双答');
+
+      // 关键断言：走的是双流管线（2 次请求 + 待选择态），而非普通单流
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: 'sendMessage 未分发到双答管线');
+      expect(api.chatStreamCalls, 2, reason: '双流 = 主侧 + 对侧两次请求');
+      final msgs = await db.getMessages('s-dual');
+      expect(msgs.length, 3);
+      expect(msgs[1].content, '主侧');
+      expect(msgs[2].content, '对侧');
+      expect(msgs[1].dualOf, msgs[2].id);
+      // 目标已消费：回到未武装态
+      expect(p.isDualArmed, isFalse);
+      p.dispose();
+    });
+
+    test('sendMessage 带附件时不触发双答，目标保留待下一条消费', () async {
+      final p = dualProvider();
+      await p.loadMessages();
+      final other = ProviderProfile(
+        id: 'ds',
+        name: 'DeepSeek',
+        baseUrl: 'https://api.deepseek.com/v1',
+        defaultModel: 'deepseek-chat',
+      );
+      await db.insertProvider(other);
+      await p.setDualTarget(other, 'deepseek-chat');
+
+      // 带附件发送：走普通单流管线（附件场景不做对照）
+      p.addAttachment(const MessageAttachment(
+        type: AttachmentType.image,
+        name: 'a.png',
+        base64Data: 'aGk=',
+      ));
+      api.scriptsByCall.add([const SseDeltaContent('普通'), const SseDone()]);
+      await p.sendMessage('看这张图');
+      api.emit(const SseDone());
+      await Future.delayed(Duration.zero);
+      await Future.delayed(Duration.zero);
+
+      expect(p.isDualArmed, isTrue, reason: '附件消息不消费双答目标');
+      expect(api.chatStreamCalls, 1, reason: '普通单流 = 1 次请求');
+
+      // 下一条纯文本消息：双答正常触发
+      api.scriptsByCall
+        ..add([const SseDeltaContent('主2'), const SseDone()])
+        ..add([const SseDeltaContent('对2'), const SseDone()]);
+      await p.sendMessage('现在双答');
+      await waitUntil(() => p.isAwaitingDualChoice,
+          failMessage: '后续纯文本未触发双答');
+      expect(p.isDualArmed, isFalse);
       p.dispose();
     });
   });

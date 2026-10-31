@@ -335,9 +335,21 @@ class ChatProvider extends ChangeNotifier {
   }
 
   /// 发送消息（可带待发送附件队列）
+  ///
+  /// Bug 修复（双答未触发）：已设双答目标（[_dualTarget] 非空）且本轮
+  /// 无附件时，分发到 [sendDualMessage]——F6 提交时引擎与 UI 两头齐备
+  /// 但发送路径从未接线，设好的对照方被静默忽略。带附件的消息不触发
+  /// 双答（对照场景以纯文本为主，附件走普通管线），目标保留待下一条
+  /// 纯文本消息消费。
   Future<void> sendMessage(String text) async {
     final content = text.trim();
     if ((content.isEmpty && _pendingAttachments.isEmpty) || isStreaming) {
+      return;
+    }
+    // 双答分发：目标已设 + 纯文本 → 走双流管线（sendDualMessage 自行
+    // 消费目标；附件在场时跳过，目标不消费）
+    if (_dualTarget != null && _pendingAttachments.isEmpty) {
+      await sendDualMessage(content);
       return;
     }
 
@@ -1340,7 +1352,12 @@ class ChatProvider extends ChangeNotifier {
   Future<void> setDualTarget(ProviderProfile profile, String model) async {
     if (isStreaming || _dualRunning) return;
     _dualTarget = (profile, model);
+    _notify();
   }
+
+  /// 双答目标已设待发（UI：双答 tag 显示「双答·已设」确认状态，
+  /// 提示用户下一条发送即双答；发送后目标消费自动回 false）
+  bool get isDualArmed => _dualTarget != null;
 
   String _genId() =>
       DateTime.now().microsecondsSinceEpoch.toRadixString(36) +

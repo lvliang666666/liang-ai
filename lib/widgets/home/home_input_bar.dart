@@ -132,6 +132,9 @@ class _HomeInputBarState extends State<HomeInputBar> {
   String? _clipboardCandidate;
   String? _lastPromptedClipboard;
 
+  /// 剪贴板检测的焦点延迟 Timer（可取消，dispose 时清理）
+  Timer? _clipboardDelayTimer;
+
   /// 剪贴板胶囊触发阈值（字符数）：短文本用户自己粘贴更顺手
   static const int _clipboardThreshold = 200;
 
@@ -145,6 +148,7 @@ class _HomeInputBarState extends State<HomeInputBar> {
   @override
   void dispose() {
     _idleDraftDebounce?.cancel();
+    _clipboardDelayTimer?.cancel();
     widget.focusNode.removeListener(_onFocusChanged);
     super.dispose();
   }
@@ -152,6 +156,13 @@ class _HomeInputBarState extends State<HomeInputBar> {
   /// F9 剪贴板胶囊：聚焦时检测剪贴板长文本。
   /// 只在聚焦瞬间检测（不轮询不监听系统剪贴板事件——Android 无该 API），
   /// 输入框已有内容/流式中不提示（避免打扰正在进行的操作）
+  ///
+  /// Bug 修复（剪贴板无反应）：Android 10+ 只允许「当前聚焦窗口」读剪贴板，
+  /// 而 Flutter 的 widget focus 先于系统窗口焦点建立（冷启动/后台回前台/
+  /// 键盘收起再弹出时尤其明显）——聚焦瞬间立刻读会撞上焦点检查窗口，
+  /// getPrimaryClip 返回 null，胶囊永不出现。改为延迟 400ms 再读，并在
+  /// 首读为空时重试一次（再等 400ms），覆盖窗口焦点建立较慢的机型。
+  /// 检测期间失焦/卸载/开始输入 → 取消（Timer 可被 [dispose] 取消）。
   Future<void> _onFocusChanged() async {
     if (!widget.focusNode.hasFocus) return;
     if (!mounted) return;
@@ -160,9 +171,20 @@ class _HomeInputBarState extends State<HomeInputBar> {
     // 输入框已有内容 → 不打扰
     if (widget.controller.text.trim().isNotEmpty) return;
     if (widget.chat?.isStreaming ?? false) return;
-    final text = await Clipboard.getData('text/plain')
+    // 等系统窗口焦点建立完成再读（见上方 Bug 修复说明）
+    if (!await _clipboardFocusDelay()) return;
+    // 输入框已有内容 → 不打扰（延迟期间用户可能已开始输入）
+    if (widget.controller.text.trim().isNotEmpty) return;
+    var text = await Clipboard.getData('text/plain')
         .then((d) => d?.text)
         .catchError((_) => null);
+    // 首读为空可能是窗口焦点尚未就绪，重试一次
+    if (text == null) {
+      if (!await _clipboardFocusDelay()) return;
+      text = await Clipboard.getData('text/plain')
+          .then((d) => d?.text)
+          .catchError((_) => null);
+    }
     if (!mounted || !widget.focusNode.hasFocus) return;
     if (text == null || text.trim().length < _clipboardThreshold) {
       setState(() => _clipboardCandidate = null);
@@ -175,6 +197,26 @@ class _HomeInputBarState extends State<HomeInputBar> {
     }
     setState(() => _clipboardCandidate = text);
   }
+
+  /// 剪贴板检测的焦点延迟等待：400ms 后复查焦点/挂载/输入内容，
+  /// 任一失效返回 false（调用方放弃检测）。用可取消 Timer 而非
+  /// Future.delayed——widget 测试的 fakeAsync 区会因悬挂 Timer 报错。
+  Future<bool> _clipboardFocusDelay() async {
+    final completer = Completer<bool>();
+    _clipboardDelayTimer?.cancel();
+    _clipboardDelayTimer = Timer(const Duration(milliseconds: 400), () {
+      if (!completer.isCompleted) {
+        completer.complete(
+            mounted && widget.focusNode.hasFocus && !_inputHasContent());
+      }
+    });
+    final ok = await completer.future;
+    _clipboardDelayTimer = null;
+    return ok;
+  }
+
+  /// 输入框是否已有内容（剪贴板检测的「不打扰」守卫）
+  bool _inputHasContent() => widget.controller.text.trim().isNotEmpty;
 
   /// F9 剪贴板胶囊：点击「帮你总结？」→ 预填文本 + 关闭胶囊
   void _useClipboardText() {
@@ -684,11 +726,14 @@ class _HomeInputBarState extends State<HomeInputBar> {
           onTap: () => _openTokenUsageSheet(context, chat),
         ),
       // F6 同问双答：仅聊天态显示。双答进行中显示「双答中…」并禁点；
-      // 待选择态隐藏（选择走气泡上的「用这个继续」按钮）
+      // 目标已设显示「双答·已设」（发送即双答的确认态）；待选择态隐藏
+      //（选择走气泡上的「用这个继续」按钮）
       if (inChat && widget.onPickDual != null && !chat.isAwaitingDualChoice)
         ChatTag(
           icon: Icons.compare_arrows,
-          label: chat.isDualRunning ? '双答中…' : '双答',
+          label: chat.isDualRunning
+              ? '双答中…'
+              : (chat.isDualArmed ? '双答·已设' : '双答'),
           onTap: chat.isDualRunning || chat.isStreaming
               ? () {}
               : widget.onPickDual!,
