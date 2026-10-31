@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.30.5**（2026-10-31 发布）
+**当前版本：v2.30.6**（2026-10-31 发布）
+
+v2.30.6 在 v2.30.5 基础上升 SDK + 修复（chore/sdk-upgrade-3.47.9 分支，E10 规则③滞后检查触发 → PATCH）：
+
+- **Flutter SDK 3.44.9 → 3.47.9**（滞后 3 个 minor 版本，超出 E10 规则③容忍）：Dart 3.13.7 带来 meta 1.19.0，**sqlite3 3.8.0 SDK 级死锁就此解锁**（hooks 2.2.0 / record_use 1.1.1 / code_assets 2.1.0 连带升级）；SDK 仓库手动 checkout tag + 恢复 gradle 阿里云镜像改动。全量 1188 项测试绿（--concurrency=4 稳定 3 连跑），FTS5 回归 47 例绿，analyze 零 error/warning（70 条 info，新 SDK lint 基线：unawaited_return_in_try_block 修 1 处 + analysis_options 自动补 build/android exclude）
+- **承诺跟进 scanDue 占位 baseUrl 修复（冒烟测试发现，P3 起潜伏）**：home_page 的 scanDue 路径构造 ApiService(baseUrl: 'unused')，dio 5.11.1 构造时即校验 baseUrl——全新安装（lastFollowUpDate 为空）直接抛 ArgumentError，承诺到期扫描静默失败；真机因已有 lastFollowUpDate 早退而未暴露。修复 = CommitmentService.api 改可选（scanDue 纯 DB 查询不需要网络；generateFollowUps api 为 null 时与 profile null 同语义走本地模板），home_page 两处占位构造删除 + 回归测试
+- **模拟器冷启动冒烟通过**：x86_64 release APK 全新安装冷启动，pid 存活、无 FATAL、修复后 E flutter 错误 15 → 0；arm64 release APK 28.9MB 产出（aapt 校验见发版脚本）
+
+### v2.30.5（2026-10-31）
 
 v2.30.5 在 v2.30.4 基础上升级依赖（chore/deps-filepicker-sqlite3 分支，E10 体检排期 → PATCH）：
 
