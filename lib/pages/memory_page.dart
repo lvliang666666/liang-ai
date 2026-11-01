@@ -146,27 +146,33 @@ class _MemoryPanelState extends State<MemoryPanel> {
             ],
           ),
         ),
-        // M2 自动记忆沉淀开关（会话结束自动提取记忆入库）
-        // v2.30.1：去掉 subtitle 说明文字（用户反馈占两行空间，挤压
-        // 记忆列表；功能语义保留在代码注释与验收文档）
-        SwitchListTile(
-          contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-          title: const Text('自动记忆沉淀'),
-          value: context.watch<SettingsService>().autoMemory,
-          onChanged: (v) {
-            Haptics.selection();
-            context.read<SettingsService>().setAutoMemory(v);
-          },
-        ),
-        // M4 情景记忆层开关（会话结束生成摘要，模型可检索历史会话）
-        SwitchListTile(
-          contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-          title: const Text('情景记忆'),
-          value: context.watch<SettingsService>().episodicMemory,
-          onChanged: (v) {
-            Haptics.selection();
-            context.read<SettingsService>().setEpisodicMemory(v);
-          },
+        // M2 自动记忆沉淀 + M4 情景记忆双开关（打磨批次 V 合并为一行）：
+        // 此前两个 SwitchListTile 各占一整行（约 112dp），记忆列表被挤到
+        // 半屏之下——用户反馈「页面 UI 太奇怪」的主因。合并后约 48dp，
+        // 省出的空间还给列表；点 label 与点开关均可切换（对齐原整行语义）。
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: _SettingsSwitch(
+                  label: '自动记忆沉淀',
+                  value: context.watch<SettingsService>().autoMemory,
+                  onChanged: (v) =>
+                      context.read<SettingsService>().setAutoMemory(v),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _SettingsSwitch(
+                  label: '情景记忆',
+                  value: context.watch<SettingsService>().episodicMemory,
+                  onChanged: (v) =>
+                      context.read<SettingsService>().setEpisodicMemory(v),
+                ),
+              ),
+            ],
+          ),
         ),
         // M3 层级筛选 chips（画像/偏好/事件；无记忆时隐藏）
         if (provider.memories.any((m) => !m.isArchived))
@@ -302,7 +308,10 @@ class _MemoryPanelState extends State<MemoryPanel> {
     );
   }
 
-  /// 单条记忆卡片：层级徽章 + 置顶标记 + 编辑/置顶/删除操作
+  /// 单条记忆卡片（打磨批次 V 重排）：
+  /// - 层级徽章/置顶标记移到副标题行（此前内联在正文前，长正文换行错位）
+  /// - 操作收敛为「编辑 + 更多」两个按钮（此前置顶/编辑/删除三个并排，
+  ///   正文可用宽度被压到不足 200dp）；置顶/删除收进更多菜单
   Widget _memoryCard(
       ThemeData theme, MemoryProvider provider, Memory m) {
     final showLayerBadge = !m.isArchived;
@@ -310,41 +319,37 @@ class _MemoryPanelState extends State<MemoryPanel> {
       elevation: 0,
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
       child: ListTile(
-        title: Row(
-          children: [
-            if (showLayerBadge) ...[
-              _LayerBadge(theme: theme, layer: m.layer),
-              const SizedBox(width: 6),
+        title: Text(m.content),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(
+            children: [
+              if (showLayerBadge) ...[
+                _LayerBadge(theme: theme, layer: m.layer),
+                const SizedBox(width: 6),
+              ],
+              if (m.pinned) ...[
+                Icon(Icons.push_pin,
+                    size: 12, color: theme.colorScheme.primary),
+                const SizedBox(width: 4),
+              ],
+              Expanded(
+                child: Text(
+                  [
+                    if (m.tag != null) m.tag!,
+                    if (m.sourceAgent != null) '来自 ${m.sourceAgent}',
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
-            Expanded(child: Text(m.content)),
-          ],
+          ),
         ),
-        subtitle: (m.tag != null || m.sourceAgent != null)
-            ? Text(
-                [
-                  if (m.tag != null) m.tag!,
-                  if (m.sourceAgent != null) '来自 ${m.sourceAgent}',
-                ].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              )
-            : null,
+        isThreeLine: (m.tag != null || m.sourceAgent != null),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // 置顶/取消置顶
-            IconButton(
-              icon: Icon(
-                m.pinned ? Icons.push_pin : Icons.push_pin_outlined,
-                size: 20,
-                color: m.pinned ? theme.colorScheme.primary : null,
-              ),
-              tooltip: m.pinned ? '取消置顶' : '置顶',
-              onPressed: () {
-                Haptics.light();
-                provider.setPinned(m.id, !m.pinned);
-              },
-            ),
             // 编辑（归档摘要行是系统产物，不允许编辑）
             if (!m.isArchived)
               IconButton(
@@ -356,14 +361,53 @@ class _MemoryPanelState extends State<MemoryPanel> {
                   _showEditDialog(context, m);
                 },
               ),
-            IconButton(
-              icon: const Icon(Icons.delete_outline, size: 20),
-              tooltip: '删除',
-              onPressed: () {
-                Haptics.medium();
-                _unfocus();
-                provider.delete(m.id);
+            // 更多：置顶/删除（低频操作收进菜单，正文宽度让给内容）
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert, size: 20),
+              tooltip: '更多',
+              onSelected: (action) {
+                switch (action) {
+                  case 'pin':
+                    Haptics.light();
+                    provider.setPinned(m.id, !m.pinned);
+                  case 'delete':
+                    Haptics.medium();
+                    _unfocus();
+                    provider.delete(m.id);
+                }
               },
+              itemBuilder: (context) => [
+                PopupMenuItem(
+                  value: 'pin',
+                  height: 44,
+                  child: Row(
+                    children: [
+                      Icon(
+                        m.pinned
+                            ? Icons.push_pin
+                            : Icons.push_pin_outlined,
+                        size: 18,
+                        color: m.pinned ? theme.colorScheme.primary : null,
+                      ),
+                      const SizedBox(width: 10),
+                      Text(m.pinned ? '取消置顶' : '置顶'),
+                    ],
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  height: 44,
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline,
+                          size: 18, color: theme.colorScheme.error),
+                      const SizedBox(width: 10),
+                      Text('删除',
+                          style: TextStyle(color: theme.colorScheme.error)),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -452,6 +496,55 @@ class _MemoryFormResult {
   const _MemoryFormResult({required this.content, this.tag});
   final String content;
   final String? tag;
+}
+
+/// 紧凑开关行（打磨批次 V）：label + Switch 横排，双开关并排共用一行。
+/// 点 label 与点开关均可切换（对齐原 SwitchListTile 整行可点语义）。
+class _SettingsSwitch extends StatelessWidget {
+  const _SettingsSwitch({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: () => onChanged(!value),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: theme.textTheme.bodyMedium,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            SizedBox(
+              height: 32,
+              width: 40,
+              child: FittedBox(
+                fit: BoxFit.fill,
+                child: Switch(
+                  value: value,
+                  onChanged: onChanged,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// M3 层级徽章：画像/偏好/事件 小胶囊（颜色按层区分）

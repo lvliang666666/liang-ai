@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../models/card.dart' as card_model;
 import '../services/database_service.dart';
 import '../utils/haptics.dart';
+import '../widgets/app_bottom_sheet.dart';
 import '../widgets/app_toast.dart';
 
 /// M5 卡片库：用户策展的知识卡片管理页
@@ -155,49 +156,60 @@ class _CardLibraryPanelState extends State<CardLibraryPanel> {
   }
 
   /// 单张卡片：标题 + 正文预览 + 标签行 + 编辑/删除
+  ///
+  /// 打磨批次 V：整卡可点 → 弹详情 Sheet 看全文（用户反馈 #4：
+  /// 「卡片库，我希望能点开，看具体的内容」——此前正文截断 4 行，
+  /// 长卡片只能进编辑弹窗才能看全）。
   Widget _cardItem(ThemeData theme, card_model.Card card) {
     final tagList = card.tagList;
     return Card(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
       elevation: 0,
       color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Text(
-                    card.title,
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w600),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () {
+          Haptics.light();
+          _unfocus();
+          _showCardDetail(card);
+        },
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      card.title,
+                      style: theme.textTheme.titleSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.edit_outlined, size: 20),
-                  tooltip: '编辑',
-                  onPressed: () {
-                    Haptics.light();
-                    _unfocus();
-                    _showEditDialog(card);
-                  },
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  tooltip: '删除',
-                  onPressed: () {
-                    Haptics.medium();
-                    _unfocus();
-                    _confirmDelete(card);
-                  },
-                ),
-              ],
-            ),
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    tooltip: '编辑',
+                    onPressed: () {
+                      Haptics.light();
+                      _unfocus();
+                      _showEditDialog(card);
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, size: 20),
+                    tooltip: '删除',
+                    onPressed: () {
+                      Haptics.medium();
+                      _unfocus();
+                      _confirmDelete(card);
+                    },
+                  ),
+                ],
+              ),
             if (card.content.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 2),
@@ -237,7 +249,68 @@ class _CardLibraryPanelState extends State<CardLibraryPanel> {
                   ],
                 ),
               ),
-          ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 卡片详情 Sheet（打磨批次 V）：标题 + 全文（可选中复制）+ 标签行
+  ///
+  /// 走 showAppBottomSheet 统一容器（60% 上限 + 键盘适配 + 状态栏保护
+  /// 已下沉入口）；正文 SelectableText——看详情时顺手复制是高频诉求。
+  Future<void> _showCardDetail(card_model.Card card) async {
+    await showAppBottomSheet<void>(
+      context: context,
+      builder: (context) => SheetScaffold(
+        title: card.title,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (card.tagList.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: [
+                      for (final tag in card.tagList)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color:
+                                Theme.of(context).colorScheme.secondaryContainer,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            tag,
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
+                                ?.copyWith(
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSecondaryContainer,
+                                  fontSize: 11,
+                                ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              SelectableText(
+                card.content,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(height: 1.6),
+              ),
+            ],
+          ),
         ),
       ),
     );

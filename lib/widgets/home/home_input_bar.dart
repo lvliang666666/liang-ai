@@ -115,7 +115,8 @@ class HomeInputBar extends StatefulWidget {
   State<HomeInputBar> createState() => _HomeInputBarState();
 }
 
-class _HomeInputBarState extends State<HomeInputBar> {
+class _HomeInputBarState extends State<HomeInputBar>
+    with WidgetsBindingObserver {
   final _picker = ImagePicker();
 
   /// 空闲态暂存的待发附件（聊天态附件直接进 ChatProvider）
@@ -143,6 +144,7 @@ class _HomeInputBarState extends State<HomeInputBar> {
     super.initState();
     _initAttachmentStorage();
     widget.focusNode.addListener(_onFocusChanged);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   @override
@@ -150,7 +152,23 @@ class _HomeInputBarState extends State<HomeInputBar> {
     _idleDraftDebounce?.cancel();
     _clipboardDelayTimer?.cancel();
     widget.focusNode.removeListener(_onFocusChanged);
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  /// 打磨批次 V（V1 剪贴板胶囊真机仍不弹）：App 回前台时补一次检测。
+  ///
+  /// 高频路径「在其他 App 复制 → 切回 Liang AI」：输入框此前已持有焦点
+  /// （退后台不会让 FocusNode 失焦），回前台不触发任何焦点事件，
+  /// [_onFocusChanged] 根本不执行——胶囊永不出现。监听 resumed 事件，
+  /// 输入框有焦点时补跑同一条检测链（链内自带 400ms 延迟 + 重试 +
+  /// 去重，重复触发无副作用）。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    if (!mounted) return;
+    if (!widget.focusNode.hasFocus) return;
+    _onFocusChanged();
   }
 
   /// F9 剪贴板胶囊：聚焦时检测剪贴板长文本。
@@ -217,6 +235,54 @@ class _HomeInputBarState extends State<HomeInputBar> {
 
   /// 输入框是否已有内容（剪贴板检测的「不打扰」守卫）
   bool _inputHasContent() => widget.controller.text.trim().isNotEmpty;
+
+  /// 输入框长按菜单（打磨批次 V）：固定「全选/复制/粘贴/剪切」四项。
+  ///
+  /// 用户反馈部分 ROM/输入法的默认菜单缺「全选」，输入错了只能逐字
+  /// 回退。自定义菜单保证全选恒在场且排第一；剪切/复制仅在有选区时
+  /// 出现（无选区时点了也没意义），粘贴恒在场（剪贴板可能非空）。
+  Widget _buildInputContextMenu(
+      BuildContext context, EditableTextState editableText) {
+    final hasSelection =
+        editableText.textEditingValue.selection.isValid &&
+            !editableText.textEditingValue.selection.isCollapsed;
+    final buttonItems = <ContextMenuButtonItem>[
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.selectAll,
+        onPressed: () {
+          Haptics.light();
+          editableText.selectAll(SelectionChangedCause.toolbar);
+        },
+      ),
+      if (hasSelection)
+        ContextMenuButtonItem(
+          type: ContextMenuButtonType.copy,
+          onPressed: () {
+            Haptics.light();
+            editableText.copySelection(SelectionChangedCause.toolbar);
+          },
+        ),
+      ContextMenuButtonItem(
+        type: ContextMenuButtonType.paste,
+        onPressed: () async {
+          Haptics.light();
+          await editableText.pasteText(SelectionChangedCause.toolbar);
+        },
+      ),
+      if (hasSelection)
+        ContextMenuButtonItem(
+          type: ContextMenuButtonType.cut,
+          onPressed: () {
+            Haptics.light();
+            editableText.cutSelection(SelectionChangedCause.toolbar);
+          },
+        ),
+    ];
+    return AdaptiveTextSelectionToolbar.buttonItems(
+      anchors: editableText.contextMenuAnchors,
+      buttonItems: buttonItems,
+    );
+  }
 
   /// F9 剪贴板胶囊：点击「帮你总结？」→ 预填文本 + 关闭胶囊
   void _useClipboardText() {
@@ -613,6 +679,11 @@ class _HomeInputBarState extends State<HomeInputBar> {
                         canRequestFocus: true,
                         textInputAction: TextInputAction.newline,
                         onChanged: _onInputChanged,
+                        // 打磨批次 V：长按菜单显式补「全选」——部分 ROM/输入法
+                        // 的默认菜单缺全选项，输入错了只能逐字回退。自定义
+                        // contextMenuBuilder 固定四项（复制/粘贴/全选/剪切），
+                        // 全选排前（用户主诉），有选区时才给剪切/复制
+                        contextMenuBuilder: _buildInputContextMenu,
                         style:
                             theme.textTheme.bodyLarge?.copyWith(height: 1.6),
                         // 豆包式：圆角主题（默认/DeepSeek）内层完全透明，
@@ -689,7 +760,7 @@ class _HomeInputBarState extends State<HomeInputBar> {
     final personaName = inChat ? chat.activePersonaName : null;
     final agentLabel = currentAgent == null
         ? '默认助手'
-        : (personaName != null ? '${currentAgent.name}·${personaName}' : currentAgent.name);
+        : (personaName != null ? '${currentAgent.name}·$personaName' : currentAgent.name);
     final agentEmoji = currentAgent?.icon;
     final modelLabel =
         inChat ? chat.model : (widget.selectedModel?.$2 ?? '默认模型');

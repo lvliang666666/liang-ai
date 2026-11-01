@@ -214,5 +214,35 @@ void main() {
       await tester.pump();
       expect(find.text('帮你总结？'), findsNothing);
     });
+
+    testWidgets('回前台补检测：输入框持焦时 resumed → 弹胶囊（V1 修复）',
+        (tester) async {
+      // 真机高频路径：在其他 App 复制 → 切回 Liang AI。输入框此前已持有
+      // 焦点（退后台 FocusNode 不失焦），回前台无焦点事件——旧代码漏检。
+      clipboardContent = longText(300);
+      await pumpBar(tester);
+      focusNode.requestFocus();
+      await tester.pump();
+      // 模拟「切到其他 App 复制后切回」：直接派发 resumed 生命周期事件
+      // （此时焦点从未离开输入框，_onFocusChanged 不会被焦点变化触发）
+      tester.binding
+          .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.pump();
+      expect(find.text('帮你总结？'), findsOneWidget);
+    });
+
+    testWidgets('回前台补检测：无焦点时不触发（守卫不误弹）', (tester) async {
+      clipboardContent = longText(300);
+      await pumpBar(tester);
+      // 输入框从未聚焦 → resumed 补检测应被焦点守卫拦下
+      tester.binding
+          .handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.pump();
+      expect(find.text('帮你总结？'), findsNothing);
+    });
   });
 }
