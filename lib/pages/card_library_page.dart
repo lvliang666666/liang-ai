@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 
 // Card 与 Material 的 Card 组件重名：模型走前缀（KnowledgeCard 语义别名）
 import '../models/card.dart' as card_model;
@@ -6,6 +7,7 @@ import '../services/database_service.dart';
 import '../utils/haptics.dart';
 import '../widgets/app_bottom_sheet.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/code_block_widget.dart';
 
 /// M5 卡片库：用户策展的知识卡片管理页
 ///
@@ -256,10 +258,14 @@ class _CardLibraryPanelState extends State<CardLibraryPanel> {
     );
   }
 
-  /// 卡片详情 Sheet（打磨批次 V）：标题 + 全文（可选中复制）+ 标签行
+  /// 卡片详情 Sheet（打磨批次 V）：标题 + 全文 + 标签行
   ///
   /// 走 showAppBottomSheet 统一容器（60% 上限 + 键盘适配 + 状态栏保护
-  /// 已下沉入口）；正文 SelectableText——看详情时顺手复制是高频诉求。
+  /// 已下沉入口）。
+  /// 打磨批次 W：正文从 SelectableText 改为 GptMarkdown（与聊天气泡
+  /// 同款渲染 + CodeBlockWidget 代码高亮）——用户反馈卡片里存的
+  /// Python 题目等含代码块内容，纯文本看着难受；Markdown 结构化
+  /// 渲染（标题/列表/代码块高亮/复制按钮）与聊天页体验对齐。
   Future<void> _showCardDetail(card_model.Card card) async {
     await showAppBottomSheet<void>(
       context: context,
@@ -302,12 +308,14 @@ class _CardLibraryPanelState extends State<CardLibraryPanel> {
                     ],
                   ),
                 ),
-              SelectableText(
+              GptMarkdown(
                 card.content,
                 style: Theme.of(context)
                     .textTheme
                     .bodyMedium
                     ?.copyWith(height: 1.6),
+                codeBuilder: (context, name, code, closed) =>
+                    CodeBlockWidget(code: code, language: name),
               ),
             ],
           ),

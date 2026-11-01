@@ -934,7 +934,8 @@ class _SettingsPageState extends State<SettingsPage> {
           title: const Text('剪贴板长文本建议'),
           subtitle: const Text(
             '点输入框时若剪贴板有长文本（≥200 字），输入栏上方浮出'
-            '「帮你总结？」胶囊，点击即填入；同一段内容只提示一次',
+            '「帮你总结？」胶囊，点击即自动发送总结请求；'
+            '同一段内容只提示一次',
           ),
           value: _settings.clipboardSuggestion,
           onChanged: (v) {
@@ -1271,6 +1272,48 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // 交流反馈（打磨批次 W：用户要求放最顶部——找得到、用得上）
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer.withValues(alpha: 0.35),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('交流反馈', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text(
+                    'QQ：1729502812，欢迎交流！',
+                    style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 28,
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: () async {
+                        Haptics.light();
+                        await Clipboard.setData(const ClipboardData(
+                            text: '1729502812'));
+                        if (mounted) showAppToast(context, 'QQ 号已复制');
+                      },
+                      icon: const Icon(Icons.copy, size: 14),
+                      label: const Text('复制', style: TextStyle(fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
         // 快速上手
         Container(
           padding: const EdgeInsets.all(12),
@@ -1335,7 +1378,7 @@ class _SettingsPageState extends State<SettingsPage> {
               Text(
                 '· 每日晨间简报：每天首次打开自动生成（黄历/一签/记忆提醒/上周今天）\n'
                 '· 承诺跟进：聊天中提到的待办自动记录，到期未完成会提醒\n'
-                '· 剪贴板长文本：点输入框时若剪贴板有 ≥200 字文本，会提示「帮你总结？」\n'
+                '· 剪贴板长文本：点输入框时若剪贴板有 ≥200 字文本，会提示「帮你总结？」，点击即自动发送总结请求\n'
                 '· Token 用量：聊天页底部标签可查看本会话 token 统计与请求详情\n'
                 '· 备份/恢复：「备份」tab 可导出全部数据为 JSON（不含 API Key）',
                 style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
@@ -1364,49 +1407,6 @@ class _SettingsPageState extends State<SettingsPage> {
                 '· 生成中断：切后台默认保活不断流（「对话参数」可关）；回来后点「继续生成」可续传\n'
                 '· 遇到闪退/异常：「备份」tab 的诊断日志可查看与分享错误记录',
                 style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 12),
-        // 联系方式（打磨批次 V：用户要求加 QQ）
-        Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            color: theme.colorScheme.surfaceContainerHighest
-                .withValues(alpha: 0.5),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('交流反馈', style: theme.textTheme.titleSmall),
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  Text(
-                    'QQ：1729502812，欢迎交流！',
-                    style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    height: 28,
-                    child: TextButton.icon(
-                      style: TextButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(horizontal: 8),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      onPressed: () async {
-                        Haptics.light();
-                        await Clipboard.setData(const ClipboardData(
-                            text: '1729502812'));
-                        if (mounted) showAppToast(context, 'QQ 号已复制');
-                      },
-                      icon: const Icon(Icons.copy, size: 14),
-                      label: const Text('复制', style: TextStyle(fontSize: 12)),
-                    ),
-                  ),
-                ],
               ),
             ],
           ),
