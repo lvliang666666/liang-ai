@@ -30,6 +30,11 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Material 组件中文本地化（打磨批次 V）：文本选择菜单「全选/复制/粘贴」
+  # 等系统 label 渲染中文——全中文 App 里选择菜单却是英文的不一致修复。
+  # SDK 自带包（非第三方插件，无原生代码，无白屏风险模式）
+  flutter_localizations:
+    sdk: flutter
 
   cupertino_icons: ^1.0.8
 

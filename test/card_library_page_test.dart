@@ -218,5 +218,33 @@ void main() {
       final stored = await tester.runAsync(() => db.getAllCards());
       expect(stored, hasLength(2));
     });
+
+    testWidgets('点卡片：详情 Sheet 展示标题 + 全文（打磨批次 V）', (tester) async {
+      // 长正文：列表预览截断 4 行，详情 Sheet 必须展示全文
+      const longContent =
+          '发票抬头必须与公司名一致，税号不能有空格，'
+          '开票日期需要在报销周期内，金额大小写必须一致，'
+          '附件需要按日期命名，超过三张需要附说明页。';
+      await tester.runAsync(() => db.insertCard(card(
+          'c9', '报销发票要求', longContent,
+          tags: '财务,报销', updatedAt: 3000)));
+      await pumpPanel(tester);
+
+      // 点卡片正文（避开编辑/删除按钮区域）
+      await tester.tap(find.textContaining('发票抬头必须与公司名一致'));
+      await tester.pumpAndSettle();
+
+      // Sheet 标题 = 卡片标题（列表卡片 + Sheet 标题行 = 2 处）；
+      // 全文完整渲染：列表预览 Text 截断 4 行 + 详情 SelectableText 各 1 处
+      //（find.textContaining 连 EditableText 一起命中 = 2）
+      expect(find.text('报销发票要求'), findsNWidgets(2));
+      expect(find.textContaining('超过三张需要附说明页'), findsNWidgets(2));
+
+      // 关闭 Sheet：详情 SelectableText 消失，只剩列表预览 Text（1 处）
+      await tester.tap(find.byTooltip('关闭'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('超过三张需要附说明页'), findsOneWidget);
+      expect(find.byType(SelectableText), findsNothing);
+    });
   });
 }

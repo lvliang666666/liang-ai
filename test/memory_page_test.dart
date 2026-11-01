@@ -189,12 +189,15 @@ void main() {
       expect(find.text('项目用 Flutter'), findsOneWidget);
     });
 
-    testWidgets('单条删除：调用 provider.delete', (tester) async {
+    testWidgets('单条删除：更多菜单 → 删除 → 调用 provider.delete', (tester) async {
       provider.seed([memory('m1', '待删记忆')]);
       await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.delete_outline));
+      // 打磨批次 V：删除收进「更多」菜单（低频操作，正文宽度让给内容）
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除'));
       await tester.pump();
 
       expect(provider.deletedIds, ['m1']);
@@ -347,17 +350,22 @@ void main() {
       expect(find.text('最近在准备考试'), findsOneWidget);
     });
 
-    testWidgets('点置顶按钮：调用 setPinned(true)，再点取消', (tester) async {
+    testWidgets('置顶：更多菜单 → 置顶 → 再开菜单取消置顶', (tester) async {
       provider.seed([memory('m1', '待置顶')]);
       await tester.pumpWidget(wrap(const MemoryPanel()));
       await tester.pump();
 
-      await tester.tap(find.byIcon(Icons.push_pin_outlined));
+      // 打磨批次 V：置顶收进「更多」菜单
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('置顶'));
       await tester.pump();
       expect(provider.pinCalls, [('m1', true)]);
 
-      // 状态已变（fake provider 同步更新）→ 图标变实心，再点取消
-      await tester.tap(find.byIcon(Icons.push_pin));
+      // 状态已变（fake provider 同步更新）→ 菜单项变「取消置顶」，再点取消
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('取消置顶'));
       await tester.pump();
       expect(provider.pinCalls, [('m1', true), ('m1', false)]);
     });
@@ -402,7 +410,7 @@ void main() {
       expect(provider.updateCalls, isEmpty);
     });
 
-    testWidgets('归档摘要行：无编辑按钮，有置顶/删除', (tester) async {
+    testWidgets('归档摘要行：无编辑按钮，置顶/删除在更多菜单', (tester) async {
       provider.seed([
         memory('m1', '归档摘要内容', tag: Memory.archiveTag),
       ]);
@@ -410,9 +418,14 @@ void main() {
       await tester.pump();
 
       expect(find.text('归档摘要内容'), findsOneWidget);
+      // 编辑按钮不渲染（归档行是系统产物）
       expect(find.byIcon(Icons.edit_outlined), findsNothing);
-      expect(find.byIcon(Icons.push_pin_outlined), findsOneWidget);
-      expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+      // 打磨批次 V：置顶/删除收进「更多」菜单，卡片上只有菜单入口
+      expect(find.byIcon(Icons.more_vert), findsOneWidget);
+      await tester.tap(find.byIcon(Icons.more_vert));
+      await tester.pumpAndSettle();
+      expect(find.text('置顶'), findsOneWidget);
+      expect(find.text('删除'), findsOneWidget);
     });
 
     testWidgets('手动添加：带标签保存 → add 收到 tag', (tester) async {

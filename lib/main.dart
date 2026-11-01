@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -111,6 +112,15 @@ class AiChatApp extends StatelessWidget {
       child: Consumer<ThemeProvider>(
         builder: (context, themeProvider, _) => MaterialApp(
           title: 'Liang AI',
+          // 打磨批次 V：中文本地化——文本选择菜单（全选/复制/粘贴）等
+          // 系统 label 渲染中文，与全中文 UI 一致（此前默认英文）
+          localizationsDelegates: const [
+            GlobalMaterialLocalizations.delegate,
+            GlobalWidgetsLocalizations.delegate,
+            GlobalCupertinoLocalizations.delegate,
+          ],
+          supportedLocales: const [Locale('zh', 'CN'), Locale('en', 'US')],
+          locale: const Locale('zh', 'CN'),
           theme: themeProvider.theme(Brightness.light),
           darkTheme: themeProvider.theme(Brightness.dark),
           themeMode: ThemeMode.system,

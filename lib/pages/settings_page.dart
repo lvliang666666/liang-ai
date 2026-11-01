@@ -1266,11 +1266,12 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  // ===== Tag 6：说明 =====
+  // ===== Tag 6：说明（打磨批次 V 重写：内容对齐当前版本功能 + QQ 联系方式） =====
   Widget _buildAboutTab(ThemeData theme) {
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // 快速上手
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
@@ -1281,17 +1282,141 @@ class _SettingsPageState extends State<SettingsPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('使用说明', style: theme.textTheme.titleSmall),
+              Text('快速上手', style: theme.textTheme.titleSmall),
               const SizedBox(height: 6),
               Text(
-                '· 公司内网建议切换到 vemic 域名，DNS 解析更快\n'
-                '· 401 错误 = API Key 无效，请到内部平台重新申请\n'
-                '· 403 错误 = 域名白名单限制，请使用预设域名\n'
-                '· 新会话默认使用「对话参数」中的推理档位，聊天中可单独切换\n'
-                '· API 配置修改后需点击右上角「保存」生效',
+                '· 首次使用：到「API 配置」填入 API Key 即可开聊（内置供应商已预置公司网关地址）\n'
+                '· 新会话默认使用「对话参数」中的推理档位，聊天页顶部可按会话切换\n'
+                '· 输入框输入「/」可唤起 Agent 与快捷短语面板\n'
+                '· 长按消息可复制全文 / 选择文字 / 沉淀为卡片 / 导出分享',
                 style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
               ),
             ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // 记忆与知识库
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('记忆与知识库', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              Text(
+                '· 聊天中说「记住xxx」AI 自动存入长期记忆，「忘掉xxx」删除；记忆管理页可查看/置顶/编辑\n'
+                '· 长按消息「沉淀为卡片」可把回答收进卡片库，卡片库点卡片可看全文\n'
+                '· 对话中上传文档（PDF/TXT/MD）后，回答会带【文件·第N页】引用标注，点击可查原文\n'
+                '· 所有记忆/卡片仅存本机数据库，不会上传',
+                style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // 实用功能
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('实用功能', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              Text(
+                '· 每日晨间简报：每天首次打开自动生成（黄历/一签/记忆提醒/上周今天）\n'
+                '· 承诺跟进：聊天中提到的待办自动记录，到期未完成会提醒\n'
+                '· 剪贴板长文本：点输入框时若剪贴板有 ≥200 字文本，会提示「帮你总结？」\n'
+                '· Token 用量：聊天页底部标签可查看本会话 token 统计与请求详情\n'
+                '· 备份/恢复：「备份」tab 可导出全部数据为 JSON（不含 API Key）',
+                style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // 常见问题
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('常见问题', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              Text(
+                '· 401 错误 = API Key 无效，请到内部平台重新申请\n'
+                '· 403 错误 = 域名白名单限制，请使用预设域名\n'
+                '· 公司内网建议切换到 vemic 域名，DNS 解析更快\n'
+                '· 生成中断：切后台默认保活不断流（「对话参数」可关）；回来后点「继续生成」可续传\n'
+                '· 遇到闪退/异常：「备份」tab 的诊断日志可查看与分享错误记录',
+                style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        // 联系方式（打磨批次 V：用户要求加 QQ）
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest
+                .withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('交流反馈', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Text(
+                    'QQ：1729502812，欢迎交流！',
+                    style: theme.textTheme.bodySmall?.copyWith(height: 1.6),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 28,
+                    child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: () async {
+                        Haptics.light();
+                        await Clipboard.setData(const ClipboardData(
+                            text: '1729502812'));
+                        if (mounted) showAppToast(context, 'QQ 号已复制');
+                      },
+                      icon: const Icon(Icons.copy, size: 14),
+                      label: const Text('复制', style: TextStyle(fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Center(
+          child: Text(
+            'Liang AI · 本地优先的 AI 聊天助手',
+            style: theme.textTheme.labelSmall
+                ?.copyWith(color: theme.colorScheme.outline),
           ),
         ),
       ],
