@@ -31,6 +31,9 @@ void main() {
   late FocusNode focusNode;
   String? clipboardContent;
 
+  /// onSendIdle 调用记录（打磨批次 W：自动发送断言用）
+  final onSendIdleCalls = <(String, {String? agentId})>[];
+
   setUp(() async {
     final inMemory = await openTestDb();
     db = DatabaseService.instance;
@@ -40,6 +43,7 @@ void main() {
     controller = TextEditingController();
     focusNode = FocusNode();
     clipboardContent = null;
+    onSendIdleCalls.clear();
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(platform, (call) async {
@@ -81,7 +85,10 @@ void main() {
       selectedAgent: null,
       selectedModel: null,
       selectedEffort: 'max',
-      onSendIdle: (_, {agentId, modelPick, attachments = const [], agentVariables = const {}}) {},
+      onSendIdle: (text,
+          {agentId, modelPick, attachments = const [], agentVariables = const {}}) {
+        onSendIdleCalls.add((text, agentId: agentId));
+      },
       onPickAgent: () {},
       onPickModel: () {},
       onPickEffort: () {},
@@ -137,7 +144,8 @@ void main() {
   });
 
   group('剪贴板胶囊交互', () {
-    testWidgets('点击「帮你总结？」→ 全文预填输入框，胶囊消失', (tester) async {
+    testWidgets('点击「帮你总结？」→ 预填总结指令 + 自动发送（打磨批次 W）',
+        (tester) async {
       final text = longText(300);
       clipboardContent = text;
       await pumpBar(tester);
@@ -146,9 +154,14 @@ void main() {
 
       await tester.tap(find.text('帮你总结？'));
       await tester.pump();
-      expect(controller.text, text);
-      expect(controller.selection.baseOffset, text.length);
+      // 语义升级：预填「帮我总结以下内容：\n<全文>」并立即发送
+      //（原设计只预填，用户预期点了就直接开始总结）。
+      // 发送后 _send 尾部 clear → controller.text 为空，断言走
+      // onSendIdle 回调记录（空闲态发送 = 创建会话进聊天态）
+      expect(controller.text, isEmpty);
       expect(find.text('帮你总结？'), findsNothing);
+      expect(onSendIdleCalls, hasLength(1));
+      expect(onSendIdleCalls.single.$1, '帮我总结以下内容：\n$text');
     });
 
     testWidgets('点 × 关闭后同段内容不再提示', (tester) async {

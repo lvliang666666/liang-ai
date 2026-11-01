@@ -18,6 +18,7 @@ import '../../pages/payload_lens_page.dart';
 import '../../providers/chat_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../services/attachment_service.dart';
+import '../../services/diagnostic_log.dart';
 import '../../services/settings_service.dart';
 import '../../services/skill_variables.dart';
 import '../../utils/haptics.dart';
@@ -181,40 +182,71 @@ class _HomeInputBarState extends State<HomeInputBar>
   /// getPrimaryClip 返回 null，胶囊永不出现。改为延迟 400ms 再读，并在
   /// 首读为空时重试一次（再等 400ms），覆盖窗口焦点建立较慢的机型。
   /// 检测期间失焦/卸载/开始输入 → 取消（Timer 可被 [dispose] 取消）。
+  ///
+  /// 打磨批次 W：全链路诊断日志（只记阶段与长度，内容永不落盘）——
+  /// 用户反馈「帮你总结」反复无反应，真机路径与模拟器差异无法远程
+  /// 复现，日志是唯一取证手段（设置页「诊断日志」可查看）。
   Future<void> _onFocusChanged() async {
     if (!widget.focusNode.hasFocus) return;
     if (!mounted) return;
     // 开关关闭（设置页「剪贴板建议」）→ 不检测
-    if (!context.read<SettingsService>().clipboardSuggestion) return;
+    if (!context.read<SettingsService>().clipboardSuggestion) {
+      _diag('跳过：开关关闭');
+      return;
+    }
     // 输入框已有内容 → 不打扰
-    if (widget.controller.text.trim().isNotEmpty) return;
+    if (widget.controller.text.trim().isNotEmpty) {
+      _diag('跳过：输入框已有内容');
+      return;
+    }
     if (widget.chat?.isStreaming ?? false) return;
     // 等系统窗口焦点建立完成再读（见上方 Bug 修复说明）
-    if (!await _clipboardFocusDelay()) return;
+    if (!await _clipboardFocusDelay()) {
+      _diag('放弃：400ms 延迟期间失焦/开始输入');
+      return;
+    }
     // 输入框已有内容 → 不打扰（延迟期间用户可能已开始输入）
-    if (widget.controller.text.trim().isNotEmpty) return;
+    if (widget.controller.text.trim().isNotEmpty) {
+      _diag('跳过：延迟期间开始输入');
+      return;
+    }
     var text = await Clipboard.getData('text/plain')
         .then((d) => d?.text)
         .catchError((_) => null);
+    _diag('首读：${text == null ? 'null' : '${text.length} 字'}');
     // 首读为空可能是窗口焦点尚未就绪，重试一次
     if (text == null) {
-      if (!await _clipboardFocusDelay()) return;
+      if (!await _clipboardFocusDelay()) {
+        _diag('放弃：重试延迟期间失焦/开始输入');
+        return;
+      }
       text = await Clipboard.getData('text/plain')
           .then((d) => d?.text)
           .catchError((_) => null);
+      _diag('重读：${text == null ? 'null' : '${text.length} 字'}');
     }
-    if (!mounted || !widget.focusNode.hasFocus) return;
+    if (!mounted || !widget.focusNode.hasFocus) {
+      _diag('放弃：读完后失焦/卸载');
+      return;
+    }
     if (text == null || text.trim().length < _clipboardThreshold) {
+      _diag('不弹：${text == null ? '空' : '${text.trim().length} 字 < $_clipboardThreshold'}');
       setState(() => _clipboardCandidate = null);
       return;
     }
     // 同一段内容只提示一次
     if (text == _lastPromptedClipboard) {
+      _diag('不弹：同段内容已提示过');
       setState(() => _clipboardCandidate = null);
       return;
     }
+    _diag('弹胶囊：${text.length} 字');
     setState(() => _clipboardCandidate = text);
   }
+
+  /// 剪贴板检测诊断日志（脱敏铁律：只记阶段与长度，内容/前缀不落盘）
+  void _diag(String msg) =>
+      DiagnosticLog.log('剪贴板检测: $msg', kind: LogKind.general);
 
   /// 剪贴板检测的焦点延迟等待：400ms 后复查焦点/挂载/输入内容，
   /// 任一失效返回 false（调用方放弃检测）。用可取消 Timer 而非
@@ -284,18 +316,25 @@ class _HomeInputBarState extends State<HomeInputBar>
     );
   }
 
-  /// F9 剪贴板胶囊：点击「帮你总结？」→ 预填文本 + 关闭胶囊
+  /// F9 剪贴板胶囊：点击「帮你总结？」→ 预填全文 + 自动发送总结指令
+  ///
+  /// 打磨批次 W 语义升级：原设计只预填全文（用户还需手动输入指令再点
+  /// 发送），用户反馈「点了没反应」——预期是点了就直接开始总结。改为
+  /// 预填「帮我总结以下内容：\n<全文>」并立即走 [_send]，一步到位：
+  /// 空闲态创建会话进入聊天态，聊天态直接发出。同段内容不再提示。
   void _useClipboardText() {
     final text = _clipboardCandidate;
     if (text == null) return;
     Haptics.light();
-    widget.controller.text = text;
+    _diag('点击「帮你总结？」：预填 ${text.length} 字并自动发送');
+    widget.controller.text = '帮我总结以下内容：\n$text';
     widget.controller.selection =
-        TextSelection.collapsed(offset: text.length);
+        TextSelection.collapsed(offset: widget.controller.text.length);
     setState(() {
       _lastPromptedClipboard = text;
       _clipboardCandidate = null;
     });
+    _send(context);
   }
 
   /// F9 剪贴板胶囊：关闭（本次不再提示该内容）
