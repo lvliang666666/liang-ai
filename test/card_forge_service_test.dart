@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:ai_chat_app/models/card.dart';
 import 'package:ai_chat_app/models/chat_message.dart';
 import 'package:ai_chat_app/models/provider_profile.dart';
@@ -149,6 +151,15 @@ void main() {
       final draft = CardForgeService.parseCard(
           '{"title": "T", "content": "C", "tags": ["a", "b", "c", "d", "e"]}');
       expect(draft!.tags, 'a,b,c');
+    });
+
+    test('content 含代码块/列表 Markdown 结构原样保留（W2）', () {
+      const content = '## 题目\n\n解题步骤：\n1. 读入 n\n2. 计算\n\n'
+          '```python\nprint(sum(range(10)))\n```';
+      final draft = CardForgeService.parseCard(
+          '{"title": "T", "content": ${jsonEncode(content)}}');
+      expect(draft!.content, content,
+          reason: '提炼不得剥掉/转义 Markdown 结构——渲染层靠它出代码块');
     });
   });
 

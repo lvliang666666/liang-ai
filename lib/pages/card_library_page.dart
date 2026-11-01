@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:gpt_markdown/gpt_markdown.dart';
 
 // Card 与 Material 的 Card 组件重名：模型走前缀（KnowledgeCard 语义别名）
 import '../models/card.dart' as card_model;
 import '../services/database_service.dart';
 import '../utils/haptics.dart';
-import '../widgets/app_bottom_sheet.dart';
 import '../widgets/app_toast.dart';
-import '../widgets/code_block_widget.dart';
+import 'card_detail_page.dart';
 
 /// M5 卡片库：用户策展的知识卡片管理页
 ///
@@ -258,70 +256,14 @@ class _CardLibraryPanelState extends State<CardLibraryPanel> {
     );
   }
 
-  /// 卡片详情 Sheet（打磨批次 V）：标题 + 全文 + 标签行
+  /// 卡片详情（打磨批次 W2）：整页真卡片视图 + 图片分享
   ///
-  /// 走 showAppBottomSheet 统一容器（60% 上限 + 键盘适配 + 状态栏保护
-  /// 已下沉入口）。
-  /// 打磨批次 W：正文从 SelectableText 改为 GptMarkdown（与聊天气泡
-  /// 同款渲染 + CodeBlockWidget 代码高亮）——用户反馈卡片里存的
-  /// Python 题目等含代码块内容，纯文本看着难受；Markdown 结构化
-  /// 渲染（标题/列表/代码块高亮/复制按钮）与聊天页体验对齐。
-  Future<void> _showCardDetail(card_model.Card card) async {
-    await showAppBottomSheet<void>(
-      context: context,
-      builder: (context) => SheetScaffold(
-        title: card.title,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (card.tagList.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    children: [
-                      for (final tag in card.tagList)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
-                          decoration: BoxDecoration(
-                            color:
-                                Theme.of(context).colorScheme.secondaryContainer,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            tag,
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSecondaryContainer,
-                                  fontSize: 11,
-                                ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              GptMarkdown(
-                card.content,
-                style: Theme.of(context)
-                    .textTheme
-                    .bodyMedium
-                    ?.copyWith(height: 1.6),
-                codeBuilder: (context, name, code, closed) =>
-                    CodeBlockWidget(code: code, language: name),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  /// 打磨批次 V 曾用详情 Sheet（标题 + 全文）；用户反馈「点开之后
+  /// 展示的真的是一张卡片，可以直接分享这个卡片，以卡片图的形式
+  /// 分享」——升级为整页卡片视图（[CardDetailPage]），AppBar 分享
+  /// 按钮把卡片渲染成 PNG 走系统分享面板。
+  void _showCardDetail(card_model.Card card) {
+    CardDetailPage.open(context, card);
   }
 
   /// 编辑卡片弹窗（标题 + 正文 + 标签）
