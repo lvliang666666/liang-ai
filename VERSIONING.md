@@ -8,7 +8,16 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.30.8**（2026-11-01 发布）
+**当前版本：v2.30.9**（2026-11-01 发布）
+
+v2.30.9 在 v2.30.8 基础上修复（polish-batch-w2 分支，用户验收 v2.30.8 后 2 项反馈 → PATCH）：
+
+- **W2-1 提炼保留 Markdown 结构（「卡片库依然没有渲染」根因）**：v2.30.8 的 W2 已把详情渲染换成 GptMarkdown，但用户实测仍无渲染——根因不在渲染管线，而在提炼 prompt：旧 prompt 要求「通顺中文表述」，LLM 把代码块压成了平铺文字，内容里根本没有 Markdown 语法可渲染。CardForgeService 提炼 prompt 新增【正文格式】段：代码必须进 ```代码块```（保留语言标注）、步骤用列表、层次用 ## 小标题，禁止改写成文字叙述；parseCard 原样透传不剥结构（新增回归测试）
+- **W2-2 卡片详情整页真卡片样式**：用户反馈「点开之后，展示的真的是一张卡片」。新建 CardDetailPage 整页（slideUpRoute 转场）替代原详情 Sheet：卡头（品牌行「Liang AI 知识卡片」+ 标题 + 标签胶囊，primaryContainer 底色）/ 卡身（GptMarkdown 正文 + CodeBlockWidget 代码高亮复制，与聊天页同款）/ 卡脚（沉淀于 yyyy-MM-dd），圆角 20 + 阴影 + 描边，像一张实体卡
+- **W2-3 卡片渲染成图片分享**：用户反馈「直接分享这个卡片，以一个卡片的图的形式」。CardImageService：详情页卡片本体包 RepaintBoundary → 分享时 findRenderObject → toImage(3x) → PNG 写临时文件 → SharePlus 系统分享面板（QQ/微信收到的就是一张卡片图，不是文本）。零新插件，所见即所得。**修复 dir 插值 bug**：getTemporaryDirectory 返回 Directory 对象，原实现 '$dir/...' 拼出非法路径（真机上分享必失败，测试探针暴露），改用 dir.path
+- 测试：1205 项全绿（+10：card_forge_service_test 1 例 + card_detail_page_test 9 例新建 + card_library_page_test 点卡片用例改整页断言）；analyze 零 error/warning（72 条 info 全为存量）
+
+### v2.30.8（2026-11-01）
 
 v2.30.8 在 v2.30.7 基础上修复（polish-batch-w 分支，用户验收 v2.30.7 后 3 项反馈 → PATCH）：
 
