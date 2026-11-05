@@ -348,16 +348,21 @@ class _HomeInputBarState extends State<HomeInputBar>
   /// 上一次输入是否以「/」开头（斜杠面板边沿触发用）
   bool _slashWasActive = false;
 
-  /// 输入变化：空闲态防抖存草稿（聊天态草稿在切换/发送时机存，不逐键写）；
-  /// 输入「/」唤起斜杠命令面板（I12）
+  /// 输入变化：防抖 800ms 存草稿（空闲态存 idle 草稿，聊天态存当前
+  /// 会话草稿——杀 app 后重启可恢复）；输入「/」唤起斜杠命令面板（I12）
   void _onInputChanged(String text) {
     setState(() {});
-    if (widget.chat == null) {
-      _idleDraftDebounce?.cancel();
-      _idleDraftDebounce = Timer(const Duration(milliseconds: 800), () {
+    _idleDraftDebounce?.cancel();
+    _idleDraftDebounce = Timer(const Duration(milliseconds: 800), () {
+      if (!mounted) return;
+      final chat = widget.chat;
+      if (chat == null) {
         context.read<SettingsService>().setIdleDraft(text.trim());
-      });
-    }
+      } else {
+        // 聊天态也落盘：打字中杀 app 不丢（切换/发送时机的存取不变）
+        context.read<SettingsService>().setDraft(chat.session.id, text.trim());
+      }
+    });
     // I12 斜杠命令：**边沿触发**——只在「无 / → 有 /」跳变时唤起面板。
     // 电平触发（startsWith 就弹）会导致删除时每删一个 / 都重弹一次
     // （用户验收反馈：删 / 不应弹，只有输入 / 才弹）。面板自带搜索框，

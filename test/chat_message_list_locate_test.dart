@@ -176,6 +176,59 @@ void main() {
       await tester.pump();
       expect(state.scrollController.offset, 0);
     });
+
+    testWidgets('缓存外定位：高度差异大的长会话仍能跳到目标（大纲跳转回归锁）',
+        (tester) async {
+      // 真实场景：AI 长回答数千 px、用户一句话几十 px——旧实现按索引
+      // ×120px 估算 offset 严重失准，跳错位置后目标气泡不构建，跳转失效。
+      // 构造 60 条消息、assistant 回答远高于 user 提问的会话。
+      final state = await pumpList(tester, messages: 0);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 60; i++) {
+          final content = i.isEven
+              ? '问题 $i'
+              : '回答 $i\n${List.filled(40, '这是一段很长的回答内容，用来模拟 AI 生成的高气泡。').join()}';
+          await db.insertMessage(
+              _msg('L$i', i.isEven ? 'user' : 'assistant', content,
+                  at: 1000 + i));
+        }
+        await provider.loadMessages();
+      });
+      await tester.pump();
+
+      // 定位到最深处（列表最远端）的提问 L0
+      await locate(tester, state, 'L0');
+
+      // 目标气泡已构建且在屏上（旧实现此处失败：气泡不在缓存内）
+      expect(find.text('问题 0'), findsOneWidget,
+          reason: '缓存外目标应被地标逼近拉进渲染缓存');
+      expect(bubbleOf(tester, '问题 0').highlight, isTrue);
+
+      await tester.pump(const Duration(seconds: 3));
+    });
+
+    testWidgets('缓存外定位：中部目标同样可达', (tester) async {
+      final state = await pumpList(tester, messages: 0);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 60; i++) {
+          final content = i.isEven
+              ? '问题 $i'
+              : '回答 $i\n${List.filled(40, '这是一段很长的回答内容，用来模拟 AI 生成的高气泡。').join()}';
+          await db.insertMessage(
+              _msg('L$i', i.isEven ? 'user' : 'assistant', content,
+                  at: 1000 + i));
+        }
+        await provider.loadMessages();
+      });
+      await tester.pump();
+
+      // 定位到中部偏早的提问 L20（缓存外）
+      await locate(tester, state, 'L20');
+      expect(find.text('问题 20'), findsOneWidget);
+      expect(bubbleOf(tester, '问题 20').highlight, isTrue);
+
+      await tester.pump(const Duration(seconds: 3));
+    });
   });
 
   group('MessageBubble highlight', () {

@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../../models/chat_message.dart';
 import '../../models/doc_chunk.dart';
@@ -137,15 +137,13 @@ class ChatMessageListState extends State<ChatMessageList> {
   /// [messageId] 目标消息 id；[highlight] 命中词（透传气泡做词级高亮，
   /// null = 只做气泡级高亮）。
   /// 定位策略：目标在渲染缓存内 → Scrollable.ensureVisible 平滑滚到
-  /// 锚点；在缓存外（长会话深处）→ 先按索引估算 offset 跳过去，等
-  /// 气泡构建出来再 ensureVisible 精修。高亮 2s 后渐隐清除。
+  /// 锚点；在缓存外（长会话深处）→ 地标逼近（_locateByBisection）把
+  /// 目标拉进缓存再 ensureVisible 精修。高亮 2s 后渐隐清除。
   Future<void> scrollToMessage(String messageId, {String? highlight}) async {
     if (!_scrollController.hasClients) return;
     final msgs = widget.chat.displayMessages;
     final index = msgs.indexWhere((m) => m.id == messageId);
     if (index < 0) return;
-    // reverse 列表：列表第 0 项 = 最后一条消息
-    final listIndex = msgs.length - 1 - index;
 
     Haptics.light();
     // 暂停跟随：定位到历史消息后流式增长不得拽回底部
@@ -162,16 +160,17 @@ class ChatMessageListState extends State<ChatMessageList> {
         alignment: 0.35, // 目标偏列表上部一点，上下文可见
       );
     } else {
-      // 未构建（缓存外）：估算 offset 跳过去，下一帧气泡出现后精修。
-      // 估算：平均每条消息 ~120px（气泡+间距），误差由二段定位兜住
-      final estimate = listIndex * 120.0;
-      _scrollController.jumpTo(
-        math.min(estimate, _scrollController.position.maxScrollExtent),
-      );
-      // 等目标气泡构建出来再精确滚到可见
-      await WidgetsBinding.instance.endOfFrame;
+      // 未构建（缓存外）：地标逼近定位。消息高度差异巨大（AI 长回答
+      // 数千 px / 一句话几十 px），按索引估算 offset 严重失准——跳错
+      // 位置后目标气泡不构建，精修永远不触发（大纲/搜索跳转失效）。
+      // 正确姿势：以已构建气泡为地标读精确 reveal offset，按实测平均
+      // item 高度向目标外推，逐轮把目标拉进渲染缓存，最后 ensureVisible
+      // 精修。
+      await _locateByBisection(messageId);
       final ctx2 = key.currentContext;
       if (ctx2 != null && mounted) {
+        // ctx2 来自 GlobalKey（非 BuildContext 跨异步），mounted 已守卫
+        // ignore: use_build_context_synchronously
         await Scrollable.ensureVisible(
           ctx2,
           duration: const Duration(milliseconds: 250),
@@ -187,6 +186,66 @@ class ChatMessageListState extends State<ChatMessageList> {
     _highlightTimer = Timer(const Duration(seconds: 2), () {
       if (mounted) setState(() => _highlightMessageId = null);
     });
+  }
+
+  /// 缓存外定位：地标逼近把目标气泡拉进渲染缓存
+  ///
+  /// 消息高度差异巨大（AI 长回答数千 px / 一句话几十 px），按索引估算
+  /// offset 严重失准——跳错位置后目标气泡不构建，精修永不触发（大纲/
+  /// 搜索跳转失效）。正确姿势：每轮从已构建气泡里取**离目标最近的地标**，
+  /// 用 getOffsetToReveal 读它「滚到 alignment 位置所需 offset」的精确值，
+  /// 再按视口内实测平均 item 高度向目标外推，jumpTo 后等一帧重新布局。
+  /// 地标逐轮逼近目标（deltaItems 收缩），2~4 轮内目标进入渲染缓存，
+  /// 外层 ensureVisible 完成最终精修。
+  Future<void> _locateByBisection(String messageId) async {
+    final controller = _scrollController;
+    if (!controller.hasClients) return;
+    final key = _bubbleKey(messageId);
+    final msgs = widget.chat.displayMessages;
+    final targetIndex = msgs.indexWhere((m) => m.id == messageId);
+    if (targetIndex < 0) return;
+    final targetListIndex = msgs.length - 1 - targetIndex;
+
+    for (var round = 0; round < 8; round++) {
+      if (key.currentContext != null) return; // 目标已进缓存
+
+      // 扫描已构建气泡：取离目标最近的地标（精确 reveal offset）+
+      // 实测平均 item 高度（外推用）
+      int? landmarkListIndex;
+      double? landmarkOffset;
+      double heightSum = 0;
+      int heightCount = 0;
+      for (final entry in _bubbleKeys.entries) {
+        final ctx = entry.value.currentContext;
+        if (ctx == null) continue;
+        // findRenderObject 在同步段调用（无 await 间隙），lint 误报跨异步
+        // ignore: use_build_context_synchronously
+        final ro = ctx.findRenderObject();
+        if (ro is! RenderBox || !ro.attached || !ro.hasSize) continue;
+        final idx = msgs.indexWhere((m) => m.id == entry.key);
+        if (idx < 0) continue;
+        final li = msgs.length - 1 - idx;
+        heightSum += ro.size.height;
+        heightCount++;
+        if (landmarkListIndex == null ||
+            (li - targetListIndex).abs() <
+                (landmarkListIndex - targetListIndex).abs()) {
+          landmarkListIndex = li;
+          landmarkOffset =
+              RenderAbstractViewport.of(ro).getOffsetToReveal(ro, 0.35).offset;
+        }
+      }
+      if (landmarkListIndex == null || landmarkOffset == null) return;
+
+      final deltaItems = targetListIndex - landmarkListIndex;
+      if (deltaItems == 0) return; // 防御：地标即目标（理论上已进缓存）
+      final avgHeight = heightCount > 0 ? heightSum / heightCount : 120.0;
+      final next =
+          (landmarkOffset + deltaItems * avgHeight).clamp(0.0, controller.position.maxScrollExtent);
+      controller.jumpTo(next);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted || !controller.hasClients) return;
+    }
   }
 
   /// 气泡是否处于高亮态（itemBuilder 透传 MessageBubble）

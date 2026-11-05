@@ -105,6 +105,10 @@ class _HomePageState extends State<HomePage> {
   WidgetDataPusher? _widgetPusher;
   VoidCallback? _sessionsListener;
 
+  /// P2：setup 时缓存的 SessionsProvider 引用（dispose 期间不能再用
+  /// context 查祖先，teardown 用缓存引用移除监听）
+  SessionsProvider? _sessionsProviderRef;
+
   @override
   void initState() {
     super.initState();
@@ -133,6 +137,17 @@ class _HomePageState extends State<HomePage> {
     // FocusScope 会把焦点还给输入框并重新弹键盘——监听键盘收起主动
     // unfocus，保证「键盘收起 = 退出聚焦」，弹层关闭不再回弹。
     WidgetsBinding.instance.addObserver(_KeyboardDismissObserver(this));
+    // 冷启动恢复空闲态草稿（静默）：上次在主页打了字没发出去（含杀
+    // app 场景），重启后输入框里看得见。聊天态草稿由 _enterChat 恢复
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final idleDraft = context.read<SettingsService>().idleDraft;
+      if (idleDraft.isNotEmpty && _inputController.text.isEmpty) {
+        _inputController.text = idleDraft;
+        _inputController.selection =
+            TextSelection.collapsed(offset: idleDraft.length);
+      }
+    });
   }
 
   @override
@@ -158,12 +173,15 @@ class _HomePageState extends State<HomePage> {
         service: WidgetDataService(),
         prefs: prefs,
       );
+      // dispose 期间不能再用 context 查祖先（deactivated 后查 Provider
+      // 不安全）——setup 时就把 provider 引用存下来，teardown 直接用
       final sessions = context.read<SessionsProvider>();
       void listener() => pusher.onSessionsChanged(sessions.sessions);
       sessions.addListener(listener);
       setState(() {
         _widgetPusher = pusher;
         _sessionsListener = listener;
+        _sessionsProviderRef = sessions;
       });
       // 首推：不等防抖，widget 放上桌面即有数据
       await pusher.pushNow();
@@ -175,12 +193,14 @@ class _HomePageState extends State<HomePage> {
   /// P2：移除会话监听并释放推送器
   void _teardownWidgetPusher() {
     final listener = _sessionsListener;
-    if (listener != null) {
-      context.read<SessionsProvider>().removeListener(listener);
+    final provider = _sessionsProviderRef;
+    if (listener != null && provider != null) {
+      provider.removeListener(listener);
     }
     _widgetPusher?.dispose();
     _widgetPusher = null;
     _sessionsListener = null;
+    _sessionsProviderRef = null;
   }
 
   /// F9/F7 分享即问：收到系统分享载荷 → 按类型分发。
