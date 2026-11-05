@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import 'app_theme_id.dart';
 import 'deepseek_theme.dart';
+import 'ink_wash_theme.dart';
 import 'minecraft_theme.dart';
+import 'obsidian_theme.dart';
 
 /// 单个主题的元数据：显示名 + 明暗两套 ThemeData 工厂 + 组件样式参数
 class AppThemeEntry {
@@ -61,6 +63,18 @@ class AppThemeRegistry {
       light: DeepSeekTheme.light,
       dark: DeepSeekTheme.dark,
       cornerRadius: 20,
+    ),
+    AppThemeId.obsidian: AppThemeEntry(
+      label: '曜石',
+      light: ObsidianTheme.light,
+      dark: ObsidianTheme.dark,
+      cornerRadius: 12,
+    ),
+    AppThemeId.inkWash: AppThemeEntry(
+      label: '墨韵',
+      light: InkWashTheme.light,
+      dark: InkWashTheme.dark,
+      cornerRadius: 8,
     ),
   };
 
