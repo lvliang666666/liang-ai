@@ -8,7 +8,15 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.30.9**（2026-11-01 发布）
+**当前版本：v2.30.10**（2026-11-05 发布）
+
+v2.30.10 在 v2.30.9 基础上修复（fix/draft-kill-loss-and-outline-jump 分支，用户 2 项反馈 → PATCH）：
+
+- **杀 app 后输入框内容丢失**：草稿链路两个洞叠加——①聊天态打字从不落盘（旧实现只在切换/发送时机存，打字中杀 app 必丢），`_onInputChanged` 的 800ms 防抖改为两态都落盘（空闲态存 idle 草稿、聊天态存当前会话草稿）；②冷启动不恢复空闲草稿（只有 `_newChat` 退出聊天态时才恢复），`HomePage.initState` 加 postFrame 静默恢复（与切换会话恢复语义一致）。顺手修 P2 widget 推送 teardown 在 dispose 期间用 context 查 Provider 的不安全访问（setup 时缓存 provider 引用）
+- **消息大纲点击无法跳到对应区域**：`scrollToMessage` 缓存外定位用「索引 × 120px」估算 offset，AI 长回答动辄数千 px、一句话几十 px，估算严重失准——跳错位置后目标气泡不构建，二段精修永不触发（长会话必失效）。改为**地标逼近**：每轮从已构建气泡取离目标最近的地标，`getOffsetToReveal` 读精确 offset，按实测平均 item 高度向目标外推，2~4 轮把目标拉进渲染缓存，最后 `ensureVisible` 精修
+- 测试：1212 项全绿（+7：draft_kill_survival_test 5 例新建——聊天态防抖落盘 3 + 冷启动恢复 2；chat_message_list_locate_test 2 例——缓存外定位回归锁）；analyze 零 error/warning（72 条 info 全为存量）
+
+### v2.30.9（2026-11-01）
 
 v2.30.9 在 v2.30.8 基础上修复（polish-batch-w2 分支，用户验收 v2.30.8 后 2 项反馈 → PATCH）：
 
