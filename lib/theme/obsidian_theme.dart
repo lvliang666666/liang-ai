@@ -11,7 +11,10 @@ class ObsidianTheme {
 
   // ===== 调色板 =====
   static const electricCyan = Color(0xFF00D4FF); // 电光青（暗色主色）
-  static const cyanDeep = Color(0xFF0090B8); // 亮色版主色（深灰蓝底上降亮度）
+  // 亮色版主色：#0090B8 → #007A9E（2026-11-05 对比度修复：白字 4.91:1
+  // 达 AA；旧值 #0090B8 + 深字 4.85:1 数学过线但深字在彩底上观感差，
+  // 是全 app 唯一深色 onPrimary——用户气泡文字"黑色看不清"根因）
+  static const cyanDeep = Color(0xFF007A9E);
   static const cyanContainerDark = Color(0xFF00303F); // 暗色主容器
   static const cyanContainerLight = Color(0xFF123A46); // 亮色版主容器（仍深色）
   static const bgBlack = Color(0xFF0D0F14); // 暗色基底（纯黑偏蓝）
@@ -27,6 +30,16 @@ class ObsidianTheme {
   static const amber = Color(0xFFFFB454); // 琥珀（权限/警告）
   static const dangerRed = Color(0xFFFF5C5C); // 错误
 
+  // ===== Markdown 渲染令牌（2026-11-05 对比度批次，用户指定色值） =====
+  // 经 markdown_style_sheet.dart 工厂注入 GptMarkdownThemeData，
+  // 全部对各自底色 ≥4.5:1（WCAG AA），矩阵断言见 app_theme_registry_test
+  static const mdHeading = Color(0xFFE5E7EB); // 章节标题（H1-H6 统一）
+  static const mdTableHeaderBg = Color(0xFF1F2937); // 表头底
+  static const mdTableHeaderText = Color(0xFFF9FAFB); // 表头文字
+  static const mdTableCell = Color(0xFFD1D5DB); // 单元格文字
+  static const mdTableBorder = Color(0xFF374151); // 表格边框
+  static const mdCodeComment = Color(0xFF9CA3AF); // 代码块注释/次要文字
+
   /// 亮主题（深灰蓝底——曜石的「亮色」依然是暗的，只提一档亮度）
   static ThemeData light() => _build(Brightness.light);
 
@@ -39,7 +52,10 @@ class ObsidianTheme {
     final scheme = ColorScheme(
       brightness: Brightness.dark, // 组件形态恒按暗色（深底浅字）
       primary: isDark ? electricCyan : cyanDeep,
-      onPrimary: isDark ? const Color(0xFF00232E) : const Color(0xFF001A22),
+      // onPrimary：亮色版白字（#007A9E 底 4.91:1 达 AA）；暗色版电光青
+      // #00D4FF 亮度太高白字仅 1.77:1 不可行，深字 9.27:1 是唯一解
+      // （类似荧光笔高亮，视觉成立）
+      onPrimary: isDark ? const Color(0xFF00232E) : Colors.white,
       primaryContainer: isDark ? cyanContainerDark : cyanContainerLight,
       onPrimaryContainer:
           isDark ? const Color(0xFF8FE8FF) : const Color(0xFF7FD8F0),

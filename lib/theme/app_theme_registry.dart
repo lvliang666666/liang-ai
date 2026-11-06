@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'app_theme_id.dart';
 import 'deepseek_theme.dart';
 import 'ink_wash_theme.dart';
+import 'markdown_style_sheet.dart';
 import 'minecraft_theme.dart';
 import 'obsidian_theme.dart';
 
@@ -82,11 +83,28 @@ class AppThemeRegistry {
   static Map<AppThemeId, AppThemeEntry> get all =>
       Map.unmodifiable(_registry);
 
-  /// 取主题（明/暗），未知 id 回退默认
+  /// 取主题（明/暗），未知 id 回退默认。
+  ///
+  /// Markdown 渲染令牌（2026-11-05 对比度批次）经 main.dart 的
+  /// MaterialApp.builder 包 GptMarkdownTheme 注入（InheritedWidget 路径，
+  /// 绕开 ThemeExtension F-bounded 泛型的 copyWith 类型问题）——此处
+  /// 只返回基础 ThemeData。
   static ThemeData resolve(AppThemeId id, Brightness brightness) {
     final entry = _registry[id] ?? _registry[defaultId]!;
     return brightness == Brightness.dark ? entry.dark() : entry.light();
   }
+
+  /// 取主题的 Markdown 渲染令牌（main.dart builder 用）
+  static MarkdownTokens markdownTokensOf(AppThemeId id) =>
+      id == AppThemeId.obsidian
+          ? MarkdownTokens(
+              heading: ObsidianTheme.mdHeading,
+              tableHeaderBg: ObsidianTheme.mdTableHeaderBg,
+              tableHeaderText: ObsidianTheme.mdTableHeaderText,
+              tableCell: ObsidianTheme.mdTableCell,
+              tableBorder: ObsidianTheme.mdTableBorder,
+            )
+          : const MarkdownTokens();
 
   /// 取主题的组件圆角参数，未知 id 回退默认
   static double cornerRadiusOf(AppThemeId id) =>

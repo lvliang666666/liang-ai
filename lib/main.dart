@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:gpt_markdown/gpt_markdown.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -19,6 +20,8 @@ import 'services/memory_service.dart';
 import 'services/secure_key_store.dart';
 import 'services/settings_service.dart';
 import 'services/agent_service.dart';
+import 'theme/app_theme_registry.dart';
+import 'theme/markdown_style_sheet.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -124,6 +127,22 @@ class AiChatApp extends StatelessWidget {
           theme: themeProvider.theme(Brightness.light),
           darkTheme: themeProvider.theme(Brightness.dark),
           themeMode: ThemeMode.system,
+          // Markdown 渲染令牌注入（2026-11-05 对比度批次）：builder 包
+          // GptMarkdownTheme（InheritedWidget 路径，绕开 ThemeExtension
+          // F-bounded 泛型的 copyWith 类型问题），全 app GptMarkdown
+          // 自动继承——标题/表格/行内代码等颜色从主题令牌派生
+          builder: (context, child) {
+            final scheme = Theme.of(context).colorScheme;
+            return GptMarkdownTheme(
+              gptThemeData: markdownThemeData(
+                scheme,
+                tokens: AppThemeRegistry.markdownTokensOf(
+                  themeProvider.current,
+                ),
+              ),
+              child: child!,
+            );
+          },
           home: const HomePage(),
         ),
       ),
