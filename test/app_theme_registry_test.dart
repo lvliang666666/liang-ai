@@ -145,7 +145,7 @@ void main() {
           }
 
           // ② 表格：表头文字对表头底、单元格文字对气泡底、边框可见性
-          final table = md.styleSheet!.table!;
+          final table = md.styleSheet.table!;
           expect(
             contrast(table.headerTextStyle!.color!, table.headerBackground!),
             greaterThanOrEqualTo(4.5),
@@ -164,7 +164,7 @@ void main() {
           );
 
           // ③ 行内代码：文字对代码 chip 底 ≥4.5:1
-          final inlineCode = md.styleSheet!.inlineCode!;
+          final inlineCode = md.styleSheet.inlineCode!;
           // chip 底 = backgroundColor（半透明）叠气泡底
           final chipBg = Color.alphaBlend(
             inlineCode.backgroundColor!,
@@ -177,7 +177,7 @@ void main() {
           );
 
           // ④ 链接对气泡底 ≥4.5:1（可点击元素必须可辨识）
-          final link = md.styleSheet!.link!;
+          final link = md.styleSheet.link!;
           expect(
             contrast(link.color!, bubbleBg),
             greaterThanOrEqualTo(4.5),
@@ -195,16 +195,16 @@ void main() {
       final md = mdThemeOf(AppThemeId.obsidian, theme);
       // 标题 = 用户指定 #E5E7EB
       expect(md.h1!.color, ObsidianTheme.mdHeading);
-      expect(md.styleSheet!.heading!.textStyle!.color,
+      expect(md.styleSheet.heading!.textStyle!.color,
           ObsidianTheme.mdHeading);
       // 表格 = 用户指定四色
-      final table = md.styleSheet!.table!;
+      final table = md.styleSheet.table!;
       expect(table.headerBackground, ObsidianTheme.mdTableHeaderBg);
       expect(table.headerTextStyle!.color, ObsidianTheme.mdTableHeaderText);
       expect(table.borderColor, ObsidianTheme.mdTableBorder);
       // 单元格文字经 tokens.tableCell → inlineCode.color 同源
       expect(
-        md.styleSheet!.inlineCode!.color,
+        md.styleSheet.inlineCode!.color,
         ObsidianTheme.mdTableCell,
       );
     });
