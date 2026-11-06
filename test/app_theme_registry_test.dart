@@ -31,6 +31,26 @@ void main() {
           reason: '暗色版纯黑基底（OLED 省电）');
       // 电光青主色（暗色版）
       expect(dark.colorScheme.primary, ObsidianTheme.electricCyan);
+      // 用户气泡对比度回归锁（2026-11-05 修复）：亮色版 primary 底 +
+      // onPrimary 白字 ≥4.5:1（旧值 #0090B8 + 近黑字 4.85:1 数学过线
+      // 但深字在彩底上观感差——"黑色字体看不清"根因）
+      final lp = light.colorScheme.primary;
+      final lpLum = lp.computeLuminance();
+      final whiteContrast =
+          (1.0 + 0.05) / (lpLum + 0.05);
+      expect(whiteContrast, greaterThan(4.5),
+          reason: '亮色版 primary 底上白字对比度须达 WCAG AA');
+      expect(light.colorScheme.onPrimary, Colors.white,
+          reason: '亮色版 onPrimary 应是白字（与其他主题视觉语言一致）');
+      // 暗色版电光青太亮白字不可行（1.77:1），深字 9.27:1 保持
+      final dpContrast = dark.colorScheme.onPrimary.computeLuminance() >
+              dark.colorScheme.primary.computeLuminance()
+          ? (dark.colorScheme.onPrimary.computeLuminance() + 0.05) /
+              (dark.colorScheme.primary.computeLuminance() + 0.05)
+          : (dark.colorScheme.primary.computeLuminance() + 0.05) /
+              (dark.colorScheme.onPrimary.computeLuminance() + 0.05);
+      expect(dpContrast, greaterThan(7.0),
+          reason: '暗色版电光青底 + 深字对比度应充足');
     });
 
     test('墨韵：明暗工厂可用 + 圆角 8', () {
