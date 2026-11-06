@@ -8,7 +8,16 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.31.0**（2026-11-05 发布）
+**当前版本：v2.31.1**（2026-11-06 发布）
+
+v2.31.1 在 v2.31.0 基础上修复（fix/obsidian-onprimary-contrast 分支，用户验收 v2.31.0 后 2 项反馈 → PATCH）：
+
+- **曜石用户气泡黑字看不清**：曜石是全 app 唯一深色 onPrimary 的主题（亮色版 #001A22 近黑），用户气泡 = primary 底 + onPrimary 字，深青黑字在青蓝底上观感差。修复 = 亮色版 onPrimary 改白 + primary #0090B8 → #007A9E（白字对比度 3.70 → 4.91:1 达 WCAG AA）；暗色版保持电光青 + 深字（9.27:1，白字 1.77:1 不可行）
+- **Markdown 渲染多处对比度不足**：①章节标题深底深字——GptMarkdown h1-h6 默认取 Typography.tall2021（Material 亮色排版黑色），项目未注入 GptMarkdownThemeData；②表格表头/单元格文字未显式给色；③代码块注释 atomOneDark #5C6370 对底仅 2.32:1。修复 = 新建 markdown_style_sheet.dart 令牌化工厂（标题/表格/行内代码/引用/链接/列表全部从主题令牌派生零硬编码），曜石用户指定色值进命名常量（标题 #E5E7EB / 表头 #1F2937+#F9FAFB / 单元格 #D1D5DB / 边框 #374151 / 注释 #9CA3AF），经 MaterialApp.builder 包 GptMarkdownTheme 注入全 app 生效；CodeBlockWidget 注释色覆盖（5.51:1 达 AA）；链接色不足 4.5:1 自动回退 onSurface（治愈 minecraft/deepseek/曜石亮色三处存量链接问题）
+- 回归锁：app_theme_registry_test 新增对比度矩阵（5 主题 × 明暗 × 标题 H1-H6/表头/单元格/行内代码/链接 ≥4.5:1 + 边框 ≥1.2:1）+ 曜石令牌精确性 + 注释色防回退 + onPrimary 白字断言，共 15 用例
+- 测试：1230 项全绿；analyze 零 error/warning（lint 分布与基线一致）
+
+### v2.31.0（2026-11-05）
 
 v2.31.0 在 v2.30.10 基础上新增（feat/themes-obsidian-inkwash 分支，用户需求「加两个架构级主题」→ MINOR）：
 
