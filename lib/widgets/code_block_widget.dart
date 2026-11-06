@@ -5,7 +5,25 @@ import 'package:flutter/services.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 
+import '../theme/obsidian_theme.dart';
 import '../utils/haptics.dart';
+
+/// 语法高亮主题：atomOneDark 基底 + 注释/引用色覆盖。
+///
+/// atomOneDark 的注释 #5C6370 对代码底 #282C34 对比度仅 2.32:1（实测），
+/// 深色主题下不可读——覆盖为曜石 mdCodeComment 令牌 #9CA3AF（5.51:1，
+/// WCAG AA 达标）。其余 token 色保持 atomOneDark 原值（对底均 ≥4.5:1）。
+final Map<String, TextStyle> _highlightTheme = {
+  ...atomOneDarkTheme,
+  'comment': const TextStyle(
+    color: ObsidianTheme.mdCodeComment,
+    fontStyle: FontStyle.italic,
+  ),
+  'quote': const TextStyle(
+    color: ObsidianTheme.mdCodeComment,
+    fontStyle: FontStyle.italic,
+  ),
+};
 
 /// 代码块：语言标签 + 复制按钮 + 语法高亮
 ///
@@ -59,7 +77,7 @@ class CodeBlockWidget extends StatelessWidget {
               child: HighlightView(
                 code,
                 language: lang,
-                theme: atomOneDarkTheme,
+                theme: _highlightTheme,
                 padding: const EdgeInsets.all(12),
                 textStyle: const TextStyle(
                   fontFamily: 'monospace',

@@ -30,6 +30,16 @@ class ObsidianTheme {
   static const amber = Color(0xFFFFB454); // 琥珀（权限/警告）
   static const dangerRed = Color(0xFFFF5C5C); // 错误
 
+  // ===== Markdown 渲染令牌（2026-11-05 对比度批次，用户指定色值） =====
+  // 经 markdown_style_sheet.dart 工厂注入 GptMarkdownThemeData，
+  // 全部对各自底色 ≥4.5:1（WCAG AA），矩阵断言见 app_theme_registry_test
+  static const mdHeading = Color(0xFFE5E7EB); // 章节标题（H1-H6 统一）
+  static const mdTableHeaderBg = Color(0xFF1F2937); // 表头底
+  static const mdTableHeaderText = Color(0xFFF9FAFB); // 表头文字
+  static const mdTableCell = Color(0xFFD1D5DB); // 单元格文字
+  static const mdTableBorder = Color(0xFF374151); // 表格边框
+  static const mdCodeComment = Color(0xFF9CA3AF); // 代码块注释/次要文字
+
   /// 亮主题（深灰蓝底——曜石的「亮色」依然是暗的，只提一档亮度）
   static ThemeData light() => _build(Brightness.light);
 
