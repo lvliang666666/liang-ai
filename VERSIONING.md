@@ -8,7 +8,18 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.31.1**（2026-11-06 发布）
+**当前版本：v2.31.2**（2026-11-07 发布）
+
+v2.31.2 在 v2.31.1 基础上优化（fix/drawer-fling-jank 分支，用户报右滑出会话抽屉卡顿 → PATCH）：
+
+- **调研 DeepSeek/Material Drawer 流畅本质**：动画期间只更新两个轻量层（面板平移 + Scrim 透明度），主页面完全静止走缓存层合成
+- **主页去 scale（根因级）**：原 `Transform(scale(1-0.04p))` 让字形缓存（glyph atlas）按缩放系数逐帧 miss，Markdown 气泡密集层全屏逐帧重新栅格化——RepaintBoundary 拦不住栅格化，必须从动画设计避开。只保留平移（亚像素量化后仍命中缓存），层次感由 Scrim 深度表达
+- **结构壳静态化**：Stack/GestureDetector/Positioned 只 build 一次，三个 AnimatedBuilder 各包一个动画节点（Transform/Opacity），每帧不再重建任何结构节点。Positioned 保持 Stack 直接子级（ParentData 约束），动画包装放内侧
+- **面板派生数据记忆化**：SessionDrawerPanel 的 _filtered/_grouped/rows/_hasMore 原为 getter，每次 build 重复求值 4~5 遍（宿主 SessionsProvider.refresh() 整树重建时全部重算）。改显式缓存 + didUpdateWidget identical 判 sessions 引用变化失效 + 查询/游标变化点手动失效；批量全选 Set 仅批量模式计算
+- 测试：1231 项全绿（+1：记忆化失效回归锁——sessions 引用变化必须立即渲染新列表）；analyze 零 error/warning
+- 经验沉淀：`D:\LvProject\lessons\2026-11-07-drawer-fling-glyph-atlas-scale-jank.md`
+
+### v2.31.1（2026-11-06）
 
 v2.31.1 在 v2.31.0 基础上修复（fix/obsidian-onprimary-contrast 分支，用户验收 v2.31.0 后 2 项反馈 → PATCH）：
 
