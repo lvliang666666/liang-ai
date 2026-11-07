@@ -21,6 +21,13 @@ import 'package:flutter/material.dart';
 ///   每帧只更新变换矩阵与 Scrim 透明度，主页面/抽屉内容走缓存层合成
 ///   不重绘。boundary 包在变换外侧时，矩阵变化会把整个 boundary 子树
 ///   标脏，主页内容逐帧重绘（切换会话掉帧元凶之一）
+/// - **主页面只平移不缩放**（v2.31.2）：连续变化的 scale 会让字形缓存
+///   按缩放系数逐帧 miss，文字密集层（Markdown 气泡）全屏逐帧重新
+///   栅格化——拖拽掉帧的根因。平移量化后仍命中缓存，零重栅格化。
+///   层次感由 Scrim 深度表达（DeepSeek/Material Drawer 同款取舍）
+/// - 结构壳（Stack/GestureDetector/Positioned）静态化：三个
+///   AnimatedBuilder 各包一个动画节点，每帧只重建 Transform/Opacity
+///   轻量包装，不重建任何结构节点
 /// - 主页/抽屉内容内部的高频重绘源（输入框光标闪烁、流式打字机）必须
 ///   再包 RepaintBoundary 隔离：否则光标每 500ms 重绘会向上传播到主页
 ///   大层，重录重栅格化整页画面——拖拽期间周期性掉帧（"滑出卡顿"）
@@ -158,77 +165,89 @@ class GestureDrawerState extends State<GestureDrawer>
   @override
   Widget build(BuildContext context) {
     final width = _width;
-    // 主页/抽屉内容只构建一次（child 参数），动画每帧只重建
-    // Transform/Scrim 这几个轻量包装节点，内容层不进 builder
-    return AnimatedBuilder(
-      animation: _controller,
+    // ===== 性能架构（v2.31.2 抽屉流畅度批次）=====
+    // DeepSeek/Material Drawer 式「动画只动两个轻量层」：
+    // - Stack/GestureDetector/Positioned 全部静态化（build 一次），
+    //   AnimatedBuilder 只包三个动画节点，每帧不重建任何结构壳
+    // - 主页面**只平移不缩放**：文字密集层连续 scale 会让字形缓存
+    //   （glyph atlas）按缩放系数逐帧 miss，全屏文字逐帧重新栅格化
+    //   ——拖拽掉帧的根因。层次感由 Scrim 深度表达
+    // - RepaintBoundary 在 Transform 内侧：内容层缓存化，每帧只重算
+    //   矩阵，不把主页/抽屉子树标脏重绘
+    // - 拖拽回调常驻：条件挂载会在拖拽中途销毁 recognizer 导致卡死
+    //   （打开态被面板/Scrim 覆盖，回调天然不触发，无需条件守卫）
+    final homeLayer = RepaintBoundary(
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        // down：拖拽位移从按下点起算。默认 start 会把手势竞技场
+        // 裁决前（约一个触摸容差 ~18px）的位移吞掉——起手先有
+        // 一段抽屉不动的死区、随后突然追赶，体感即"抖一下再
+        // 滑、不跟手"（右滑开抽屉的元凶）
+        dragStartBehavior: DragStartBehavior.down,
+        onHorizontalDragStart: _onDragStart,
+        onHorizontalDragUpdate: _onDragUpdate,
+        onHorizontalDragEnd: _onDragEnd,
+        child: widget.child,
+      ),
+    );
+    final scrimLayer = IgnorePointer(
+      child: GestureDetector(
+        onTap: close,
+        child: ColoredBox(color: widget.scrimColor),
+      ),
+    );
+    final panelLayer = GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      dragStartBehavior: DragStartBehavior.down, // 同上：消除起手死区
+      onHorizontalDragStart: _onDragStart,
+      onHorizontalDragUpdate: _onDragUpdate,
+      onHorizontalDragEnd: _onDragEnd,
       child: RepaintBoundary(child: widget.drawer),
-      builder: (context, drawerChild) {
-        final p = _progress;
-        return Stack(
-          children: [
-            // 主页面：随抽屉打开轻微左移 + 缩放（层次感）。
-            // 拖拽回调常驻：打开态被面板/Scrim 覆盖不会误触发；
-            // 条件挂载会在拖拽中途销毁 recognizer 导致卡死（见类注释）。
-            // RepaintBoundary 在 Transform 内侧：内容层缓存化，每帧
-            // 只重算矩阵，不把主页子树标脏重绘。
-            // 平移+缩放合并进单个 Matrix4：两层 Transform 会产生两层
-            // TransformLayer，拖拽逐帧多一次层矩阵更新与合成
-            Transform(
-              transform: Matrix4.identity()
-                ..translate(-width * 0.12 * p, 0.0)
-                ..scale(1 - 0.04 * p),
-              alignment: Alignment.center,
-              child: RepaintBoundary(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  // down：拖拽位移从按下点起算。默认 start 会把手势竞技场
-                  // 裁决前（约一个触摸容差 ~18px）的位移吞掉——起手先有
-                  // 一段抽屉不动的死区、随后突然追赶，体感即"抖一下再
-                  // 滑、不跟手"（右滑开抽屉的元凶）
-                  dragStartBehavior: DragStartBehavior.down,
-                  onHorizontalDragStart: _onDragStart,
-                  onHorizontalDragUpdate: _onDragUpdate,
-                  onHorizontalDragEnd: _onDragEnd,
-                  child: widget.child,
-                ),
+    );
+    return Stack(
+      children: [
+        // 主页面：随抽屉打开轻微左移（平移命中字形缓存，无重栅格化）
+        AnimatedBuilder(
+          animation: _controller,
+          child: homeLayer,
+          builder: (context, child) => Transform.translate(
+            offset: Offset(-width * 0.12 * _progress, 0),
+            child: child,
+          ),
+        ),
+        // Scrim：随进度加深，点击关闭。常驻不条件挂载（p=0 全透明且
+        // IgnorePointer 拦事件），避免拖拽开始/结束时插入移除节点。
+        // Positioned 必须是 Stack 直接子级（ParentData 约束），
+        // 动画包装放 Positioned 内侧
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: _controller,
+            child: scrimLayer,
+            builder: (context, child) => IgnorePointer(
+              ignoring: _progress < 0.05,
+              child: Opacity(
+                opacity: 0.5 * _progress,
+                child: child,
               ),
             ),
-            // Scrim：随进度加深，点击关闭。
-            // 常驻不条件挂载（p=0 时全透明且不接收事件），
-            // 避免拖拽开始/结束时插入移除节点引发子树重建
-            Positioned.fill(
-              child: IgnorePointer(
-                ignoring: p < 0.05,
-                child: GestureDetector(
-                  onTap: close,
-                  child: ColoredBox(
-                    color: widget.scrimColor.withValues(alpha: 0.5 * p),
-                  ),
-                ),
-              ),
+          ),
+        ),
+        // 抽屉面板：跟手平移（-100% ~ 0），面板内水平拖拽也可关闭
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: width,
+          child: AnimatedBuilder(
+            animation: _controller,
+            child: panelLayer,
+            builder: (context, child) => Transform.translate(
+              offset: Offset(-width * (1 - _progress), 0),
+              child: child,
             ),
-            // 抽屉面板：跟手平移（-100% ~ 0），面板内水平拖拽也可关闭
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: width,
-              child: Transform.translate(
-                offset: Offset(-width * (1 - p), 0),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  dragStartBehavior: DragStartBehavior.down, // 同上：消除起手死区
-                  onHorizontalDragStart: _onDragStart,
-                  onHorizontalDragUpdate: _onDragUpdate,
-                  onHorizontalDragEnd: _onDragEnd,
-                  child: drawerChild,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
+          ),
+        ),
+      ],
     );
   }
 }

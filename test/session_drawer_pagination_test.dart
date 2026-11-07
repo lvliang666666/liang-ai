@@ -253,5 +253,43 @@ void main() {
 
       expect(openedId, 's2');
     });
+
+    testWidgets('sessions 引用变化：派生缓存失效，新列表立即渲染（记忆化回归锁）',
+        (tester) async {
+      // v2.31.2 记忆化后，_filtered/_grouped/rows 走缓存。宿主
+      // SessionsProvider.refresh() 传入新 List 引用必须触发失效，
+      // 否则抽屉显示陈旧列表（新建/删除会话不更新）
+      final list1 = sessions(3);
+      await pumpPanel(tester, list1);
+      expect(find.text('会话 0'), findsOneWidget);
+      expect(find.text('会话 2'), findsOneWidget);
+
+      // 传入全新 List（引用不同、内容不同）→ 缓存必须失效
+      final list2 = [
+        ChatSession(
+          id: 'fresh',
+          title: '新会话',
+          createdAt: 99999,
+          updatedAt: 99999,
+        ),
+      ];
+      await tester.pumpWidget(wrap(SessionDrawerPanel(
+        sessions: list2,
+        agentsProvider: agents,
+        loaded: true,
+        batchMode: ValueNotifier(false),
+        removingIds: const {},
+        onClose: () {},
+        onDeleteSelected: (_) async {},
+        onOpenChat: (_) {},
+        onOpenMessage: (_, _) {},
+        onOpenSettings: () {},
+        onShowActions: (_, _, _, _) {},
+      )));
+      await tester.pump();
+
+      expect(find.text('新会话'), findsOneWidget);
+      expect(find.text('会话 0'), findsNothing);
+    });
   });
 }

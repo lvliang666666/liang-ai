@@ -98,6 +98,25 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
   static const int _pageStep = 50;
   int _displayLimit = _pageStep;
 
+  // ===== 派生数据记忆化（v2.31.2 抽屉流畅度批次）=====
+  // _filtered/_grouped/rows 原先是 getter，每次 build 被重复求值 4~5 遍
+  // （_grouped、_hasMore、allFilteredIds、_buildListBody 各一次），宿主
+  // 侧 SessionsProvider.refresh() 触发整树重建时全部重算。改为显式缓存：
+  // didUpdateWidget 检测 sessions 引用变化才失效，build 内一次求值多处
+  // 复用——provider 连带重建降为 O(1)。
+  List<ChatSession>? _filteredCache;
+  List<List<ChatSession>>? _groupedCache; // 固定 4 组：置顶/今天/7天内/更早
+  List<_DrawerRow>? _rowsCache;
+  bool? _hasMoreCache;
+
+  /// 输入失效：sessions 列表引用变化（refresh/增删/置顶/重命名）
+  void _invalidateDerived() {
+    _filteredCache = null;
+    _groupedCache = null;
+    _rowsCache = null;
+    _hasMoreCache = null;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -113,6 +132,10 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
     if (oldWidget.batchMode != widget.batchMode) {
       oldWidget.batchMode.removeListener(_onBatchModeChanged);
       widget.batchMode.addListener(_onBatchModeChanged);
+    }
+    // sessions 引用变化（SessionsProvider 重建传入新 List）→ 派生缓存失效
+    if (!identical(oldWidget.sessions, widget.sessions)) {
+      _invalidateDerived();
     }
   }
 
@@ -145,6 +168,8 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
       if (v.trim().isNotEmpty) {
         _displayLimit = _filteredAllCount;
       }
+      // 查询变化 → 派生缓存失效（_filtered/_grouped/_hasMore 重算）
+      _invalidateDerived();
     });
     _debounce?.cancel();
     final q = v.trim();
@@ -186,6 +211,7 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
       _displayLimit = _pageStep; // 回常规态重置游标（E11 ②）
       _searchController.clear();
       _searchFocusNode.unfocus();
+      _invalidateDerived(); // 查询/游标变化 → 派生缓存失效
     });
   }
 
@@ -245,13 +271,18 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
     _exitBatchMode();
   }
 
-  /// 过滤后的会话（搜索时按标题匹配）
+  /// 过滤后的会话（搜索时按标题匹配）。
+  /// 记忆化：同一 (sessions, query) 下只算一次，build 多处复用。
+  /// 查询变化走 setState 前手动失效（_onSearchChanged/_closeSearch）。
   List<ChatSession> get _filtered {
+    if (_filteredCache != null) return _filteredCache!;
     final q = _query.trim().toLowerCase();
-    if (q.isEmpty) return widget.sessions;
-    return widget.sessions
-        .where((s) => s.title.toLowerCase().contains(q))
-        .toList();
+    _filteredCache = q.isEmpty
+        ? widget.sessions
+        : widget.sessions
+            .where((s) => s.title.toLowerCase().contains(q))
+            .toList();
+    return _filteredCache!;
   }
 
   /// 全量会话数（搜索态展开游标用：搜索必须命中全部）
@@ -262,43 +293,55 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
   ///
   /// E11 ②：常规列表走游标分页——只取 _filtered 前 _displayLimit 条
   /// 参与分组构建（搜索态不裁剪，见 _displayLimit 语义）。
-  Map<String, List<ChatSession>> get _grouped {
+  /// 记忆化：固定 4 组顺序，_displayLimit 变化（加载更多）手动失效。
+  List<List<ChatSession>> get _grouped {
+    if (_groupedCache != null) return _groupedCache!;
     final now = DateTime.now();
     final startOfToday =
         DateTime(now.year, now.month, now.day).millisecondsSinceEpoch;
     final sevenDaysAgo = startOfToday - 7 * 24 * 3600 * 1000;
-    final groups = <String, List<ChatSession>>{
-      '置顶': [],
-      '今天': [],
-      '7 天内': [],
-      '更早': [],
-    };
-    final source = _searching ? _filtered : _filtered.take(_displayLimit);
+    // 固定顺序：置顶 / 今天 / 7 天内 / 更早（与原 Map 迭代序一致）
+    final pinned = <ChatSession>[];
+    final today = <ChatSession>[];
+    final week = <ChatSession>[];
+    final earlier = <ChatSession>[];
+    final source =
+        _searching ? _filtered : _filtered.take(_displayLimit);
     for (final s in source) {
       if (s.pinned) {
-        groups['置顶']!.add(s);
+        pinned.add(s);
       } else if (s.updatedAt >= startOfToday) {
-        groups['今天']!.add(s);
+        today.add(s);
       } else if (s.updatedAt >= sevenDaysAgo) {
-        groups['7 天内']!.add(s);
+        week.add(s);
       } else {
-        groups['更早']!.add(s);
+        earlier.add(s);
       }
     }
-    return groups;
+    _groupedCache = [pinned, today, week, earlier];
+    return _groupedCache!;
   }
 
+  static const _groupNames = ['置顶', '今天', '7 天内', '更早'];
+
   /// 常规列表是否还有未展示的会话（「加载更多」入口显隐）
-  bool get _hasMore =>
-      !_searching && _filtered.length > _displayLimit;
+  bool get _hasMore {
+    if (_hasMoreCache != null) return _hasMoreCache!;
+    _hasMoreCache = !_searching && _filtered.length > _displayLimit;
+    return _hasMoreCache!;
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final sessions = widget.sessions;
-    final allFilteredIds = _filtered.map((s) => s.id).toSet();
-    final allSelected =
-        allFilteredIds.isNotEmpty && allFilteredIds.every(_selectedIds.contains);
+    // 批量模式全选集合：仅批量模式需要（常规态每帧白算一个 Set）。
+    // 复用记忆化的 _filtered，不重复过滤
+    final allFilteredIds =
+        _batchMode ? _filtered.map((s) => s.id).toSet() : const <String>{};
+    final allSelected = _batchMode &&
+        allFilteredIds.isNotEmpty &&
+        allFilteredIds.every(_selectedIds.contains);
     return Material(
       color: theme.colorScheme.surface,
       child: SafeArea(
@@ -555,17 +598,9 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
       );
     }
     // E11 ②：ListView.builder 惰性构建（只构建可见子树）+ 游标分页
-    // （_grouped 已按 _displayLimit 裁剪，末尾挂「加载更多」行）
-    final grouped = _grouped;
-    // 展平为 (groupHeader?, session) 序列：偶数位可能是分组标题
-    final rows = <_DrawerRow>[];
-    for (final entry in grouped.entries) {
-      if (entry.value.isEmpty) continue;
-      rows.add(_DrawerRow.header(entry.key));
-      for (final s in entry.value) {
-        rows.add(_DrawerRow.session(s));
-      }
-    }
+    // （_grouped 已按 _displayLimit 裁剪，末尾挂「加载更多」行）。
+    // rows 记忆化：展平序列只算一次，滚动/局部 setState 复用
+    final rows = _rowsCache ??= _buildRows();
     final totalRows = rows.length + (_hasMore ? 1 : 0);
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -588,6 +623,22 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
     );
   }
 
+  /// 展平分组为 (groupHeader?, session) 行序列（记忆化源，只在缓存
+  /// 失效后重算）。固定 4 组顺序与原 Map 迭代序一致
+  List<_DrawerRow> _buildRows() {
+    final grouped = _grouped;
+    final rows = <_DrawerRow>[];
+    for (var i = 0; i < grouped.length; i++) {
+      final group = grouped[i];
+      if (group.isEmpty) continue;
+      rows.add(_DrawerRow.header(_groupNames[i]));
+      for (final s in group) {
+        rows.add(_DrawerRow.session(s));
+      }
+    }
+    return rows;
+  }
+
   /// 「加载更多」行：追加一个步进页并重建（E11 ②）
   Widget _buildLoadMoreTile(ThemeData theme) {
     return Padding(
@@ -596,7 +647,10 @@ class _SessionDrawerPanelState extends State<SessionDrawerPanel>
         child: TextButton.icon(
           onPressed: () {
             Haptics.light();
-            setState(() => _displayLimit += _pageStep);
+            setState(() {
+              _displayLimit += _pageStep;
+              _invalidateDerived(); // 游标推进 → 分组/rows/hasMore 重算
+            });
           },
           icon: const Icon(Icons.expand_more, size: 18),
           label: Text('加载更多',
