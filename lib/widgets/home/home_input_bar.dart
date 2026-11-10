@@ -650,7 +650,8 @@ class _HomeInputBarState extends State<HomeInputBar>
             )
           else
             _buildTagsRow(context, chat),
-          const SizedBox(height: 6),
+          // 工具条与输入框间距 4dp（需求三：紧贴输入框上沿，构成整体输入区）
+          const SizedBox(height: 4),
           // F9 剪贴板胶囊：聚焦 + 剪贴板有长文本时浮出（输入框上方）
           if (_clipboardCandidate != null)
             _ClipboardSuggestionBar(

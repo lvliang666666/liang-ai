@@ -54,6 +54,31 @@ class _SettingsPageState extends State<SettingsPage> {
   final _agentSearchController = TextEditingController();
   final _agentSearchFocusNode = FocusNode();
 
+  // ===== API 配置 tab 加载状态机（灰屏治理批次·需求二②）=====
+  // ProviderProvider.loaded 只有 true/false 两态，load 抛异常时
+  // loaded 恒 false——UI 无法区分「加载中」与「加载失败」。宿主侧
+  // 补失败标记与错误信息，失败态给重试按钮（重置状态机重新请求）
+  bool _providerLoadRequested = false;
+  bool _providerLoadFailed = false;
+  String? _providerLoadError;
+
+  /// 加载供应商列表（重试共用）：成功清失败标记，失败落错误信息
+  Future<void> _loadProviders() async {
+    setState(() {
+      _providerLoadFailed = false;
+      _providerLoadError = null;
+    });
+    try {
+      await context.read<ProviderProvider>().load();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _providerLoadFailed = true;
+        _providerLoadError = e.toString();
+      });
+    }
+  }
+
   @override
   void initState() {
     super.initState();
@@ -516,11 +541,85 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   // ===== Tag 3：API 配置（供应商列表） =====
+  //
+  // 四态状态机（灰屏治理批次·需求二②）：
+  // - loading：居中加载指示器（首次进入触发 load）
+  // - error：错误图标 + 文案 + 重试按钮（重置状态机重新请求）
+  // - empty：空状态提示 + 「新增供应商」主按钮（引导添加入口）
+  // - success：正常列表渲染
   Widget _buildApiTab(ThemeData theme) {
     final providers = context.watch<ProviderProvider>();
+    // 首帧后触发加载（build 期间同步调 load + notifyListeners 会抛
+    // markNeedsBuild during build，widget 测试必崩——与记忆/HTTP 工具
+    // 面板同款守卫）
+    if (!providers.loaded && !_providerLoadRequested) {
+      _providerLoadRequested = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _loadProviders();
+      });
+    }
+
     if (!providers.loaded) {
-      providers.load();
+      // 加载失败态：load 抛异常时 loaded 永远 false 且无重试入口——
+      // 用 _providerLoadFailed 区分「加载中」与「加载失败」
+      if (_providerLoadFailed) {
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_off_outlined,
+                  size: 48, color: theme.colorScheme.onSurfaceVariant),
+              const SizedBox(height: 12),
+              Text('供应商加载失败',
+                  style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Text(
+                _providerLoadError ?? '请检查本地数据库后重试',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: _loadProviders,
+                icon: const Icon(Icons.refresh, size: 18),
+                label: const Text('重试'),
+              ),
+            ],
+          ),
+        );
+      }
       return const Center(child: CircularProgressIndicator());
+    }
+
+    // 空状态：无任何供应商（理论上内置种子保证至少一条，防御性兜底）
+    if (providers.profiles.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_outlined,
+                size: 48, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(height: 12),
+            Text('还没有供应商', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text(
+              '添加一个 API 服务商后即可开始对话',
+              style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: () {
+                Haptics.light();
+                _showProviderEditor(context);
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('添加供应商'),
+            ),
+          ],
+        ),
+      );
     }
 
     return Column(

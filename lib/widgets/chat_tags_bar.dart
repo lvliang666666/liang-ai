@@ -5,6 +5,11 @@ import 'package:flutter/material.dart';
 /// DeepSeek 式——切换人格/模型的入口从 AppBar 移到这里，
 /// 每个 tag 显示当前选中值，点击触发外部传入的回调（弹选择器）。
 /// 选中值变化时文字淡出下移/淡入上移过渡（AnimatedSwitcher）。
+///
+/// **尺寸规范（输入区工具条收窄批次·需求三）**：工具条紧贴输入框上沿，
+/// 与输入框构成整体「输入区」——按钮高 32dp（上下内边距 4dp），行高
+/// 40dp 含 4dp 底部间距（间距由宿主 [HomeInputBar] 的 SizedBox 提供，
+/// 本组件自身不再额外占位）。
 class ChatTagsBar extends StatelessWidget {
   const ChatTagsBar({super.key, required this.tags});
 
@@ -15,7 +20,7 @@ class ChatTagsBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return SizedBox(
-      height: 40,
+      height: 32,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -26,16 +31,16 @@ class ChatTagsBar extends StatelessWidget {
           return InkWell(
             onTap: tag.onTap,
             onLongPress: tag.onLongPress,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(16),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 200),
               curve: Curves.easeOutCubic,
               padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               decoration: BoxDecoration(
                 color: theme.colorScheme.surfaceContainerHighest
                     .withValues(alpha: 0.6),
-                borderRadius: BorderRadius.circular(18),
+                borderRadius: BorderRadius.circular(16),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,

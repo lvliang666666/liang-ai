@@ -72,6 +72,14 @@ class _HomePageState extends State<HomePage> {
   /// 抽屉批量管理模式开关（长按菜单「批量管理」触发）
   final ValueNotifier<bool> _drawerBatchMode = ValueNotifier(false);
 
+  // ===== 全局返回导航规范：主页双击退出 =====
+
+  /// 上一次按返回键的时间（双击退出判定基准）
+  DateTime? _lastBackPressAt;
+
+  /// 双击退出的时间窗（2 秒内连按两次才退出）
+  static const _doubleBackWindow = Duration(seconds: 2);
+
   /// 正在播离场动画的会话 id（删除前先收缩淡出，动画完再真删）
   final Set<String> _removingSessionIds = {};
 
@@ -1058,7 +1066,24 @@ class _HomePageState extends State<HomePage> {
 
     final allSessions = sessions.sessions;
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      // 全局返回导航规范·根页面：返回不退出，Toast 提示「再按一次退出」，
+      // 2 秒内连按两次才退出。抽屉展开时返回已被 GestureDrawer 内部
+      // PopScope 消费（关抽屉），不会到达这里
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        final now = DateTime.now();
+        final last = _lastBackPressAt;
+        if (last != null && now.difference(last) <= _doubleBackWindow) {
+          // 2 秒内第二次按：放行退出（SystemNavigator.pop 走平台退出）
+          SystemNavigator.pop();
+          return;
+        }
+        _lastBackPressAt = now;
+        showAppToast(context, '再按一次退出');
+      },
+      child: Scaffold(
       key: _scaffoldKey,
       // 手势跟手抽屉：拖多少走多少 + 速度甩动（替换内置 Drawer）
       body: GestureDrawer(
@@ -1288,6 +1313,7 @@ class _HomePageState extends State<HomePage> {
                   ],
                 ),
               ),
+      ),
       ),
     );
   }

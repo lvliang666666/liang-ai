@@ -22,9 +22,14 @@ import 'services/settings_service.dart';
 import 'services/agent_service.dart';
 import 'theme/app_theme_registry.dart';
 import 'theme/markdown_style_sheet.dart';
+import 'widgets/app_error_widget.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // 全局构建异常兜底（灰屏治理批次·需求二③）：build 阶段抛异常渲染
+  // 可读错误页（图标+摘要+重试/返回），禁止出现纯灰屏。越早挂越好
+  installGlobalErrorWidget();
 
   // E4 诊断日志：崩溃钩子 + 落盘目录（越早挂越好，启动期崩溃也有据可查）
   installDiagnosticHooks();
@@ -133,14 +138,21 @@ class AiChatApp extends StatelessWidget {
           // 自动继承——标题/表格/行内代码等颜色从主题令牌派生
           builder: (context, child) {
             final scheme = Theme.of(context).colorScheme;
-            return GptMarkdownTheme(
-              gptThemeData: markdownThemeData(
-                scheme,
-                tokens: AppThemeRegistry.markdownTokensOf(
-                  themeProvider.current,
+            // 全局错误页重试：监听 generation 自增，换 key 强制重建
+            // 整棵子树（ErrorWidget 场景下原子树已废，重建是唯一恢复
+            // 路径）。ValueListenableBuilder 只在重试时重建，零常开销
+            return ValueListenableBuilder<int>(
+              valueListenable: kErrorPageRetryGeneration,
+              builder: (context, generation, _) => GptMarkdownTheme(
+                key: ValueKey('app-tree-$generation'),
+                gptThemeData: markdownThemeData(
+                  scheme,
+                  tokens: AppThemeRegistry.markdownTokensOf(
+                    themeProvider.current,
+                  ),
                 ),
+                child: child!,
               ),
-              child: child!,
             );
           },
           home: const HomePage(),
