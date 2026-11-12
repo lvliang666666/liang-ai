@@ -149,6 +149,19 @@ class _HomeInputBarState extends State<HomeInputBar>
   }
 
   @override
+  void didUpdateWidget(covariant HomeInputBar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 会话绑定变化（切会话/退出聊天态/进入聊天态）：作废挂起的草稿
+    // 防抖——定时器闭包里的写入目标按 widget.chat 动态解析，但输入框
+    // 内容属于旧会话，延迟落盘会把旧会话文字写进新会话草稿（串稿）。
+    // 宿主在切换时机自己存取草稿（_enterChat/_newChat），这里只拦
+    if (!identical(oldWidget.chat, widget.chat)) {
+      _idleDraftDebounce?.cancel();
+      _idleDraftDebounce = null;
+    }
+  }
+
+  @override
   void dispose() {
     _idleDraftDebounce?.cancel();
     _clipboardDelayTimer?.cancel();
@@ -355,12 +368,17 @@ class _HomeInputBarState extends State<HomeInputBar>
     _idleDraftDebounce?.cancel();
     _idleDraftDebounce = Timer(const Duration(milliseconds: 800), () {
       if (!mounted) return;
+      // 读**当前**输入框内容，不用闭包捕获的 text 快照：防抖等待期间
+      // 输入框可能已被程序清空（发送/退出编辑）——落盘当前内容（空串
+      // = 清除草稿），而不是把已发送/已放弃的文字写回（「记忆过度」：
+      // 杀 app 重进后已发文字复活在输入框）
+      final current = widget.controller.text.trim();
       final chat = widget.chat;
       if (chat == null) {
-        context.read<SettingsService>().setIdleDraft(text.trim());
+        context.read<SettingsService>().setIdleDraft(current);
       } else {
         // 聊天态也落盘：打字中杀 app 不丢（切换/发送时机的存取不变）
-        context.read<SettingsService>().setDraft(chat.session.id, text.trim());
+        context.read<SettingsService>().setDraft(chat.session.id, current);
       }
     });
     // I12 斜杠命令：**边沿触发**——只在「无 / → 有 /」跳变时唤起面板。
@@ -650,7 +668,8 @@ class _HomeInputBarState extends State<HomeInputBar>
             )
           else
             _buildTagsRow(context, chat),
-          const SizedBox(height: 6),
+          // 工具条与输入框间距 4dp（需求三：紧贴输入框上沿，构成整体输入区）
+          const SizedBox(height: 4),
           // F9 剪贴板胶囊：聚焦 + 剪贴板有长文本时浮出（输入框上方）
           if (_clipboardCandidate != null)
             _ClipboardSuggestionBar(
@@ -857,6 +876,12 @@ class _HomeInputBarState extends State<HomeInputBar>
   }
 
   void _send(BuildContext context) {
+    // 发送即作废挂起的草稿防抖：定时器若还挂着，800ms 后会把**已发送**
+    // 的文字写回草稿（打完字立刻点发送必现——杀 app 重进后已发文字
+    // 复活在输入框）。发送路径自己清草稿，防抖写入必须拦掉
+    _idleDraftDebounce?.cancel();
+    _idleDraftDebounce = null;
+
     final text = widget.controller.text.trim();
     final pending = _pendingAttachments;
     final editing = widget.editingMessage;

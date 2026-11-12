@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -36,6 +37,16 @@ import 'package:flutter/material.dart';
 ///   避免与关闭动画抢主线程
 ///
 /// [drawer] 抽屉内容；[child] 主页面。
+///
+/// **返回键拦截（全局返回导航规范·浮层优先）**：抽屉展开时按系统返回
+/// = 关闭抽屉（页面不动），不透传到页面栈根节点触发退出。实现用
+/// [_DrawerPopEntry]（PopEntry 接口）向 ModalRoute 注册——**不能用
+/// PopScope**：PopScope.canPop 只在自身 rebuild 时才同步给路由，而
+/// 本组件性能架构是结构壳静态化（动画期间不重建任何节点），canPop
+/// 会停留在初始值。PopEntry.canPopNotifier 是 ValueListenable，路由
+/// pop 时实时读取其 value，与重建解耦——动画进度翻转 canPopNotifier
+/// 即时生效。关闭态 canPop=true 放行返回事件，由宿主（HomePage 的
+/// 双击退出 PopScope）接管。
 class GestureDrawer extends StatefulWidget {
   const GestureDrawer({
     super.key,
@@ -74,6 +85,19 @@ class GestureDrawerState extends State<GestureDrawer>
   /// 公开只读口：宿主/测试可感知拖拽与动画的实时进度
   double get progress => _controller.value;
 
+  /// 抽屉是否处于展开态（进度 > 0.05 视为展开——完全关闭的回弹尾段
+  /// 不算）。返回键拦截与宿主查询共用该判定
+  bool get isOpen => _controller.value > 0.05;
+
+  /// 返回键拦截的 PopEntry（didChangeDependencies 时向 ModalRoute 注册）
+  late final _DrawerPopEntry _popEntry = _DrawerPopEntry(this);
+
+  /// 动画进度监听：跨过 0.05 阈值时翻转 PopEntry 的 canPopNotifier
+  ///（路由 pop 时实时读取，与 widget 重建解耦——见 _DrawerPopEntry 文档）
+  void _onProgressChanged() {
+    _popEntry.syncWithProgress(_controller.value);
+  }
+
   /// 抽屉宽度 = 屏宽 - 右侧留边
   double _drawerWidth(BuildContext context) =>
       MediaQuery.widthOf(context) - widget.edgeMargin;
@@ -87,22 +111,46 @@ class GestureDrawerState extends State<GestureDrawer>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _width = _drawerWidth(context);
+    // 缓存 ModalRoute 引用（dispose 期间不能再用 context 查祖先——
+    // deactivated 后查 InheritedWidget 不安全，框架 debug 断言会抛）
+    _route = ModalRoute.of(context);
+    // 向当前 ModalRoute 注册返回拦截（PopEntry 机制：路由 pop 时实时
+    // 读 canPopNotifier.value，与 widget 重建解耦）。重复注册幂等
+    //（Set 语义），dispose 时注销
+    _route?.registerPopEntry(_popEntry);
+    // 进度监听只挂一次（didChangeDependencies 可能多次触发）
+    if (!_progressListenerAttached) {
+      _controller.addListener(_onProgressChanged);
+      _progressListenerAttached = true;
+      // 初始同步（默认关闭态 canPop=true）
+      _popEntry.syncWithProgress(_controller.value);
+    }
   }
 
+  bool _progressListenerAttached = false;
+
+  /// didChangeDependencies 缓存的宿主路由（dispose 注销用）
+  ModalRoute<Object?>? _route;
 
   // ===== 外部触发（按钮） =====
 
   void open() {
-    _controller.animateTo(1,
-        duration: _animateDuration, curve: Curves.easeOutCubic);
+    _controller.animateTo(
+      1,
+      duration: _animateDuration,
+      curve: Curves.easeOutCubic,
+    );
   }
 
   /// 关闭抽屉并返回动画完成 Future。
   /// 拖拽中调用（stop 后）动画不会推进，Future 永不完成——
   /// 等待方必须加超时兜底，不能裸 await。
   Future<void> close() {
-    return _controller.animateBack(0,
-        duration: _animateDuration, curve: Curves.easeInCubic);
+    return _controller.animateBack(
+      0,
+      duration: _animateDuration,
+      curve: Curves.easeInCubic,
+    );
   }
 
   // ===== 拖拽手势 =====
@@ -139,16 +187,16 @@ class GestureDrawerState extends State<GestureDrawer>
   }
 
   void _open() => _controller.animateTo(
-        1,
-        duration: _scaledDuration(1 - _progress),
-        curve: Curves.easeOutCubic,
-      );
+    1,
+    duration: _scaledDuration(1 - _progress),
+    curve: Curves.easeOutCubic,
+  );
 
   void _close() => _controller.animateBack(
-        0,
-        duration: _scaledDuration(_progress),
-        curve: Curves.easeInCubic,
-      );
+    0,
+    duration: _scaledDuration(_progress),
+    curve: Curves.easeInCubic,
+  );
 
   /// 按剩余距离缩放时长（拖一半松手 → 动画只走一半时间）
   Duration _scaledDuration(double remaining) {
@@ -158,6 +206,11 @@ class GestureDrawerState extends State<GestureDrawer>
 
   @override
   void dispose() {
+    // 注销返回拦截（用 didChangeDependencies 缓存的引用，dispose 期间
+    // 不能再用 context 查祖先）
+    _route?.unregisterPopEntry(_popEntry);
+    _controller.removeListener(_onProgressChanged);
+    _popEntry.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -204,6 +257,9 @@ class GestureDrawerState extends State<GestureDrawer>
       onHorizontalDragEnd: _onDragEnd,
       child: RepaintBoundary(child: widget.drawer),
     );
+    // 返回键拦截已由 _DrawerPopEntry 在 didChangeDependencies 注册到
+    // ModalRoute（见类文档：PopScope 在静态化架构下 canPop 不更新），
+    // build 无需再包 PopScope
     return Stack(
       children: [
         // 主页面：随抽屉打开轻微左移（平移命中字形缓存，无重栅格化）
@@ -225,10 +281,7 @@ class GestureDrawerState extends State<GestureDrawer>
             child: scrimLayer,
             builder: (context, child) => IgnorePointer(
               ignoring: _progress < 0.05,
-              child: Opacity(
-                opacity: 0.5 * _progress,
-                child: child,
-              ),
+              child: Opacity(opacity: 0.5 * _progress, child: child),
             ),
           ),
         ),
@@ -249,5 +302,44 @@ class GestureDrawerState extends State<GestureDrawer>
         ),
       ],
     );
+  }
+}
+
+/// 抽屉的返回拦截 PopEntry：canPopNotifier 跟随抽屉动画进度实时翻转
+///
+/// ModalRoute.popDisposition 在每次 pop 尝试时遍历已注册 PopEntry 并
+/// **实时读取** canPopNotifier.value——不依赖 widget 重建（PopScope 的
+/// canPop 只在 rebuild 时同步，静态化架构下会失效，见 GestureDrawer
+/// 类文档）。动画进度跨过 0.05 阈值时翻转 notifier，路由即时感知。
+class _DrawerPopEntry extends PopEntry<void> {
+  _DrawerPopEntry(this._state);
+
+  final GestureDrawerState _state;
+
+  /// canPop 的 ValueListenable：抽屉展开（进度 >0.05）= false（拦截
+  /// 返回），关闭 = true（放行）。用 ValueNotifier 承载，路由注册了
+  /// 监听（registerPopEntry 内部 addListener），翻转即触发路由
+  /// NavigationNotification 重发（系统返回键预测性手势背手势用）
+  final ValueNotifier<bool> _canPop = ValueNotifier<bool>(true);
+
+  @override
+  ValueListenable<bool> get canPopNotifier => _canPop;
+
+  @override
+  void onPopInvokedWithResult(bool didPop, void result) {
+    if (didPop) return;
+    // 返回事件被拦截（canPop=false 时路由 doNotPop）：关闭抽屉
+    _state.close();
+  }
+
+  /// 同步 canPop 到当前展开态（宿主在动画监听里调用，或测试直接调）
+  void syncWithProgress(double progress) {
+    final value = progress <= 0.05;
+    if (_canPop.value != value) _canPop.value = value;
+  }
+
+  /// 释放 notifier（GestureDrawerState.dispose 调用）
+  void dispose() {
+    _canPop.dispose();
   }
 }

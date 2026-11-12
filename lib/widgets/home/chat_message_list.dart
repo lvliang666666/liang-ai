@@ -494,11 +494,12 @@ class ChatMessageListState extends State<ChatMessageList> {
                         },
                       ),
                     ),
-                    // 「回到最新」胶囊：非跟随态浮出（右下角，输入栏上方）
+                    // 「回到最新」胶囊：非跟随态浮出（右下角绝对定位，
+                    // 不占布局高度；距输入区上沿 8dp——需求三规格）
                     if (!_following)
                       Positioned(
                         right: 16,
-                        bottom: 12,
+                        bottom: 8,
                         child: _BackToLatestButton(
                           isStreaming: widget.chat.isStreaming,
                           onTap: scrollToBottom,
