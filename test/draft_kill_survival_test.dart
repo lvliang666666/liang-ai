@@ -158,6 +158,80 @@ void main() {
       await tester.pump(const Duration(milliseconds: 900));
       expect(settings.getDraft('s1'), '');
     });
+
+    testWidgets('发送后挂起的防抖不复活已发文字（v2.31.3 记忆过度回归锁）',
+        (tester) async {
+      // 场景：打完字 800ms 内点发送 → _send 清草稿 + 清输入框，但旧实现
+      // 没取消挂起的防抖定时器（闭包捕获打字快照）→ 800ms 后把已发送
+      // 文字写回草稿 → 杀 app 重进后已发文字复活在输入框
+      final controller = TextEditingController();
+      await tester.pumpWidget(wrap(Scaffold(
+        body: HomeInputBar(
+          controller: controller,
+          focusNode: FocusNode(),
+          chat: provider,
+          selectedAgent: null,
+          selectedModel: null,
+          selectedEffort: 'max',
+          onSendIdle: (_, {agentId, modelPick, attachments = const [], agentVariables = const {}}) {},
+          onPickAgent: () {},
+          onPickModel: () {},
+          onPickEffort: () {},
+        ),
+      )));
+      await tester.pump();
+
+      // 打字（防抖定时器挂起，闭包捕获快照）
+      await tester.enterText(find.byType(TextField), '已发送的话');
+      // 500ms 后点发送（防抖窗口还剩 300ms）
+      await tester.pump(const Duration(milliseconds: 500));
+      final sendContext = tester.element(find.byType(TextField));
+      // 模拟 _send 的关键动作：清草稿 + 清输入框（直接调私有逻辑不可行，
+      // 走公开路径：发送按钮在 hasText 时出现）
+      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.pump();
+      expect(controller.text, '', reason: '发送后输入框清空');
+      expect(settings.getDraft('s1'), '', reason: '发送后草稿清除');
+
+      // 越过原防抖窗口：旧实现会把「已发送的话」写回草稿（bug），
+      // 修复后 _send 已作废定时器，草稿保持空
+      await tester.pump(const Duration(milliseconds: 900));
+      expect(settings.getDraft('s1'), '',
+          reason: '发送作废挂起的防抖：已发文字不得写回草稿');
+      // sendContext 仅用于证明 TextField 在树中（消除未使用告警）
+      expect(sendContext.mounted, isTrue);
+    });
+
+    testWidgets('防抖回调读当前输入框内容：程序清空后落盘空串（第二道防线）',
+        (tester) async {
+      // 即使定时器未被取消（如程序化 controller.clear() 不经 _send），
+      // 回调也必须读当前内容而非闭包快照——输入框已空 = 落盘空串 = 清草稿
+      final controller = TextEditingController();
+      await tester.pumpWidget(wrap(Scaffold(
+        body: HomeInputBar(
+          controller: controller,
+          focusNode: FocusNode(),
+          chat: provider,
+          selectedAgent: null,
+          selectedModel: null,
+          selectedEffort: 'max',
+          onSendIdle: (_, {agentId, modelPick, attachments = const [], agentVariables = const {}}) {},
+          onPickAgent: () {},
+          onPickModel: () {},
+          onPickEffort: () {},
+        ),
+      )));
+      await tester.pump();
+
+      await tester.enterText(find.byType(TextField), '打了一半');
+      await tester.pump(const Duration(milliseconds: 500));
+      // 程序化清空（不经 onChanged，防抖定时器仍挂着）
+      controller.clear();
+      await tester.pump(const Duration(milliseconds: 900));
+
+      expect(settings.getDraft('s1'), '',
+          reason: '防抖回调读当前内容：输入框已空则草稿清除，不复活快照');
+    });
   });
 
   group('冷启动恢复空闲草稿', () {
