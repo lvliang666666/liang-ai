@@ -112,8 +112,9 @@ void main() {
     // 30 个测试 Agent 已在 setUpAll 预置（fakeAsync 区内不做 DB IO）
     await pumpPicker(tester);
 
-    // 展开全部列表并滚到底部（10 内置 + 30 t* + 30 w* = 70）
-    await tester.tap(find.text('全部 Agent（70）'));
+    // 展开全部列表并滚到底部（11 内置含工具匠 + 30 t* + 30 w* = 71；
+    // v2.32.0 自我迭代批次新增 toolsmith 后内置 10→11）
+    await tester.tap(find.text('全部 Agent（71）'));
     await tester.pumpAndSettle();
     await tester.drag(find.byType(ListView), const Offset(0, -800));
     await tester.pumpAndSettle();
