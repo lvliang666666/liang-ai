@@ -42,8 +42,8 @@ void main() {
   });
 
   group('工具目录', () {
-    test('注册表含全部 30 个内置工具（26 + 记忆 3 + 情景 1）', () {
-      expect(registry.length, 30);
+    test('注册表含全部 31 个内置工具（27 + 记忆 3 + 情景 1）', () {
+      expect(registry.length, 31);
       expect(
         registry.names,
         containsAll([

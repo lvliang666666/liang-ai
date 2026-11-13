@@ -134,32 +134,37 @@ class _ToolApprovalCardState extends State<ToolApprovalCard> {
               ),
             ),
           ),
-          // 参数定义折叠区
+          // 参数定义折叠区（ExpansionTile 内含 ListTile——卡片外层
+          // DecoratedBox 有背景色会遮住 ListTile 的墨水效果触发框架
+          // 断言，包一层 Material 提供绘制祖先）
           if (tool.parameters.isNotEmpty)
             Theme(
               data: theme.copyWith(dividerColor: Colors.transparent),
-              child: ExpansionTile(
-                tilePadding: const EdgeInsets.symmetric(horizontal: 12),
-                childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                dense: true,
-                title: Text(
-                  '参数定义（${tool.parameters.length} 项）',
-                  style: theme.textTheme.bodySmall,
-                ),
-                children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      const JsonEncoder.withIndent('  ')
-                          .convert(tool.parameters),
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontFamily: 'Monocraft',
-                        fontSize: 10,
-                        color: colorScheme.onSurfaceVariant,
+              child: Material(
+                type: MaterialType.transparency,
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  dense: true,
+                  title: Text(
+                    '参数定义（${tool.parameters.length} 项）',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        const JsonEncoder.withIndent('  ')
+                            .convert(tool.parameters),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'Monocraft',
+                          fontSize: 10,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           // 试运行区（展开态：参数表单 + 响应）

@@ -1,7 +1,9 @@
 import 'package:ai_chat_app/models/pending_tool.dart';
 import 'package:ai_chat_app/providers/http_tool_provider.dart';
 import 'package:ai_chat_app/providers/pending_tool_provider.dart';
+import 'package:ai_chat_app/providers/theme_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
+import 'package:ai_chat_app/services/settings_service.dart';
 import 'package:ai_chat_app/widgets/tool_approval_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,12 +28,14 @@ void main() {
   late DatabaseService db;
   late PendingToolProvider pendingProvider;
   late HttpToolProvider httpProvider;
+  late SharedPreferences prefs;
 
   setUp(() async {
     final inMemory = await openTestDb();
     db = DatabaseService.instance;
     await db.initForTest(inMemory);
     SharedPreferences.setMockInitialValues({});
+    prefs = await SharedPreferences.getInstance();
     httpProvider = HttpToolProvider(database: db);
     await httpProvider.load();
     pendingProvider =
@@ -55,14 +59,20 @@ void main() {
         createdAt: 1000,
       );
 
-  Widget wrap(Widget child) => MultiProvider(
-        providers: [
-          ChangeNotifierProvider<HttpToolProvider>.value(value: httpProvider),
-          ChangeNotifierProvider<PendingToolProvider>.value(
-              value: pendingProvider),
-        ],
-        child: MaterialApp(home: Scaffold(body: ListView(children: [child]))),
-      );
+  Widget wrap(Widget child) {
+    final settings = SettingsService(prefs);
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<HttpToolProvider>.value(value: httpProvider),
+        ChangeNotifierProvider<PendingToolProvider>.value(
+            value: pendingProvider),
+        ChangeNotifierProvider<ThemeProvider>(
+          create: (_) => ThemeProvider(settings: settings),
+        ),
+      ],
+      child: MaterialApp(home: Scaffold(body: ListView(children: [child]))),
+    );
+  }
 
   group('ToolApprovalCard 渲染', () {
     testWidgets('渲染工具名/方法徽标/描述/URL', (tester) async {
