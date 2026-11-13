@@ -8,7 +8,22 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.31.3**（2026-11-12 发布）
+**当前版本：v2.32.0**（2026-11-13 发布）
+
+v2.32.0 在 v2.31.3 基础上新增（feat/self-iterating-tools 分支，用户需求「自我迭代工具」→ MINOR）：
+
+- **自我迭代工具（本版亮点）**：模型经 `manage_http_tool` 工具设计并提交新 HTTP 工具（name/description/URL 模板/method/参数 schema 全量定义），用户在聊天流审批卡片上试运行后点「通过」才落库生效——工具的生产者从人扩展到模型，自我进化闭环
+- **审批闸门在工具层**：execute 只做校验 + 入 pending_tools 队列，绝不直接落 http_tools；审批通过前工具不存在于任何 registry，模型无法绕过审批自己调用
+- **六重校验**：必填字段 + 工具名规范（OpenAI function name）+ 三重查重（内置工具名清单/已有 HTTP 工具/待审批队列，防覆盖内置工具）+ URL 协议白名单（仅 http/https）+ method 白名单 + JSON 合法性；每会话待审批上限 5 条防刷屏
+- **DB v22**：pending_tools 表（会话删除级联删；不进备份——审批是过程态；杀 app 重进卡片还在还能批）
+- **审批卡片**（ToolApprovalCard）：定义全文 + 参数折叠区 + 试运行（按 parameters_json 动态生成参数表单，HttpToolHandler 临时实例真实发请求，响应截断展示）+ 通过/拒绝；已处理自动消失（ToolCallBlock 调用记录可溯）
+- **会话内即时生效**：ChatProvider.refreshToolCatalog 热更新工具目录，审批通过后当前会话下一轮请求的 tools 数组自动带上新工具（orchestrator 每轮实时求值，零改动），无需退出会话
+- **设置页「Tools」tag**：原「HTTP 工具」tab 合并扩充为三区——待审批（跨会话聚合）+ 内置工具只读（31 个）+ HTTP 工具管理
+- **预置示范 Agent「工具匠」**（toolsmith.md）：引导问清 API 细节 → 设计定义 → 提交审批 → 审批后验证；所有 Agent 编辑器可勾选 manage_http_tool
+- **防失控边界**：只能新增不能改删已有工具；不能给自己/别的 Agent 授权工具；重名防覆盖；URL 仅 http/https
+- 测试：1301 项（+20：工具校验 10 + 审批流转 3 + 卡片 UI 4 + 工具匠资产 2 + builtinToolNames 清单防漂移 1；唯一失败 agent_picker_sheet 键盘滚动为存量，stash 基线复跑判定归属 da7d6c9 非本次引入）；analyze 零 error/warning
+
+### v2.31.3（2026-11-12）
 
 v2.31.3 在 v2.31.2 基础上修复（fix/draft-resurrect-after-send 分支，用户报发送后杀 app 重进已发文字复活在输入框 → PATCH）：
 
