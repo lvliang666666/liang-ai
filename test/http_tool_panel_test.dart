@@ -1,10 +1,15 @@
 import 'package:ai_chat_app/models/http_tool.dart';
+import 'package:ai_chat_app/models/pending_tool.dart';
 import 'package:ai_chat_app/pages/http_tool_panel.dart';
 import 'package:ai_chat_app/providers/http_tool_provider.dart';
+import 'package:ai_chat_app/providers/pending_tool_provider.dart';
+import 'package:ai_chat_app/providers/theme_provider.dart';
 import 'package:ai_chat_app/services/database_service.dart';
+import 'package:ai_chat_app/services/settings_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// 假 HttpToolProvider：不碰真实 DB（sqflite_ffi 异步 IO 在 widget 测试
@@ -71,6 +76,24 @@ HttpTool seedTool({String name = 'query_weather', bool enabled = true}) =>
       updatedAt: 1,
     );
 
+/// 假 PendingToolProvider：loaded=true 空列表（面板待审批区不渲染）
+class _FakePendingToolProvider extends PendingToolProvider {
+  _FakePendingToolProvider()
+      : super(database: DatabaseService.instance, httpTools: _fakeHttp());
+
+  static HttpToolProvider _fakeHttp() =>
+      HttpToolProvider(database: DatabaseService.instance);
+
+  @override
+  Future<void> load() async {}
+
+  @override
+  bool get loaded => true;
+
+  @override
+  List<PendingTool> get tools => const [];
+}
+
 void main() {
   setUpAll(() {
     sqfliteFfiInit();
@@ -78,45 +101,74 @@ void main() {
   });
 
   late _FakeHttpToolProvider provider;
+  late SharedPreferences prefs;
 
-  setUp(() {
+  setUp(() async {
     provider = _FakeHttpToolProvider();
+    SharedPreferences.setMockInitialValues({});
+    prefs = await SharedPreferences.getInstance();
   });
 
   tearDown(() {
     provider.dispose();
   });
 
-  Widget wrap(Widget child) => MultiProvider(
-        providers: [
-          ChangeNotifierProvider<HttpToolProvider>.value(value: provider),
-        ],
-        child: MaterialApp(home: Scaffold(body: child)),
-      );
+  Widget wrap(Widget child) {
+    // 自我迭代批次：面板三区合一后依赖 PendingToolProvider（待审批区）
+    // + ThemeProvider（审批卡片圆角）。Fake pending：loaded=true 空列表
+    //（待审批区不渲染，不干扰原断言）
+    final pending = _FakePendingToolProvider();
+    final settings = SettingsService(prefs);
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<HttpToolProvider>.value(value: provider),
+        ChangeNotifierProvider<PendingToolProvider>.value(value: pending),
+        ChangeNotifierProvider<ThemeProvider>(
+          create: (_) => ThemeProvider(settings: settings),
+        ),
+      ],
+      child: MaterialApp(home: Scaffold(body: child)),
+    );
+  }
 
   group('HttpToolPanel', () {
-    testWidgets('空列表：显示空态文案', (tester) async {
+    /// 滚到面板底部（区 3 HTTP 工具）：三区合一后 31 个内置工具
+    /// ListTile 把区 3 挤出首屏，ListView 惰性构建下区 3 子树不构建，
+    /// 断言前必须滚到底（jumpTo 大值 + settle）
+    Future<void> scrollToHttpSection(WidgetTester tester) async {
+      tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position
+          .jumpTo(10000);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('空列表：显示空态文案（滚到区 3）', (tester) async {
       await tester.pumpWidget(wrap(const HttpToolPanel()));
       await tester.pump();
+      await scrollToHttpSection(tester);
 
-      expect(find.textContaining('还没有自定义工具'), findsOneWidget);
+      expect(find.textContaining('还没有自定义 HTTP 工具'), findsOneWidget);
       expect(find.text('新建'), findsOneWidget);
     });
 
-    testWidgets('有工具：列表显示名称/方法徽章/描述', (tester) async {
+    testWidgets('有工具：列表显示名称/方法徽章/描述（滚到区 3）', (tester) async {
       provider.seed([seedTool()]);
       await tester.pumpWidget(wrap(const HttpToolPanel()));
       await tester.pump();
+      await scrollToHttpSection(tester);
 
       expect(find.text('query_weather'), findsOneWidget);
       expect(find.text('GET'), findsOneWidget);
       expect(find.text('查询天气'), findsOneWidget);
     });
 
-    testWidgets('启用开关：切换后走 update 且 enabled 翻转', (tester) async {
+    testWidgets('启用开关：切换后走 update 且 enabled 翻转（滚到区 3）',
+        (tester) async {
       provider.seed([seedTool()]);
       await tester.pumpWidget(wrap(const HttpToolPanel()));
       await tester.pump();
+      await scrollToHttpSection(tester);
 
       await tester.tap(find.byType(Switch));
       await tester.pump();
@@ -126,10 +178,11 @@ void main() {
       expect(provider.updated.single.id, 'seed-query_weather');
     });
 
-    testWidgets('删除：确认弹窗后删除', (tester) async {
+    testWidgets('删除：确认弹窗后删除（滚到区 3）', (tester) async {
       provider.seed([seedTool()]);
       await tester.pumpWidget(wrap(const HttpToolPanel()));
       await tester.pump();
+      await scrollToHttpSection(tester);
 
       await tester.tap(find.byTooltip('删除'));
       await tester.pumpAndSettle();
@@ -141,9 +194,10 @@ void main() {
       expect(provider.deleted, ['seed-query_weather']);
     });
 
-    testWidgets('新建入口：点新建打开编辑页', (tester) async {
+    testWidgets('新建入口：点新建打开编辑页（滚到区 3）', (tester) async {
       await tester.pumpWidget(wrap(const HttpToolPanel()));
       await tester.pump();
+      await scrollToHttpSection(tester);
 
       await tester.tap(find.text('新建'));
       await tester.pumpAndSettle();

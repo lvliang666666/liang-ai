@@ -124,7 +124,8 @@ class ChatProvider extends ChangeNotifier {
   /// toolNames null = 全部目录工具（默认助手/迁移老数据）；
   /// [] = 无工具；非空 = 指定子集（目录中不存在的名字忽略）。
   /// memory_save 工具按当前 Agent 注入来源名（记忆溯源）；
-  /// search_history 工具注入当前会话 id（检索时排除本会话）。
+  /// search_history 工具注入当前会话 id（检索时排除本会话）；
+  /// manage_http_tool 注入当前会话 id（pending 归属 + 审批卡片定位）。
   /// run_skill 仅在宿主提供 AgentService 时注册（T2 链式编排）。
   static ToolRegistry _buildRegistry(
       Agent? agent, List<ToolHandler> catalog,
@@ -140,7 +141,9 @@ class ChatProvider extends ChangeNotifier {
             ? MemorySaveTool(sourceAgent: agent?.name)
             : t is SearchHistoryTool
                 ? SearchHistoryTool(currentSessionId: sessionId)
-                : t,
+                : t is ManageHttpToolTool
+                    ? ManageHttpToolTool(sessionId: sessionId)
+                    : t,
     ]);
     if (runSkillDelegate != null) {
       registry.register(RunSkillTool(runSkillDelegate));
@@ -1075,6 +1078,19 @@ class ChatProvider extends ChangeNotifier {
     _tools = _buildRegistry(agent, _toolCatalog,
         sessionId: _session.id, runSkillDelegate: _runSkillDelegate);
     await _db.updateSessionAgent(_session.id, agent?.id);
+    _notify();
+  }
+
+  /// 工具目录热更新（自我迭代批次：审批通过的新 HTTP 工具立即可用）
+  ///
+  /// 宿主（HomePage 审批回调）重读 HttpToolProvider.enabledTools 组装
+  /// 新目录后调用。重建注册表（保留当前 Agent 白名单语义），下一轮
+  /// 请求的 tools 数组自动带上新工具——orchestrator 每轮
+  /// resolveToolsPayload() 实时求值，无需中断当前流式。
+  void refreshToolCatalog(List<ToolHandler> newCatalog) {
+    _toolCatalog = newCatalog;
+    _tools = _buildRegistry(_agent, _toolCatalog,
+        sessionId: _session.id, runSkillDelegate: _runSkillDelegate);
     _notify();
   }
 

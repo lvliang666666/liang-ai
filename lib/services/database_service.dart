@@ -11,6 +11,7 @@ import '../models/context_summary.dart';
 import '../models/doc_chunk.dart';
 import '../models/http_tool.dart';
 import '../models/memory.dart';
+import '../models/pending_tool.dart';
 import '../models/provider_profile.dart';
 import '../models/session_summary.dart';
 import '../models/agent.dart';
@@ -26,7 +27,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 21;
+  static const int dbVersion = 22;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -154,6 +155,7 @@ class DatabaseService {
     await _createCardsTable(db);
     await _createDocChunksTable(db);
     await _createCommitmentsTable(db);
+    await _createPendingToolsTable(db);
     await _createFtsTables(db);
   }
 
@@ -303,6 +305,12 @@ class DatabaseService {
       // v20 → v21：承诺跟进（P3）——新建 commitments 表（对话中提取的
       // 待办/承诺：到期日 + 状态流转 + 跟进语；deleteSession 级联删）
       await _createCommitmentsTable(db);
+    }
+    if (oldVersion < 22 && newVersion >= 22) {
+      // v21 → v22：自我迭代工具——新建 pending_tools 表（模型经
+      // manage_http_tool 提交的待审批工具定义；用户审批通过才落
+      // http_tools 生效；deleteSession 级联删；不进备份）
+      await _createPendingToolsTable(db);
     }
   }
 
@@ -538,6 +546,34 @@ class DatabaseService {
     );
   }
 
+  /// 待审批工具表（自我迭代批次）：模型经 manage_http_tool 提交的
+  /// 工具定义，用户审批通过才落 http_tools 生效
+  ///
+  /// - 会话删除级联删（审批上下文随会话消失）
+  /// - 不进备份（审批是过程态，备份恢复后让模型重新提交）
+  /// - 上限 5 条/会话（防模型刷屏，工具层校验）
+  static Future<void> _createPendingToolsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS pending_tools (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        url_template TEXT NOT NULL DEFAULT '',
+        method TEXT NOT NULL DEFAULT 'GET',
+        headers_json TEXT NOT NULL DEFAULT '',
+        body_template TEXT NOT NULL DEFAULT '',
+        parameters_json TEXT NOT NULL DEFAULT '',
+        response_path TEXT NOT NULL DEFAULT '',
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_pending_tools_session '
+      'ON pending_tools(session_id, created_at)',
+    );
+  }
+
   /// chunks_fts：doc_chunks 的 FTS5 索引（bigram 自管，同 messages_fts 模式）
   ///
   /// rowid 映射直接用 doc_chunks.id（TEXT）→ chunks_fts_rowid 桥表。
@@ -660,6 +696,8 @@ class DatabaseService {
       await txn.delete('session_summaries',
           where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('commitments', where: 'session_id = ?', whereArgs: [id]);
+      // 自我迭代批次：待审批工具级联删（审批上下文随会话消失）
+      await txn.delete('pending_tools', where: 'session_id = ?', whereArgs: [id]);
       await txn.delete('sessions', where: 'id = ?', whereArgs: [id]);
     });
   }
@@ -1286,6 +1324,56 @@ class DatabaseService {
   Future<void> deleteHttpTool(String id) async {
     final db = await database;
     await db.delete('http_tools', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ===== PendingTools（自我迭代批次：待审批工具定义）=====
+
+  /// 插入待审批工具（同 id replace——模型重提同名场景）
+  Future<void> insertPendingTool(PendingTool tool) async {
+    final db = await database;
+    await db.insert('pending_tools', tool.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  /// 全部待审批工具（按创建时间正序）
+  Future<List<PendingTool>> getAllPendingTools() async {
+    final db = await database;
+    final rows = await db.query('pending_tools', orderBy: 'created_at ASC');
+    return rows.map(PendingTool.fromMap).toList();
+  }
+
+  /// 指定会话的待审批工具（审批卡片渲染用）
+  Future<List<PendingTool>> getPendingToolsForSession(String sessionId) async {
+    final db = await database;
+    final rows = await db.query('pending_tools',
+        where: 'session_id = ?', whereArgs: [sessionId],
+        orderBy: 'created_at ASC');
+    return rows.map(PendingTool.fromMap).toList();
+  }
+
+  /// 按工具名查待审批记录（重名校验 + 卡片按 name 关联消息）
+  Future<PendingTool?> getPendingToolByName(
+      String sessionId, String name) async {
+    final db = await database;
+    final rows = await db.query('pending_tools',
+        where: 'session_id = ? AND name = ?', whereArgs: [sessionId, name],
+        limit: 1);
+    return rows.isEmpty ? null : PendingTool.fromMap(rows.first);
+  }
+
+  /// 删除待审批记录（审批通过/拒绝共用）
+  Future<void> deletePendingTool(String id) async {
+    final db = await database;
+    await db.delete('pending_tools', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// 指定会话的待审批数量（上限校验用）
+  Future<int> countPendingTools(String sessionId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+        'SELECT COUNT(*) AS c FROM pending_tools WHERE session_id = ?',
+        [sessionId]);
+    return Sqflite.firstIntValue(result) ?? 0;
   }
 
   // ===== ContextSummaries（F2 分层上下文压缩）=====

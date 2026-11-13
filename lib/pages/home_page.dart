@@ -13,6 +13,7 @@ import '../models/provider_profile.dart';
 import '../models/agent.dart' as agent_model;
 import '../providers/chat_provider.dart';
 import '../providers/http_tool_provider.dart';
+import '../providers/pending_tool_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/agent_provider.dart';
@@ -85,6 +86,10 @@ class _HomePageState extends State<HomePage> {
 
   // 聊天态：当前会话的 ChatProvider（null = 空闲态）
   ChatProvider? _chat;
+
+  // 自我迭代批次（v2.32.0）：PendingToolProvider 监听句柄（审批通过
+  // → 会话内即时生效；_enterChat 挂 / dispose 摘）
+  VoidCallback? _pendingToolsSub;
 
   // 空闲态的预选状态（tags 行展示与切换）
   agent_model.Agent? _selectedAgent; // null = 默认助手
@@ -164,12 +169,41 @@ class _HomePageState extends State<HomePage> {
     _shareSubscription?.cancel();
     _shareReceive.dispose();
     _teardownWidgetPusher();
+    _teardownPendingToolsSub();
     _inputController.dispose();
     _inputFocusNode.dispose();
     _drawerBatchMode.dispose();
     _chat?.dispose();
     _chat = null;
     super.dispose();
+  }
+
+  /// 自我迭代批次：摘除 PendingToolProvider 监听（dispose 调用）
+  void _teardownPendingToolsSub() {
+    final sub = _pendingToolsSub;
+    if (sub != null) {
+      try {
+        context.read<PendingToolProvider>().removeListener(sub);
+      } catch (_) {
+        // dispose 期间查 Provider 可能不安全（deactivated 后），
+        // 监听器随 provider 销毁自动失效，静默忽略
+      }
+      _pendingToolsSub = null;
+    }
+  }
+
+  /// 自我迭代批次：审批状态变化回调——有会话在聊天态且 pending 数量
+  /// 变化（通过/拒绝都会减）时重读 HTTP 工具热更新注册表。
+  /// 只在 approve 后工具目录才会变（reject 不动 http_tools），但
+  /// listener 拿不到变化明细，重读目录是幂等轻操作（千级以内）
+  void _onPendingToolsChanged() {
+    final chat = _chat;
+    if (chat == null || !mounted) return;
+    final httpTools = context.read<HttpToolProvider>().enabledTools;
+    chat.refreshToolCatalog([
+      ...builtinTools,
+      for (final t in httpTools) HttpToolHandler(t),
+    ]);
   }
 
   /// P2：初始化 widget 推送器（读 SharedPreferences → 订阅会话变化 → 首推）
@@ -677,6 +711,15 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _chat = chat;
     });
+    // 自我迭代批次（v2.32.0）：审批通过 → 会话内即时生效。
+    // 监听 PendingToolProvider：approve() 落库后 notifyListeners，
+    // 这里重读 HTTP 工具组装新目录热更新当前会话注册表（下一轮请求
+    // 的 tools 数组自动带上新工具，无需退出会话）
+    _teardownPendingToolsSub();
+    _pendingToolsSub = _onPendingToolsChanged;
+    context
+        .read<PendingToolProvider>()
+        .addListener(_onPendingToolsChanged);
     // F10：空闲态预选的 Agent 变量带入新会话（含人格预设名回显）
     if (initialAgentVariables.isNotEmpty && agent != null) {
       chat.setAgentVariables(initialAgentVariables);

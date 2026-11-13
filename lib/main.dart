@@ -10,6 +10,7 @@ import 'models/provider_profile.dart';
 import 'pages/home_page.dart';
 import 'providers/http_tool_provider.dart';
 import 'providers/memory_provider.dart';
+import 'providers/pending_tool_provider.dart';
 import 'providers/provider_provider.dart';
 import 'providers/sessions_provider.dart';
 import 'providers/agent_provider.dart';
@@ -114,6 +115,15 @@ class AiChatApp extends StatelessWidget {
         ChangeNotifierProvider(
           create: (_) => HttpToolProvider(
             database: DatabaseService.instance,
+          ),
+        ),
+        // 自我迭代批次：待审批工具（依赖 HttpToolProvider——审批通过
+        // 时通知其重载；ProxyProvider 不可用（HttpToolProvider 非
+        // ChangeNotifier 依赖注入形态），直接引用上方实例）
+        ChangeNotifierProvider(
+          create: (context) => PendingToolProvider(
+            database: DatabaseService.instance,
+            httpTools: context.read<HttpToolProvider>(),
           ),
         ),
       ],

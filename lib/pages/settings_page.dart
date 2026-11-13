@@ -43,7 +43,7 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  static const _tabs = ['外观', 'Agent 管理', '记忆管理', '卡片库', 'HTTP 工具', 'API 配置', '对话参数', '快捷操作', '备份', '说明'];
+  static const _tabs = ['外观', 'Agent 管理', '记忆管理', '卡片库', 'Tools', 'API 配置', '对话参数', '快捷操作', '备份', '说明'];
 
   late final SettingsService _settings;
   late final PageController _pageController;
