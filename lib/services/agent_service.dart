@@ -23,6 +23,8 @@ class AgentService {
     'assets/agents/invoice_extractor.md',
     'assets/agents/contact_extractor.md',
     'assets/agents/todo_extractor.md',
+    // 自我迭代批次（v2.32.0）：工具匠——示范 manage_http_tool 用法
+    'assets/agents/toolsmith.md',
   ];
 
   /// 内置 Agent 以资产为准入库（幂等，随版本演进）

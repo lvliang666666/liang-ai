@@ -1,8 +1,12 @@
 import 'package:ai_chat_app/models/agent.dart';
 import 'package:ai_chat_app/services/agent_parser.dart';
+import 'package:ai_chat_app/services/agent_service.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   group('AgentParser front matter', () {
     test('完整字段解析（含 tools 子集）', () {
       const raw = '''
@@ -108,6 +112,25 @@ tools: calculate
       final agent = AgentParser.parseToAgent('x', '正文', isBuiltin: false);
       expect(agent.isBuiltin, isFalse);
       expect(agent.name, 'x'); // 无 name 时回退 id
+    });
+  });
+
+  group('工具匠资产（自我迭代批次）', () {
+    test('toolsmith.md 资产存在且声明 manage_http_tool', () async {
+      final raw = await rootBundle.loadString('assets/agents/toolsmith.md');
+      final agent = AgentParser.parseToAgent('toolsmith', raw);
+      expect(agent.name, '工具匠');
+      expect(agent.toolNames, contains('manage_http_tool'));
+      // 工具匠不该有全部工具（白名单语义：只给自我迭代 + 记忆）
+      expect(agent.toolNames, isNot(isNull));
+      expect(agent.toolNames!.length, lessThan(5));
+    });
+
+    test('builtinAssets 清单含 toolsmith（幂等入库覆盖）', () {
+      expect(
+        AgentService.builtinAssets,
+        contains('assets/agents/toolsmith.md'),
+      );
     });
   });
 

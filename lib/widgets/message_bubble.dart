@@ -10,7 +10,9 @@ import 'package:share_plus/share_plus.dart';
 
 import '../models/chat_message.dart';
 import '../models/doc_chunk.dart';
+import '../models/pending_tool.dart';
 import '../models/tool_call.dart';
+import '../providers/pending_tool_provider.dart';
 import '../services/file_export_service.dart';
 import '../services/output_contract.dart';
 import '../services/settings_service.dart';
@@ -23,6 +25,7 @@ import 'code_block_widget.dart';
 import 'output_contract_card.dart';
 import 'swipe_action.dart';
 import 'thinking_block.dart';
+import 'tool_approval_card.dart';
 import 'tool_call_block.dart';
 
 /// 消息气泡：用户右侧蓝色，助手左侧含思考块 + 工具卡片 + Markdown
@@ -134,6 +137,37 @@ class _MessageBubbleState extends State<MessageBubble> {
   bool get _hasActiveSelection =>
       _selectedText != null && _selectedText!.isNotEmpty;
 
+  /// 自我迭代审批关联（v2.32.0）：本消息 manage_http_tool 调用对应的
+  /// pending 记录（null = 无关联调用 / pending 已处理）。
+  ///
+  /// 关联规则：调用参数里的 name → PendingToolProvider.forSession 里
+  /// 同名记录（工具层已保证会话内 name 唯一——重名提交被拒）。
+  /// build 里调用（watch provider，审批状态变化即时刷新）。
+  PendingTool? _pendingForMessage(BuildContext context) {
+    final message = widget.message;
+    final calls = message.toolCalls;
+    if (calls.isEmpty) return null;
+    // 找本消息的 manage_http_tool 调用（可能与其他工具同轮混合）
+    final manageCalls = calls
+        .where((c) => c.name == 'manage_http_tool')
+        .toList();
+    if (manageCalls.isEmpty) return null;
+    final provider = context.watch<PendingToolProvider>();
+    if (!provider.loaded) return null;
+    final sessionId = message.sessionId;
+    final pendings = provider.forSession(sessionId);
+    if (pendings.isEmpty) return null;
+    // 按调用顺序取第一个仍有 pending 的（同轮多次提交不同工具的场景）
+    for (final call in manageCalls) {
+      final name =
+          (call.arguments['name'] as String?)?.trim() ?? '';
+      for (final p in pendings) {
+        if (p.name == name) return p;
+      }
+    }
+    return null;
+  }
+
   @override
   void dispose() {
     _selectionNotifier.dispose();
@@ -195,6 +229,10 @@ class _MessageBubbleState extends State<MessageBubble> {
         context.watch<SettingsService>().swipeActions;
     final message = widget.message;
     final isStreaming = widget.isStreaming;
+    // 自我迭代审批关联（v2.32.0）：本消息的 manage_http_tool 调用名
+    // → 当前会话 pending 记录（watch PendingToolProvider：审批状态
+    // 变化即时刷新卡片）。无关联调用或 pending 已处理 = null 不渲染
+    final pendingForMessage = _pendingForMessage(context);
 
     if (message.isUser) {
       final hasImages = message.attachments.any((a) => a.isImage);
@@ -432,6 +470,12 @@ class _MessageBubbleState extends State<MessageBubble> {
                     results: widget.toolResults,
                     executing: widget.toolExecuting,
                   ),
+                // 自我迭代审批卡片（v2.32.0）：本消息发起过
+                // manage_http_tool 调用时，按工具名关联 pending 记录
+                // 渲染审批卡片（试运行 + 通过/拒绝）。pending 已处理
+                // 则不渲染（ToolCallBlock 里的调用记录已可溯）
+                if (pendingForMessage != null)
+                  ToolApprovalCard(pending: pendingForMessage),
                 // 正文：选择模式 = SelectionArea 包住 Markdown（渲染
                 // 原样保留，长按选词/拖手柄/系统工具条复制）；常规 =
                 // 裸 Markdown。GptMarkdown 的段落是 Text/RichText，

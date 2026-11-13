@@ -1,6 +1,7 @@
 import '../tool_registry.dart';
 import 'date_tools.dart';
 import 'device_tools.dart';
+import 'manage_http_tool_tool.dart';
 import 'math_tools.dart';
 import 'memory_tools.dart';
 import 'mystic/bazi_tools.dart';
@@ -13,6 +14,7 @@ import 'unit_tools.dart';
 
 export 'date_tools.dart';
 export 'device_tools.dart';
+export 'manage_http_tool_tool.dart';
 export 'math_tools.dart';
 export 'memory_tools.dart';
 export 'mystic/bazi_tools.dart';
@@ -53,6 +55,9 @@ const builtinTools = <ToolHandler>[
   MemoryForgetTool(),
   // 情景记忆（M4：历史会话摘要检索；currentSessionId 注册时注入）
   SearchHistoryTool(),
+  // 自我迭代（v2.32.0：模型设计新 HTTP 工具，审批通过才生效；
+  // sessionId 注册时注入——pending 归属 + 审批卡片定位）
+  ManageHttpToolTool(),
   // 玄学（排盘出事实，解读交给模型）
   LunarCalendarTool(),
   BaziTool(),

@@ -6,10 +6,15 @@ import 'package:provider/provider.dart';
 
 import '../models/http_tool.dart';
 import '../providers/http_tool_provider.dart';
+import '../providers/pending_tool_provider.dart';
+import '../services/tools/builtin_tools.dart';
 import '../utils/haptics.dart';
 import '../widgets/app_toast.dart';
+import '../widgets/tool_approval_card.dart';
 
-/// HTTP 工具管理面板（T1）：查看/新建/编辑/删除自定义 HTTP 工具
+/// 工具管理面板（自我迭代批次更名）：三区合一——
+/// ① 待审批（模型提交的新工具，审批卡片内嵌）② 内置工具（只读）
+/// ③ HTTP 工具（查看/新建/编辑/删除）
 ///
 /// 嵌入设置页 PageView 作为独立 tag，无自带 Scaffold。
 /// 编辑器为整页弹窗（字段多，弹窗放不下）。
@@ -27,145 +32,216 @@ class _HttpToolPanelState extends State<HttpToolPanel> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final provider = context.watch<HttpToolProvider>();
+    final pendingProvider = context.watch<PendingToolProvider>();
 
     // 首帧后触发加载（build 期间同步调 load + notifyListeners 会抛
     // markNeedsBuild during build，widget 测试必崩）
-    if (!provider.loaded && !_loadRequested) {
+    if ((!provider.loaded || !pendingProvider.loaded) && !_loadRequested) {
       _loadRequested = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) provider.load();
+        if (!mounted) return;
+        provider.load();
+        pendingProvider.load();
       });
     }
 
-    if (!provider.loaded) {
+    if (!provider.loaded || !pendingProvider.loaded) {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return Column(
+    // 三区合一：待审批（有才显示）→ 内置工具（只读）→ HTTP 工具（可编辑）
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-          child: Row(
+        // ===== 区 1：待审批（自我迭代批次）=====
+        if (pendingProvider.tools.isNotEmpty) ...[
+          Row(
             children: [
+              Icon(Icons.pending_actions,
+                  size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
               Expanded(
-                child: Text('自定义 HTTP 工具', style: theme.textTheme.titleSmall),
-              ),
-              FilledButton.icon(
-                onPressed: () {
-                  Haptics.light();
-                  _openEditor(context);
-                },
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('新建'),
+                child: Text('待审批（${pendingProvider.tools.length}）',
+                    style: theme.textTheme.titleSmall),
               ),
             ],
           ),
+          const SizedBox(height: 4),
+          Text(
+            '模型在对话中提交的新工具，试运行后点「通过」生效',
+            style: theme.textTheme.bodySmall
+                ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
+          for (final p in pendingProvider.tools)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ToolApprovalCard(pending: p),
+            ),
+          const SizedBox(height: 16),
+        ],
+        // ===== 区 2：内置工具（只读）=====
+        Row(
+          children: [
+            Icon(Icons.widgets_outlined,
+                size: 18, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text('内置工具（${builtinTools.length}）',
+                  style: theme.textTheme.titleSmall),
+            ),
+          ],
         ),
-        Expanded(
-          child: provider.tools.isEmpty
-              ? Center(
-                  child: Text(
-                    '还没有自定义工具\n把任意 HTTP API 注册为 Agent 工具',
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant),
-                  ),
-                )
-              : ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+        const SizedBox(height: 4),
+        Text(
+          '随 App 内置，不可修改；在 Agent 编辑器里按 Agent 授权',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        ...builtinTools.map(
+          (t) => ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.extension_outlined,
+                size: 20, color: theme.colorScheme.onSurfaceVariant),
+            title: Text(t.name,
+                style: const TextStyle(
+                    fontSize: 13, fontFamily: 'Monocraft')),
+            subtitle: Text(
+              t.description,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        // ===== 区 3：HTTP 工具（可编辑，原 T1 功能）=====
+        Row(
+          children: [
+            Icon(Icons.http_outlined,
+                size: 18, color: theme.colorScheme.onSurfaceVariant),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text('HTTP 工具（${provider.tools.length}）',
+                  style: theme.textTheme.titleSmall),
+            ),
+            FilledButton.icon(
+              onPressed: () {
+                Haptics.light();
+                _openEditor(context);
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('新建'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '把任意 HTTP API 注册为 Agent 工具；模型也能在对话中提交新工具（审批后出现在这里）',
+          style: theme.textTheme.bodySmall
+              ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 8),
+        if (provider.tools.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                '还没有自定义 HTTP 工具',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+          )
+        else
+          for (final t in provider.tools)
+            Card(
+              elevation: 0,
+              color: theme.colorScheme.surfaceContainerHighest
+                  .withValues(alpha: 0.5),
+              child: ListTile(
+                leading: Icon(
+                  Icons.http_outlined,
+                  color: t.enabled
+                      ? theme.colorScheme.primary
+                      : theme.colorScheme.onSurfaceVariant,
+                ),
+                title: Row(
                   children: [
-                    for (final t in provider.tools)
-                      Card(
-                        elevation: 0,
-                        color: theme.colorScheme.surfaceContainerHighest
-                            .withValues(alpha: 0.5),
-                        child: ListTile(
-                          leading: Icon(
-                            Icons.http_outlined,
-                            color: t.enabled
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurfaceVariant,
-                          ),
-                          title: Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  t.name,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                      fontSize: 13, fontFamily: 'Monocraft'),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 6, vertical: 1),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.primaryContainer,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  t.method.toUpperCase(),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color:
-                                        theme.colorScheme.onPrimaryContainer,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          subtitle: Text(
-                            t.description.isEmpty ? t.urlTemplate : t.description,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              // 启用开关（禁用 = 不进工具目录）
-                              Switch(
-                                value: t.enabled,
-                                onChanged: (v) {
-                                  Haptics.selection();
-                                  provider.update(
-                                      t.copyWith(enabled: v, updatedAt: DateTime.now().millisecondsSinceEpoch));
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.edit_outlined,
-                                    size: 20),
-                                tooltip: '编辑',
-                                onPressed: () {
-                                  Haptics.light();
-                                  _openEditor(context, tool: t);
-                                },
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.delete_outline,
-                                    size: 20),
-                                tooltip: '删除',
-                                onPressed: () {
-                                  Haptics.medium();
-                                  _confirmDelete(context, t);
-                                },
-                              ),
-                            ],
-                          ),
+                    Flexible(
+                      child: Text(
+                        t.name,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 13, fontFamily: 'Monocraft'),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        t.method.toUpperCase(),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: theme.colorScheme.onPrimaryContainer,
                         ),
                       ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '· 工具 = URL 模板 + 参数定义 + 响应截取规则\n'
-                      '· 模型按参数定义填参，{param} 占位符自动替换\n'
-                      '· 在 Agent 编辑器的「可用工具」里按 Agent 授权\n'
-                      '· 请求超时 15 秒，响应超长自动截断',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                          height: 1.6),
                     ),
                   ],
                 ),
+                subtitle: Text(
+                  t.description.isEmpty ? t.urlTemplate : t.description,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // 启用开关（禁用 = 不进工具目录）
+                    Switch(
+                      value: t.enabled,
+                      onChanged: (v) {
+                        Haptics.selection();
+                        provider.update(t.copyWith(
+                            enabled: v,
+                            updatedAt: DateTime.now().millisecondsSinceEpoch));
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      tooltip: '编辑',
+                      onPressed: () {
+                        Haptics.light();
+                        _openEditor(context, tool: t);
+                      },
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, size: 20),
+                      tooltip: '删除',
+                      onPressed: () {
+                        Haptics.medium();
+                        _confirmDelete(context, t);
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        const SizedBox(height: 8),
+        Text(
+          '· 工具 = URL 模板 + 参数定义 + 响应截取规则\n'
+          '· 模型按参数定义填参，{param} 占位符自动替换\n'
+          '· 在 Agent 编辑器的「可用工具」里按 Agent 授权\n'
+          '· 请求超时 15 秒，响应超长自动截断',
+          style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant, height: 1.6),
         ),
       ],
     );
