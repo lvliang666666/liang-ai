@@ -8,7 +8,20 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.32.0**（2026-11-13 发布）
+**当前版本：v2.32.1**（2026-11-14 发布）
+
+v2.32.1 在 v2.32.0 基础上修复 + 改版（fix/approval-card-load-gate 分支，用户报 HTTP 工具编辑后执行旧配置 + Tools 页改版四点拍板 → PATCH）：
+
+- **审批卡片三修复**：①审批卡片不弹出——HomePage 启动即加载 PendingToolProvider（e391496，之前全 app 只有设置页 Tools tab 触发 load，聊天界面不加载则卡片永不渲染）；②卡片会话渲染卡死——watch 收窄（先查 manageCalls 再 watch）+ ValueKey 锁 State + forSession 缓存（f2ec470，流式期间全列表逐帧重建 × 每气泡一次 where() 分配 = GC 压力风暴）
+- **Tools 页二级导航改版**（用户四点拍板：A 应用内页跳转 / B 待审批平铺一级页 / B 菜单含复制 URL / A 开关留卡片右侧）：一级页三张类型卡（待审批有才显示）+ 二级页 _PendingToolsPage/_BuiltinToolsPage/_HttpToolsPage + _HttpToolCard 长按菜单（编辑/复制 URL/删除带确认弹窗）（0e68722）
+- **HTTP 工具编辑后活跃会话仍用旧配置（本版主修）**：编辑 URL/请求头/请求体保存后 Agent 调用仍发往旧 URL——根因是会话注册表持有 HttpToolHandler 快照（构造时捕获 tool 对象），之前只有审批回调热更新目录，HttpToolProvider 的 CRUD 变化无人监听。修复 = HomePage 挂 HttpToolProvider 监听（_setupHttpToolsSub，与 _pendingToolsSub 同生命周期），任何变化重读 enabledTools 重建目录，活跃会话下一轮请求立即用新配置；顺带治好同族问题（开关切换/删除后注册表同步更新）（5feaefa）
+- **异常透传**：工具调用失败「请求失败：unknown」→ 中文错误类型（连接超时/DNS 失败/SSL 证书/响应超时等分类）+ URL + HTTP 状态码 + 响应体片段 + 底层错误信息（_describeDioError），远程排查不再抓瞎
+- **编辑器 POST 空体警告**：POST/PUT/PATCH 但请求体模板为空时提示（不阻断——确实存在无 body 的 POST API）
+- **审批卡片补「请求详情」折叠区**：请求头/请求体/响应路径三字段，有才显示，展开可见全部内容——模型漏传字段时审批方可肉眼发现
+- 测试基建：ToolRegistry.handlerByName + ChatProvider.toolRegistryForTest（@visibleForTesting）
+- 测试：1276 项全绿（+14：热更新回归锁 4 + 异常透传 3 + 审批卡片折叠区 2 + Tools 页改版重写 17 用例中的新增项）；analyze 零 error/warning
+
+### v2.32.0（2026-11-13）
 
 v2.32.0 在 v2.31.3 基础上新增（feat/self-iterating-tools 分支，用户需求「自我迭代工具」→ MINOR）：
 
