@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:ai_chat_app/services/document_forge/document_forge_service.dart';
+import 'package:ai_chat_app/services/document_forge/document_palette.dart';
 import 'package:archive/archive.dart';
+import 'package:flutter/material.dart' show Color;
 import 'package:flutter_test/flutter_test.dart';
 
 /// Document Forge 服务单测：五种格式真实落盘 + 内容断言
@@ -85,7 +87,7 @@ void main() {
   });
 
   group('DOCX', () {
-    test('zip 结构含三个必需部件 + 标题/正文转义正确', () async {
+    test('zip 结构含四个必需部件 + 标题/正文转义正确', () async {
       final f = await svc().generate(
           format: 'word',
           title: '报告<标题>',
@@ -97,17 +99,51 @@ void main() {
         '[Content_Types].xml',
         '_rels/.rels',
         'word/document.xml',
+        'word/styles.xml',
       ]));
       final doc =
           utf8.decode(archive.findFile('word/document.xml')!.content);
       expect(doc, contains('报告&lt;标题&gt;'));
       expect(doc, contains('第一段 &amp; 内容'));
-      expect(doc, contains('Heading1'));
+      expect(doc, contains('pStyle w:val="Title"'));
+    });
+
+    test('排版美化：styles.xml 三样式 + 主题色 + 真表格 + 列表符号', () async {
+      final f = await svc().generate(
+          format: 'word',
+          title: 't',
+          lines: ['# 小节', '- 要点', '姓名|年龄'],
+          fileName: 't');
+      final archive = ZipDecoder().decodeBytes(f.readAsBytesSync());
+      final styles =
+          utf8.decode(archive.findFile('word/styles.xml')!.content);
+      expect(styles, contains('w:styleId="Title"'));
+      expect(styles, contains('w:styleId="Heading1"'));
+      expect(styles, contains('w:styleId="Normal"'));
+      expect(styles, contains('4F8CFF'), reason: '默认兜底主题色商务蓝');
+      final doc =
+          utf8.decode(archive.findFile('word/document.xml')!.content);
+      expect(doc, contains('Heading1'), reason: '小节标题用 Heading1 样式');
+      expect(doc, contains('<w:tbl>'), reason: '竖线行渲染为真表格');
+      expect(doc, contains('•'), reason: '列表项带项目符号');
+    });
+
+    test('主题色快照：传入墨韵朱砂色则样式用 B03A2E', () async {
+      final f = await DocumentForgeService(outputDir: tmpDir).generate(
+          format: 'word',
+          title: 't',
+          lines: ['x'],
+          fileName: 't',
+          paletteOverride: DocumentPalette(accent: const Color(0xFFB03A2E)));
+      final archive = ZipDecoder().decodeBytes(f.readAsBytesSync());
+      final styles =
+          utf8.decode(archive.findFile('word/styles.xml')!.content);
+      expect(styles, contains('B03A2E'));
     });
   });
 
   group('XLSX', () {
-    test('inlineStr 单元格 + 列号字母递进', () async {
+    test('inlineStr 单元格（带样式 id）+ 列号字母递进', () async {
       final f = await svc().generate(
           format: 'excel',
           title: 't',
@@ -115,12 +151,18 @@ void main() {
           fileName: 't');
       final archive = ZipDecoder().decodeBytes(f.readAsBytesSync());
       final sheet = utf8.decode(archive.findFile('xl/worksheets/sheet1.xml')!.content);
-      expect(sheet, contains('<c r="A1" t="inlineStr">'));
-      expect(sheet, contains('<c r="C2" t="inlineStr">'));
+      expect(sheet, contains('<c r="A1" t="inlineStr" s="1">'),
+          reason: '表头行用样式 1（加粗+主题底色）');
+      expect(sheet, contains('<c r="C2" t="inlineStr" s='));
       expect(sheet, contains('张三'));
       expect(sheet, contains('北京'));
+      expect(sheet, contains('ySplit="1"'), reason: '冻结首行');
+      expect(sheet, contains('customWidth="1"'), reason: '列宽自适应');
       final wb = utf8.decode(archive.findFile('xl/workbook.xml')!.content);
       expect(wb, contains('Sheet1'));
+      final styles = utf8.decode(archive.findFile('xl/styles.xml')!.content);
+      expect(styles, contains('FFD6E4FF'), reason: '表头底色为主题色淡版');
+      expect(styles, contains('FFEBF2FF'), reason: '斑马纹底色');
     });
 
     test('26 列以上列号进位（AA）', () async {
@@ -136,11 +178,11 @@ void main() {
   });
 
   group('PPTX', () {
-    test('空行分页：两页 slide + 标题要点', () async {
+    test('空行分页：两页 slide + 首页标题页版式', () async {
       final f = await svc().generate(
           format: 'ppt',
           title: 't',
-          lines: ['封面标题', '要点一', '', '第二页标题', '要点 A', '要点 B'],
+          lines: ['封面标题', '副标题一', '', '第二页标题', '要点 A', '要点 B'],
           fileName: 't');
       final archive = ZipDecoder().decodeBytes(f.readAsBytesSync());
       final names = archive.files.map((e) => e.name).toList();
@@ -149,13 +191,17 @@ void main() {
       expect(names, isNot(contains('ppt/slides/slide3.xml')));
       final s1 = utf8.decode(archive.findFile('ppt/slides/slide1.xml')!.content);
       expect(s1, contains('封面标题'));
-      expect(s1, contains('要点一'));
+      expect(s1, contains('副标题一'), reason: '标题页副标题');
+      expect(s1, contains('4F8CFF'), reason: '装饰条用主题色');
       final s2 = utf8.decode(archive.findFile('ppt/slides/slide2.xml')!.content);
       expect(s2, contains('第二页标题'));
       expect(s2, contains('要点 B'));
+      expect(s2, contains('buChar'), reason: '要点带项目符号');
       final pres = utf8.decode(archive.findFile('ppt/presentation.xml')!.content);
       expect(pres, contains('rId1'));
       expect(pres, contains('rId2'));
+      final theme = utf8.decode(archive.findFile('ppt/theme/theme1.xml')!.content);
+      expect(theme, contains('4F8CFF'), reason: 'theme accent1 联动主题色');
     });
   });
 

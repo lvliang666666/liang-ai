@@ -17,10 +17,12 @@ import '../providers/pending_tool_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/agent_provider.dart';
+import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
 import '../services/card_forge_service.dart';
 import '../services/commitment_service.dart';
 import '../services/database_service.dart';
+import '../services/document_forge/document_palette.dart';
 import '../services/memory_extraction_service.dart';
 import '../services/morning_briefing_service.dart';
 import '../services/session_summary_service.dart';
@@ -30,6 +32,7 @@ import '../services/share_receive_service.dart';
 import '../services/screenshot_memory_service.dart';
 import '../services/skill_variables.dart';
 import '../services/widget_data_service.dart';
+import '../theme/app_theme_registry.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/http_tool_handler.dart';
 import '../utils/haptics.dart';
@@ -736,6 +739,12 @@ class _HomePageState extends State<HomePage> {
           context.read<SettingsService>().keepaliveNotification,
       // T2 run_skill 链式编排：Skill 查库服务（子 loop 委派桥）
       agentService: context.read<AgentProvider>().service,
+      // Document Forge 排版强调色：构造时从当前主题快照（换主题后
+      // 旧文档不变——文档是静态文件）
+      documentPalette: DocumentPalette(
+        accent: AppThemeRegistry.accentColorOf(
+            context.read<ThemeProvider>().current),
+      ),
       toolCatalog: [
         ...builtinTools,
         for (final t in httpTools) HttpToolHandler(t),

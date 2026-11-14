@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import '../document_forge/document_forge_service.dart';
+import '../document_forge/document_palette.dart';
 import '../tool_registry.dart';
 
 /// 文档生成工具（Document Forge）：模型按需产出可下载的文档文件
@@ -8,17 +9,21 @@ import '../tool_registry.dart';
 /// 统一单工具 + format 参数分发（省 schema；每格式一个工具的备选
 /// 方案被否——注册表膨胀 5 倍，模型选择面变宽无收益）。
 ///
-/// 输出目录由宿主注入（ChatProvider 构建注册表时给沙箱
-/// documents/attachments），工具保持纯 Dart 可单测。
+/// 输出目录与排版强调色由宿主注入（ChatProvider 构建注册表时给
+/// 沙箱 documents/attachments + 当前主题色快照），工具保持纯 Dart
+/// 可单测（测试注入临时目录即可）。
 ///
 /// 返回文本带 [FILE:<path>] 标记：宿主 OrchToolResults 分支解析标记，
 /// 构造 assistant 附件消息（复用 _FileCard 渲染 + OpenFilex 打开）。
 /// 标记同时保留在 tool 结果文本里，模型能感知文件已生成。
 class CreateDocumentTool extends ToolHandler {
-  const CreateDocumentTool({this.outputDir});
+  const CreateDocumentTool({this.outputDir, this.palette});
 
   /// 输出目录（null = 未注入，execute 时报错——测试可注入临时目录）
   final Directory? outputDir;
+
+  /// 排版强调色（null = forge 内置商务蓝兜底）
+  final DocumentPalette? palette;
 
   static const _formatsDesc =
       'pdf（PDF 文档）/ word（Word 文档）/ excel（Excel 表格）/ '
@@ -89,7 +94,8 @@ class CreateDocumentTool extends ToolHandler {
           : title,
     );
 
-    final file = await DocumentForgeService(outputDir: dir).generate(
+    final file = await DocumentForgeService(outputDir: dir, palette: palette)
+        .generate(
       format: format,
       title: title.trim(),
       lines: content.split('\n'),

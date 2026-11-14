@@ -19,6 +19,7 @@ import '../services/api_service.dart';
 import '../services/chat_orchestrator.dart';
 import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
+import '../services/document_forge/document_palette.dart';
 import '../services/document_index_service.dart';
 import '../services/generation_keepalive.dart';
 import '../services/memory_service.dart';
@@ -55,6 +56,7 @@ class ChatProvider extends ChangeNotifier {
     AgentService? agentService,
     ApiService Function(ProviderProfile profile)? dualApiFactory,
     DocumentIndexService? documentIndex,
+    DocumentPalette? documentPalette,
   })  : _db = database,
         _api = api,
         _session = session,
@@ -73,6 +75,7 @@ class ChatProvider extends ChangeNotifier {
             : _HostRunSkillDelegate(agentService) {
     // 委派桥绑定宿主（初始化列表不能引用 this，构造体补挂）
     _runSkillDelegate?._bindHost(this);
+    _documentPalette = documentPalette;
     // 注册表在构造体构建：run_skill 需要已绑定的委派桥实例
     _tools = _buildRegistry(
       agent,
@@ -80,6 +83,7 @@ class ChatProvider extends ChangeNotifier {
       sessionId: session.id,
       runSkillDelegate: _runSkillDelegate,
       documentOutputDir: _documentOutputDir,
+      documentPalette: _documentPalette,
     );
     // F6 双答对侧连接工厂（null = 默认按 profile 新建；测试注入 mock）
     _dualApiFactory = dualApiFactory ??
@@ -123,6 +127,9 @@ class ChatProvider extends ChangeNotifier {
   /// 取到前为 null——工具 execute 报「输出目录未注入」，模型可重试）
   Directory? _documentOutputDir;
 
+  /// create_document 排版强调色（构造时从 App 主题快照；null = 兜底色）
+  DocumentPalette? _documentPalette;
+
   /// 异步初始化文档输出目录（宿主构造后调用一次；测试不调用则工具
   /// 保持未注入态，纯 Dart 单测注入临时目录即可）
   Future<void> initDocumentOutputDir() async {
@@ -137,6 +144,7 @@ class ChatProvider extends ChangeNotifier {
         sessionId: _session.id,
         runSkillDelegate: _runSkillDelegate,
         documentOutputDir: _documentOutputDir,
+        documentPalette: _documentPalette,
       );
     } catch (_) {
       // 目录不可用：保持 null，工具 execute 时报错（模型可见可重试）
@@ -161,7 +169,8 @@ class ChatProvider extends ChangeNotifier {
       Agent? agent, List<ToolHandler> catalog,
       {String? sessionId,
       RunSkillDelegate? runSkillDelegate,
-      Directory? documentOutputDir}) {
+      Directory? documentOutputDir,
+      DocumentPalette? documentPalette}) {
     final registry = ToolRegistry();
     final allowed = agent?.toolNames;
     final selected = allowed == null
@@ -178,7 +187,9 @@ class ChatProvider extends ChangeNotifier {
                     : t is CreateDocumentTool
                         ? (t.outputDir != null
                             ? t
-                            : CreateDocumentTool(outputDir: documentOutputDir))
+                            : CreateDocumentTool(
+                                outputDir: documentOutputDir,
+                                palette: documentPalette))
                         : t,
     ]);
     if (runSkillDelegate != null) {
