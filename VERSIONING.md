@@ -8,7 +8,16 @@
 
 ## 1. 当前版本
 
-**当前版本：v2.32.1**（2026-11-14 发布）
+**当前版本：v2.33.0**（2026-11-14 发布）
+
+v2.33.0 在 v2.32.1 基础上新增（feat/agent-document-forge 分支，用户需求「文档生成 + 生图 API」→ MINOR）：
+
+- **Document Forge 文档生成**（3edceed）：create_document 统一工具五格式分发——pdf（syncfusion + CJK 华文宋体免打包 TTF）/ word、xlsx、pptx（自建 OOXML——三方包全冲突，archive 4.5.2 + xml 7.0.1 已在 lock 零新依赖）/ csv（UTF-8 BOM 保 Excel 中文）；工具返回 [FILE:<path>] 标记 → ChatProvider OrchToolResults 分支解析 → assistant 附件消息落库上屏（同路径去重）→ 气泡复用 _FileCard 渲染 + OpenFilex 打开；输出目录 = 沙箱 documents/attachments（与用户上传附件同目录，为「会话附件」聚合铺路）
+- **排版美化**（8b74e76）：DocumentPalette 强调色派生色阶 + AppThemeRegistry.accentColorOf 五主题映射（默认蓝/DeepSeek 品牌蓝/MC 草绿/曜石深青/墨韵朱砂），生成时快照当前主题；PDF（标题居中主题色+装饰线/1.5 倍行距/页脚页码/真表格斑马纹跨页续表/列表符号/# 小节标题）、Word（新增 styles.xml 三样式/真表格 w:tbl/列表悬挂缩进）、Excel（表头加粗主题底/列宽按内容自适应中文 2 字符宽/冻结首行/细边框）、PPT（首页自动标题页大标题+上下色条+副标题/内容页主题色标题条白字/要点符号缩进/theme accent1 联动）
+- **Image Forge 生图**（2c42e76）：generate_image 工具（OpenAI 兼容 /images/generations，url 与 b64_json 双返回支持，图片落盘沙箱 → [FILE:] 标记复用附件链路；dio 注入可单测；生图 60s/120s 超时）+ 设置页「生图 API」tag（卡片列表 + 底部弹窗编辑器 + 启用开关 + 删除确认）+ DB v23（image_apis 表，Key 不进备份）+ 配置热更新（ImageApiProvider 监听 → refreshToolCatalog 携带新配置快照，活跃会话下一轮生效）+ 气泡图片附件渲染 _GeneratedImageThumbnail 文件缩略图（png/jpg/webp 按扩展名分流）
+- 测试：1315 项全绿（+37：forge 13 + 工具 11 + 会话链路 4 + 生图 11 - 数量断言迁移）；analyze 零 error/warning；三处硬编码数量断言 31→33、表数 26→27
+
+### v2.32.1（2026-11-14）
 
 v2.32.1 在 v2.32.0 基础上修复 + 改版（fix/approval-card-load-gate 分支，用户报 HTTP 工具编辑后执行旧配置 + Tools 页改版四点拍板 → PATCH）：
 
@@ -786,6 +795,7 @@ Tag 命名：`v<版本号>`（如 `v1.0.0`、`v1.1.0`），打在 release 提交
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| v2.33.0 | 2026-11-14 | Document Forge 文档生成（create_document 五格式 pdf/word/excel/ppt/csv + 会话内发文件）+ 排版美化（主题色快照 + 真表格/页码/标题页/列宽自适应）+ Image Forge 生图（generate_image OpenAI 兼容 + 设置页生图 API tag + DB v23 + 图片缩略图） |
 | v2.16.1 | 2026-10-29 | 验收反馈修复：斜杠面板回退跳动根治（弹前轮询键盘归零）+ 边沿触发防删 / 重弹 + Sheet 键盘顶满屏被通知栏遮挡系统性修复（键盘在场时内容上限 = 屏高−键盘−状态栏）+ Skill→Agent 全局改名（DB 物理名不动） |
 | v2.6.2 | 2026-10-24 | 快捷操作开关即时生效（SettingsService 继承 ChangeNotifier + notifyListeners）+ 选择工具条跟手「完成」+ 批量复制（contextMenuBuilder 定制，复制保留选区） |
 | v2.6.1 | 2026-10-23 | 真机反馈修复：横滑复制真机失效（RawGestureDetector 注入设备 gestureSettings，slop 对等后气泡先认领）+ 选择文字豆包式重做（SelectionArea 包 GptMarkdown，渲染保留 + 系统工具条） |
