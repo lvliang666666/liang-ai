@@ -134,6 +134,39 @@ class _ToolApprovalCardState extends State<ToolApprovalCard> {
               ),
             ),
           ),
+          // v2.32.1：请求头/请求体/响应路径折叠区（审批方肉眼核对全部
+          // 字段——之前只展示 URL+参数，模型漏传请求体时无从发现）
+          if (tool.headersJson.trim().isNotEmpty ||
+              tool.bodyTemplate.trim().isNotEmpty ||
+              tool.responsePath.trim().isNotEmpty)
+            Theme(
+              data: theme.copyWith(dividerColor: Colors.transparent),
+              child: Material(
+                type: MaterialType.transparency,
+                child: ExpansionTile(
+                  tilePadding: const EdgeInsets.symmetric(horizontal: 12),
+                  childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                  dense: true,
+                  title: Text(
+                    '请求详情（头/体/响应路径）',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _detailText(tool),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontFamily: 'Monocraft',
+                          fontSize: 10,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           // 参数定义折叠区（ExpansionTile 内含 ListTile——卡片外层
           // DecoratedBox 有背景色会遮住 ListTile 的墨水效果触发框架
           // 断言，包一层 Material 提供绘制祖先）
@@ -213,6 +246,19 @@ class _ToolApprovalCardState extends State<ToolApprovalCard> {
         ],
       ),
     );
+  }
+
+  /// 请求详情折叠区文本（v2.32.1）：请求头 JSON / 请求体模板 / 响应
+  /// 截取路径，只列非空字段
+  static String _detailText(PendingTool tool) {
+    final lines = <String>[];
+    final headers = tool.headersJson.trim();
+    if (headers.isNotEmpty) lines.add('请求头：$headers');
+    final body = tool.bodyTemplate.trim();
+    if (body.isNotEmpty) lines.add('请求体：$body');
+    final path = tool.responsePath.trim();
+    if (path.isNotEmpty) lines.add('响应路径：$path');
+    return lines.join('\n');
   }
 
   /// 试运行区：按 parameters 动态生成输入框 + 执行按钮 + 响应展示

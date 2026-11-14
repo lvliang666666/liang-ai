@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:ai_chat_app/models/http_tool.dart';
@@ -174,6 +175,65 @@ void main() {
       dio.httpClientAdapter = adapter;
       final handler = HttpToolHandler(tool(), dio: dio);
       expect(() => handler.execute({}), throwsException);
+    });
+
+    test('v2.32.1 异常透传：超时错误含中文类型 + URL（不再是 unknown）',
+        () async {
+      adapter = _FakeAdapter((options) => throw DioException(
+            requestOptions: options,
+            type: DioExceptionType.connectionTimeout,
+          ));
+      dio.httpClientAdapter = adapter;
+      final handler = HttpToolHandler(tool(), dio: dio);
+      try {
+        await handler.execute({});
+        fail('应抛异常');
+      } catch (e) {
+        final msg = e.toString();
+        expect(msg, contains('连接超时'));
+        expect(msg, contains('api.example.com'));
+        expect(msg, isNot(contains('unknown')));
+      }
+    });
+
+    test('v2.32.1 异常透传：badResponse 带状态码 + 响应体片段', () async {
+      adapter = _FakeAdapter((options) => throw DioException(
+            requestOptions: options,
+            type: DioExceptionType.badResponse,
+            response: Response(
+              requestOptions: options,
+              statusCode: 403,
+              data: 'quota exceeded',
+            ),
+          ));
+      dio.httpClientAdapter = adapter;
+      final handler = HttpToolHandler(tool(), dio: dio);
+      try {
+        await handler.execute({});
+        fail('应抛异常');
+      } catch (e) {
+        final msg = e.toString();
+        expect(msg, contains('HTTP 403'));
+        expect(msg, contains('quota exceeded'));
+      }
+    });
+
+    test('v2.32.1 异常透传：连接失败带底层错误信息', () async {
+      adapter = _FakeAdapter((options) => throw DioException(
+            requestOptions: options,
+            type: DioExceptionType.connectionError,
+            error: const SocketException('Connection refused'),
+          ));
+      dio.httpClientAdapter = adapter;
+      final handler = HttpToolHandler(tool(), dio: dio);
+      try {
+        await handler.execute({});
+        fail('应抛异常');
+      } catch (e) {
+        final msg = e.toString();
+        expect(msg, contains('网络连接失败'));
+        expect(msg, contains('Connection refused'));
+      }
     });
 
     test('URL 模板为空：抛异常', () async {

@@ -92,6 +92,50 @@ void main() {
       expect(find.text('试运行'), findsOneWidget);
     });
 
+    testWidgets('v2.32.1 请求详情折叠区：有头/体/路径时显示，展开可见内容',
+        (tester) async {
+      pendingProvider.seed([
+        PendingTool(
+          id: 'p2',
+          sessionId: 's1',
+          name: 'query_weather',
+          description: '查询指定城市的实时天气',
+          urlTemplate: 'https://api.example.com/weather',
+          method: 'POST',
+          headersJson: '{"Authorization": "Bearer sk-xxx"}',
+          bodyTemplate: '{"city": "{city}"}',
+          parametersJson:
+              '{"city": {"type": "string", "description": "城市名"}}',
+          responsePath: 'data.temp',
+          createdAt: 1000,
+        ),
+      ]);
+      await tester.pumpWidget(wrap(ToolApprovalCard(
+          pending: pendingProvider.tools.first)));
+      await tester.pumpAndSettle();
+
+      // 折叠区标题在场，内容默认收起
+      expect(find.text('请求详情（头/体/响应路径）'), findsOneWidget);
+      expect(find.textContaining('Bearer sk-xxx'), findsNothing);
+
+      // 展开：三个字段全部可见（审批方肉眼核对）
+      await tester.tap(find.text('请求详情（头/体/响应路径）'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Authorization'), findsOneWidget);
+      expect(find.textContaining('"city": "{city}"'), findsOneWidget);
+      expect(find.textContaining('data.temp'), findsOneWidget);
+    });
+
+    testWidgets('v2.32.1 请求详情折叠区：头/体/路径全空时不显示',
+        (tester) async {
+      pendingProvider.seed([pending()]);
+      await tester.pumpWidget(wrap(ToolApprovalCard(
+          pending: pendingProvider.tools.first)));
+      await tester.pumpAndSettle();
+
+      expect(find.text('请求详情（头/体/响应路径）'), findsNothing);
+    });
+
     testWidgets('试运行展开：参数表单按 parameters 动态生成', (tester) async {
       pendingProvider.seed([pending()]);
       await tester.pumpWidget(wrap(ToolApprovalCard(

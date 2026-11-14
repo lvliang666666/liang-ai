@@ -67,7 +67,7 @@ class HttpToolHandler extends ToolHandler {
         ),
       );
     } on DioException catch (e) {
-      throw Exception('请求失败：${e.message ?? e.type.name}');
+      throw Exception(_describeDioError(e));
     }
 
     final raw = response.data?.toString() ?? '';
@@ -78,6 +78,35 @@ class HttpToolHandler extends ToolHandler {
 
     var text = _extract(raw, tool.responsePath);
     return _truncate(text, tool.maxResponseChars);
+  }
+
+  /// DioException 细化描述（v2.32.1：之前只给 e.message ?? type.name，
+  /// message 常为空落到英文 type 名如 connectionTimeout——模型与用户
+  /// 都无法定位）。透传：错误类型中文 + URL + 底层信息 + 响应体片段
+  static String _describeDioError(DioException e) {
+    final url = e.requestOptions.uri.toString();
+    final brief = switch (e.type) {
+      DioExceptionType.connectionTimeout => '连接超时（15s 内未建立连接，检查 URL/网络）',
+      DioExceptionType.sendTimeout => '发送超时',
+      DioExceptionType.receiveTimeout => '响应超时（15s 内未收到完整响应）',
+      DioExceptionType.badCertificate => 'SSL 证书校验失败（自签名/域名不匹配）',
+      DioExceptionType.badResponse => '服务端返回错误状态',
+      DioExceptionType.cancel => '请求被取消',
+      DioExceptionType.connectionError => '网络连接失败（DNS 解析失败/无法到达主机/被拒连）',
+      _ => '请求失败',
+    };
+    final parts = <String>['$brief：$url'];
+    final response = e.response;
+    if (response != null) {
+      parts.add('HTTP ${response.statusCode}');
+      final body = response.data?.toString() ?? '';
+      if (body.isNotEmpty) parts.add('响应体片段：${_truncate(body, 300)}');
+    }
+    final message = e.message;
+    if (message != null && message.isNotEmpty) parts.add(message);
+    final error = e.error;
+    if (error != null) parts.add(error.toString());
+    return parts.join('；');
   }
 
   /// 模板渲染：{param} 占位符替换为实参（缺失的占位符原样保留——

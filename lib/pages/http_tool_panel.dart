@@ -521,6 +521,14 @@ class _HttpToolEditorPageState extends State<HttpToolEditorPage> {
       showAppToast(context, '截断长度需在 100–100000 之间');
       return;
     }
+    // v2.32.1：POST/PUT/PATCH 但请求体模板为空——大概率漏配（用户
+    // 反馈建议），警告但不阻断（确实存在无 body 的 POST API）
+    if (switch (_method) {
+      'POST' || 'PUT' || 'PATCH' => _bodyCtrl.text.trim().isEmpty,
+      _ => false,
+    }) {
+      showAppToast(context, '提示：$_method 通常需要请求体模板，当前为空');
+    }
     // headers/params 必须是合法 JSON 对象（填了才校验）
     for (final (label, text) in [
       ('请求头', _headersCtrl.text.trim()),
