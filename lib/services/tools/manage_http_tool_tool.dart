@@ -25,6 +25,8 @@ const builtinToolNames = <String>[
   'text_stats', 'uuid_generate', 'base64_codec', 'hash_text',
   // 记忆
   'memory_save', 'memory_search', 'memory_forget', 'search_history',
+  // 文档生成
+  'create_document',
   // 玄学
   'lunar_calendar', 'bazi', 'wuxing', 'zodiac', 'huangli',
   'guanyin', 'tarot', 'zhougong', 'shuzi', 'xingming',

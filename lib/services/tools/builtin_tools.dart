@@ -1,4 +1,5 @@
 import '../tool_registry.dart';
+import 'create_document_tool.dart';
 import 'date_tools.dart';
 import 'device_tools.dart';
 import 'manage_http_tool_tool.dart';
@@ -12,6 +13,7 @@ import 'text_tools.dart';
 import 'time_tools.dart';
 import 'unit_tools.dart';
 
+export 'create_document_tool.dart';
 export 'date_tools.dart';
 export 'device_tools.dart';
 export 'manage_http_tool_tool.dart';
@@ -53,6 +55,9 @@ const builtinTools = <ToolHandler>[
   MemorySaveTool(),
   MemorySearchTool(),
   MemoryForgetTool(),
+  // 文档生成（Document Forge：pdf/word/excel/ppt/csv，输出目录
+  // 注册时注入——ChatProvider 构建注册表处）
+  CreateDocumentTool(),
   // 情景记忆（M4：历史会话摘要检索；currentSessionId 注册时注入）
   SearchHistoryTool(),
   // 自我迭代（v2.32.0：模型设计新 HTTP 工具，审批通过才生效；

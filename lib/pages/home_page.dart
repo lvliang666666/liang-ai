@@ -744,6 +744,9 @@ class _HomePageState extends State<HomePage> {
     // 消息先加载完再进聊天态：避免 setState 后首帧渲染空列表
     // （转圈）→ 消息到达 → 整列表重建，两帧重活叠一起掉帧
     await chat.loadMessages();
+    // Document Forge：异步初始化文档输出目录（沙箱 attachments；
+    // 失败静默——工具 execute 时报错，模型可见可重试）
+    unawaited(chat.initDocumentOutputDir());
     if (!mounted || token != _switchToken) {
       // 过期结果（期间用户又点了别的会话）：直接丢弃
       chat.dispose();

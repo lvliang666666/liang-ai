@@ -592,12 +592,41 @@ class _MessageBubbleState extends State<MessageBubble> {
                     padding: const EdgeInsets.only(top: 8),
                     child: _ChooseDualButton(onTap: widget.onChooseDual!),
                   ),
+                // Document Forge：assistant 生成的文档附件（create_document
+                // 工具产物）——豆包式文件卡片，点击 OpenFilex 打开。复用
+                // 用户附件的 _FileCard，仅对齐方式改为左对齐（assistant 侧）
+                if (!isStreaming &&
+                    message.role == 'assistant' &&
+                    message.attachments.any((a) => a.isFile))
+                  for (final f in message.attachments.where((a) => a.isFile))
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: _FileCard(
+                        name: f.name,
+                        hasFile: f.hasFile,
+                        onTap: () => _openAssistantFile(context, f),
+                      ),
+                    ),
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// 打开 assistant 生成的文档附件（与用户附件同款 OpenFilex 语义：
+  /// 系统应用接管——PDF→阅读器、docx→Word 等）
+  Future<void> _openAssistantFile(BuildContext context, f) async {
+    Haptics.light();
+    if (!f.hasFile) {
+      showAppToast(context, '文件不存在或已被清理，无法打开');
+      return;
+    }
+    final result = await OpenFilex.open(f.filePath!);
+    if (result.type != ResultType.done && context.mounted) {
+      showAppToast(context, result.message);
+    }
   }
 
   /// 横滑复制的统一动作（与长按菜单复制同反馈：medium 震 + Toast）
