@@ -128,6 +128,10 @@ class _HomePageState extends State<HomePage> {
     context.read<SessionsProvider>().loadSessions();
     // 启动即加载 Agent 列表：否则 tags 行的 Agent 图标在首次懒加载前显示兜底 emoji
     context.read<AgentProvider>().load();
+    // 自我迭代批次（v2.32.0）：启动即加载待审批列表——气泡侧审批卡片
+    // 按 provider.loaded 门控，全 app 只有设置页 Tools tab 触发过 load，
+    // 聊天界面不加载则卡片永远不渲染（真机「审批卡片没弹出」根因）
+    context.read<PendingToolProvider>().load();
     // F9/F7 分享即问：注册分享接收（冷启动兜底拉取 + 热启动推送），
     // 收到后按类型分发（fire-and-forget，不阻塞首帧）
     _shareSubscription = _shareReceive.stream.listen(_onSharedPayload);

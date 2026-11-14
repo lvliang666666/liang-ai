@@ -5,6 +5,7 @@ import 'package:ai_chat_app/providers/agent_provider.dart';
 import 'package:ai_chat_app/providers/chat_provider.dart';
 import 'package:ai_chat_app/providers/http_tool_provider.dart';
 import 'package:ai_chat_app/providers/memory_provider.dart';
+import 'package:ai_chat_app/providers/pending_tool_provider.dart';
 import 'package:ai_chat_app/providers/provider_provider.dart';
 import 'package:ai_chat_app/providers/sessions_provider.dart';
 import 'package:ai_chat_app/providers/theme_provider.dart';
@@ -71,6 +72,8 @@ void main() {
           ChangeNotifierProvider(create: (_) => ProviderProvider(database: db)),
           ChangeNotifierProvider(create: (_) => MemoryProvider(service: MemoryService(database: db))),
           ChangeNotifierProvider(create: (_) => HttpToolProvider(database: db)),
+          // HomePage.initState 启动即 load（审批卡片门控依赖）
+          ChangeNotifierProvider(create: (_) => PendingToolProvider(database: db, httpTools: HttpToolProvider(database: db))),
         ],
         child: MaterialApp(home: child),
       );
