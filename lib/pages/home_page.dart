@@ -13,14 +13,17 @@ import '../models/provider_profile.dart';
 import '../models/agent.dart' as agent_model;
 import '../providers/chat_provider.dart';
 import '../providers/http_tool_provider.dart';
+import '../providers/image_api_provider.dart';
 import '../providers/pending_tool_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
 import '../providers/agent_provider.dart';
+import '../providers/theme_provider.dart';
 import '../services/api_service.dart';
 import '../services/card_forge_service.dart';
 import '../services/commitment_service.dart';
 import '../services/database_service.dart';
+import '../services/document_forge/document_palette.dart';
 import '../services/memory_extraction_service.dart';
 import '../services/morning_briefing_service.dart';
 import '../services/session_summary_service.dart';
@@ -30,6 +33,7 @@ import '../services/share_receive_service.dart';
 import '../services/screenshot_memory_service.dart';
 import '../services/skill_variables.dart';
 import '../services/widget_data_service.dart';
+import '../theme/app_theme_registry.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/http_tool_handler.dart';
 import '../utils/haptics.dart';
@@ -182,12 +186,24 @@ class _HomePageState extends State<HomePage> {
     _teardownWidgetPusher();
     _teardownPendingToolsSub();
     _teardownHttpToolsSub();
+    _teardownImageApisSub();
     _inputController.dispose();
     _inputFocusNode.dispose();
     _drawerBatchMode.dispose();
     _chat?.dispose();
     _chat = null;
     super.dispose();
+  }
+
+  /// Image Forge：摘除 ImageApiProvider 监听（dispose 调用）
+  void _teardownImageApisSub() {
+    try {
+      context
+          .read<ImageApiProvider>()
+          .removeListener(_refreshChatToolCatalog);
+    } catch (_) {
+      // dispose 期间查 Provider 可能不安全，静默忽略
+    }
   }
 
   /// 自我迭代批次：摘除 PendingToolProvider 监听（dispose 调用）
@@ -224,6 +240,15 @@ class _HomePageState extends State<HomePage> {
     chat.refreshToolCatalog([
       ...builtinTools,
       for (final t in httpTools) HttpToolHandler(t),
+    ], imageApis: [
+      for (final a in context.read<ImageApiProvider>().enabledApis)
+        ImageApiConfig(
+          name: a.name,
+          baseUrl: a.baseUrl,
+          apiKey: a.apiKey,
+          model: a.model,
+          size: a.size,
+        ),
     ]);
   }
 
@@ -736,6 +761,25 @@ class _HomePageState extends State<HomePage> {
           context.read<SettingsService>().keepaliveNotification,
       // T2 run_skill 链式编排：Skill 查库服务（子 loop 委派桥）
       agentService: context.read<AgentProvider>().service,
+      // Document Forge 排版强调色：构造时从当前主题快照（换主题后
+      // 旧文档不变——文档是静态文件）
+      documentPalette: DocumentPalette(
+        accent: AppThemeRegistry.accentColorOf(
+            context.read<ThemeProvider>().current),
+      ),
+      // Image Forge 生图配置：从 ImageApiProvider 快照启用清单
+      //（设置页改配置后新会话生效；活跃会话走 refreshToolCatalog 同款
+      // 机制——见 _setupImageApisSub）
+      imageApis: [
+        for (final a in context.read<ImageApiProvider>().enabledApis)
+          ImageApiConfig(
+            name: a.name,
+            baseUrl: a.baseUrl,
+            apiKey: a.apiKey,
+            model: a.model,
+            size: a.size,
+          ),
+      ],
       toolCatalog: [
         ...builtinTools,
         for (final t in httpTools) HttpToolHandler(t),
@@ -744,6 +788,9 @@ class _HomePageState extends State<HomePage> {
     // 消息先加载完再进聊天态：避免 setState 后首帧渲染空列表
     // （转圈）→ 消息到达 → 整列表重建，两帧重活叠一起掉帧
     await chat.loadMessages();
+    // Document Forge：异步初始化文档输出目录（沙箱 attachments；
+    // 失败静默——工具 execute 时报错，模型可见可重试）
+    unawaited(chat.initDocumentOutputDir());
     if (!mounted || token != _switchToken) {
       // 过期结果（期间用户又点了别的会话）：直接丢弃
       chat.dispose();
@@ -765,6 +812,10 @@ class _HomePageState extends State<HomePage> {
     // v2.32.1 修复：HTTP 工具编辑/删除/开关后活跃会话立即用新配置
     //（同上模式：CRUD 后 notifyListeners → 重读目录热更新注册表）
     _setupHttpToolsSub();
+    // Image Forge：生图 API 配置变化（设置页 CRUD）→ 活跃会话热更新
+    //（与 HttpToolProvider 同款监听模式；进会话时顺带确保已加载）
+    unawaited(context.read<ImageApiProvider>().load());
+    context.read<ImageApiProvider>().addListener(_refreshChatToolCatalog);
     // F10：空闲态预选的 Agent 变量带入新会话（含人格预设名回显）
     if (initialAgentVariables.isNotEmpty && agent != null) {
       chat.setAgentVariables(initialAgentVariables);

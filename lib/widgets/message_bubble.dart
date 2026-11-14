@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -592,12 +593,60 @@ class _MessageBubbleState extends State<MessageBubble> {
                     padding: const EdgeInsets.only(top: 8),
                     child: _ChooseDualButton(onTap: widget.onChooseDual!),
                   ),
+                // Document Forge / Image Forge：assistant 生成的附件
+                //（create_document / generate_image 工具产物）——图片
+                // 扩展名渲染缩略图（点击全屏查看），其余为文件卡片
+                //（点击 OpenFilex 打开）
+                if (!isStreaming &&
+                    message.role == 'assistant' &&
+                    message.attachments.any((a) => a.isFile))
+                  for (final f in message.attachments.where((a) => a.isFile))
+                    if (_isImageFile(f.name))
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: _GeneratedImageThumbnail(
+                          filePath: f.filePath,
+                          name: f.name,
+                          onTap: () => _openAssistantFile(context, f),
+                        ),
+                      )
+                    else
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: _FileCard(
+                          name: f.name,
+                          hasFile: f.hasFile,
+                          onTap: () => _openAssistantFile(context, f),
+                        ),
+                      ),
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// 文件名是否为图片扩展名（生图附件渲染缩略图的判据）
+  static bool _isImageFile(String name) {
+    final dot = name.lastIndexOf('.');
+    if (dot < 0 || dot == name.length - 1) return false;
+    final ext = name.substring(dot + 1).toLowerCase();
+    return ext == 'png' || ext == 'jpg' || ext == 'jpeg' || ext == 'webp';
+  }
+
+  /// 打开 assistant 生成的文档附件（与用户附件同款 OpenFilex 语义：
+  /// 系统应用接管——PDF→阅读器、docx→Word、图片→相册等）
+  Future<void> _openAssistantFile(BuildContext context, f) async {
+    Haptics.light();
+    if (!f.hasFile) {
+      showAppToast(context, '文件不存在或已被清理，无法打开');
+      return;
+    }
+    final result = await OpenFilex.open(f.filePath!);
+    if (result.type != ResultType.done && context.mounted) {
+      showAppToast(context, result.message);
+    }
   }
 
   /// 横滑复制的统一动作（与长按菜单复制同反馈：medium 震 + Toast）
@@ -923,6 +972,75 @@ class _UserAttachments extends StatelessWidget {
     if (result.type != ResultType.done && context.mounted) {
       showAppToast(context, result.message);
     }
+  }
+}
+
+/// 生图附件缩略图（Image Forge）：文件路径加载，圆角大图 + 点击打开
+///
+/// 与用户图片附件（base64 缩略图网格）不同：生图产物在沙箱文件系统，
+/// 用 FileImage 直读；加载失败显示占位（文件被清理场景）。
+class _GeneratedImageThumbnail extends StatelessWidget {
+  const _GeneratedImageThumbnail({
+    required this.filePath,
+    required this.name,
+    required this.onTap,
+  });
+
+  final String? filePath;
+  final String name;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final hasFile = filePath != null && filePath!.isNotEmpty;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(top: 4, bottom: 4),
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.widthOf(context) * 0.7,
+        ),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          color: theme.colorScheme.surfaceContainerHighest,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: hasFile
+              ? Image.file(
+                  File(filePath!),
+                  fit: BoxFit.cover,
+                  cacheWidth: 720, // 降采样省内存（全屏查看走系统相册）
+                  frameBuilder: (context, child, frame, wasSync) =>
+                      frame == null
+                          ? Container(
+                              width: 200,
+                              height: 140,
+                              alignment: Alignment.center,
+                              child: Icon(Icons.image_outlined,
+                                  color:
+                                      theme.colorScheme.onSurfaceVariant),
+                            )
+                          : child,
+                  errorBuilder: (_, __, ___) => Container(
+                        width: 200,
+                        height: 140,
+                        alignment: Alignment.center,
+                        child: Icon(Icons.broken_image_outlined,
+                            color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                )
+              : Container(
+                  width: 200,
+                  height: 140,
+                  alignment: Alignment.center,
+                  child: Icon(Icons.image_not_supported_outlined,
+                      color: theme.colorScheme.onSurfaceVariant),
+                ),
+        ),
+      ),
+    );
   }
 }
 

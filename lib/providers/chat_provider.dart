@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../models/chat_message.dart';
 import '../models/chat_session.dart';
@@ -17,6 +19,7 @@ import '../services/api_service.dart';
 import '../services/chat_orchestrator.dart';
 import '../services/context_summary_service.dart';
 import '../services/database_service.dart';
+import '../services/document_forge/document_palette.dart';
 import '../services/document_index_service.dart';
 import '../services/generation_keepalive.dart';
 import '../services/memory_service.dart';
@@ -25,6 +28,8 @@ import '../services/sse_parser.dart';
 import '../services/skill_variables.dart';
 import '../services/tool_registry.dart';
 import '../services/tools/builtin_tools.dart';
+import '../services/tools/create_document_tool.dart';
+import '../services/tools/generate_image_tool.dart';
 import '../services/tools/run_skill_tool.dart';
 
 /// F3/F5 token 估算函数的转发导出（E9 后实现移入 chat_orchestrator.dart；
@@ -44,7 +49,7 @@ class ChatProvider extends ChangeNotifier {
     required ProviderProfile profile,
     required String model,
     Agent? agent,
-    List<ToolHandler> toolCatalog = builtinTools,
+    List<ToolHandler>? toolCatalog,
     MemoryService? memory,
     ContextSummaryService? summaryService,
     bool smartRouting = false,
@@ -52,13 +57,15 @@ class ChatProvider extends ChangeNotifier {
     AgentService? agentService,
     ApiService Function(ProviderProfile profile)? dualApiFactory,
     DocumentIndexService? documentIndex,
+    DocumentPalette? documentPalette,
+    List<ImageApiConfig> imageApis = const [],
   })  : _db = database,
         _api = api,
         _session = session,
         _profile = profile,
         _model = model,
         _agent = agent,
-        _toolCatalog = toolCatalog,
+        _toolCatalog = toolCatalog ?? builtinTools,
         _memory = memory,
         _summaryService = summaryService ??
             ContextSummaryService(api: api, database: database),
@@ -70,12 +77,18 @@ class ChatProvider extends ChangeNotifier {
             : _HostRunSkillDelegate(agentService) {
     // 委派桥绑定宿主（初始化列表不能引用 this，构造体补挂）
     _runSkillDelegate?._bindHost(this);
+    _documentPalette = documentPalette;
+    _imageApis = imageApis;
+    // 工具目录缺省 = 内置目录（初始化列表已兜底，此处直接用参数值）
     // 注册表在构造体构建：run_skill 需要已绑定的委派桥实例
     _tools = _buildRegistry(
       agent,
-      toolCatalog,
+      _toolCatalog,
       sessionId: session.id,
       runSkillDelegate: _runSkillDelegate,
+      documentOutputDir: _documentOutputDir,
+      documentPalette: _documentPalette,
+      imageApis: _imageApis,
     );
     // F6 双答对侧连接工厂（null = 默认按 profile 新建；测试注入 mock）
     _dualApiFactory = dualApiFactory ??
@@ -115,6 +128,38 @@ class ChatProvider extends ChangeNotifier {
   /// run_skill 不注册，兼容现有测试与「无 Agent 服务」场景）
   _HostRunSkillDelegate? _runSkillDelegate;
 
+  /// create_document 输出目录（沙箱 documents/attachments；异步初始化，
+  /// 取到前为 null——工具 execute 报「输出目录未注入」，模型可重试）
+  Directory? _documentOutputDir;
+
+  /// create_document 排版强调色（构造时从 App 主题快照；null = 兜底色）
+  DocumentPalette? _documentPalette;
+
+  /// generate_image 可用的生图 API 配置（构造时从 ImageApiProvider
+  /// 快照启用清单；空 = 工具 execute 报「未配置」）
+  List<ImageApiConfig> _imageApis = const [];
+
+  /// 异步初始化文档输出目录（宿主构造后调用一次；测试不调用则工具
+  /// 保持未注入态，纯 Dart 单测注入临时目录即可）
+  Future<void> initDocumentOutputDir() async {
+    if (_documentOutputDir != null) return;
+    try {
+      final docs = await getApplicationDocumentsDirectory();
+      _documentOutputDir = Directory('${docs.path}/attachments');
+      // 目录就绪后重建注册表，让 CreateDocumentTool 拿到输出目录
+      _tools = _buildRegistry(
+        _agent,
+        _toolCatalog,
+        sessionId: _session.id,
+        runSkillDelegate: _runSkillDelegate,
+        documentOutputDir: _documentOutputDir,
+        documentPalette: _documentPalette,
+      );
+    } catch (_) {
+      // 目录不可用：保持 null，工具 execute 时报错（模型可见可重试）
+    }
+  }
+
   /// 工具注册表（按 Agent.toolNames 从目录构建；null = 不启用工具；
   /// 是否随请求发送还看 profile 能力）
   ToolRegistry? _tools;
@@ -126,10 +171,16 @@ class ChatProvider extends ChangeNotifier {
   /// memory_save 工具按当前 Agent 注入来源名（记忆溯源）；
   /// search_history 工具注入当前会话 id（检索时排除本会话）；
   /// manage_http_tool 注入当前会话 id（pending 归属 + 审批卡片定位）。
+  /// create_document 注入输出目录（沙箱 attachments，与用户上传附件
+  /// 同目录——会话附件聚合天然可见）。
   /// run_skill 仅在宿主提供 AgentService 时注册（T2 链式编排）。
   static ToolRegistry _buildRegistry(
       Agent? agent, List<ToolHandler> catalog,
-      {String? sessionId, RunSkillDelegate? runSkillDelegate}) {
+      {String? sessionId,
+      RunSkillDelegate? runSkillDelegate,
+      Directory? documentOutputDir,
+      DocumentPalette? documentPalette,
+      List<ImageApiConfig> imageApis = const []}) {
     final registry = ToolRegistry();
     final allowed = agent?.toolNames;
     final selected = allowed == null
@@ -143,7 +194,19 @@ class ChatProvider extends ChangeNotifier {
                 ? SearchHistoryTool(currentSessionId: sessionId)
                 : t is ManageHttpToolTool
                     ? ManageHttpToolTool(sessionId: sessionId)
-                    : t,
+                    : t is CreateDocumentTool
+                        ? (t.outputDir != null
+                            ? t
+                            : CreateDocumentTool(
+                                outputDir: documentOutputDir,
+                                palette: documentPalette))
+                        : t is GenerateImageTool
+                            ? (t.outputDir != null && t.hasApis
+                                ? t
+                                : GenerateImageTool(
+                                    enabledApis: imageApis,
+                                    outputDir: documentOutputDir))
+                            : t,
     ]);
     if (runSkillDelegate != null) {
       registry.register(RunSkillTool(runSkillDelegate));
@@ -937,6 +1000,10 @@ class ChatProvider extends ChangeNotifier {
         _messages = [..._messages, ...messages];
         _status = ChatStatus.thinking;
         _notify();
+        // Document Forge：工具结果带 [FILE:<path>] 标记 → 追加 assistant
+        // 附件消息（文件卡片可点开）。异步落库不阻塞状态机（fire-and-
+        // forget，与编排器落库同款 _persistQuietly 语义）
+        _emitGeneratedFileAttachments(results);
       case OrchToolRoundCancelled():
         _status = ChatStatus.idle;
         _notify();
@@ -1050,6 +1117,55 @@ class ChatProvider extends ChangeNotifier {
     });
   }
 
+  /// Document Forge：解析工具结果里的 [FILE:<path>] 标记，为每个文件
+  /// 追加一条 assistant 附件消息（_FileCard 渲染 + OpenFilex 点开）
+  ///
+  /// 消息 content 带说明文本（纯附件空 content 消息进 API 历史会变成
+  /// 空字符串 role=assistant，部分网关拒绝）；附件 filePath 指向沙箱
+  /// 内生成文件，与用户上传附件同构（会话附件聚合天然可见）。
+  /// 同一文件去重（模型重试/多工具同文件不重复发卡片）。
+  void _emitGeneratedFileAttachments(List<ToolCallResult> results) {
+    final paths = <String>[];
+    for (final r in results) {
+      if (r.isError) continue;
+      final regex = RegExp(r'\[FILE:([^\]]+)\]');
+      for (final m in regex.allMatches(r.content)) {
+        final path = m.group(1)!.trim();
+        if (path.isNotEmpty && !paths.contains(path)) {
+          paths.add(path);
+        }
+      }
+    }
+    if (paths.isEmpty) return;
+
+    for (final path in paths) {
+      // 已有同路径附件消息（模型重试场景）不重复发
+      final exists = _messages.any((m) =>
+          m.role == 'assistant' &&
+          m.attachments.any((a) => a.filePath == path));
+      if (exists) continue;
+
+      final name = path.split(Platform.pathSeparator).last;
+      final msg = ChatMessage(
+        id: _genId(),
+        sessionId: _session.id,
+        role: 'assistant',
+        content: '已生成文档：$name',
+        attachments: [
+          MessageAttachment(
+            type: AttachmentType.file,
+            name: name,
+            filePath: path,
+          ),
+        ],
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      );
+      _messages = [..._messages, msg];
+      _persistQuietly(_db.insertMessage(msg));
+    }
+    _notify();
+  }
+
   /// 清除错误状态
   void clearError() {
     if (_status == ChatStatus.error) {
@@ -1091,10 +1207,16 @@ class ChatProvider extends ChangeNotifier {
   /// 新目录后调用。重建注册表（保留当前 Agent 白名单语义），下一轮
   /// 请求的 tools 数组自动带上新工具——orchestrator 每轮
   /// resolveToolsPayload() 实时求值，无需中断当前流式。
-  void refreshToolCatalog(List<ToolHandler> newCatalog) {
+  void refreshToolCatalog(List<ToolHandler> newCatalog,
+      {List<ImageApiConfig>? imageApis}) {
     _toolCatalog = newCatalog;
+    if (imageApis != null) _imageApis = imageApis;
     _tools = _buildRegistry(_agent, _toolCatalog,
-        sessionId: _session.id, runSkillDelegate: _runSkillDelegate);
+        sessionId: _session.id,
+        runSkillDelegate: _runSkillDelegate,
+        documentOutputDir: _documentOutputDir,
+        documentPalette: _documentPalette,
+        imageApis: _imageApis);
     _notify();
   }
 

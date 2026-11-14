@@ -1,6 +1,8 @@
 import '../tool_registry.dart';
+import 'create_document_tool.dart';
 import 'date_tools.dart';
 import 'device_tools.dart';
+import 'generate_image_tool.dart';
 import 'manage_http_tool_tool.dart';
 import 'math_tools.dart';
 import 'memory_tools.dart';
@@ -12,8 +14,10 @@ import 'text_tools.dart';
 import 'time_tools.dart';
 import 'unit_tools.dart';
 
+export 'create_document_tool.dart';
 export 'date_tools.dart';
 export 'device_tools.dart';
+export 'generate_image_tool.dart';
 export 'manage_http_tool_tool.dart';
 export 'math_tools.dart';
 export 'memory_tools.dart';
@@ -29,7 +33,7 @@ export 'unit_tools.dart';
 ///
 /// 各工具按分类拆分在同目录文件中，此处仅聚合导出，
 /// import 路径保持 `services/tools/builtin_tools.dart` 不变。
-const builtinTools = <ToolHandler>[
+final builtinTools = <ToolHandler>[
   // 时间
   GetCurrentTimeTool(),
   DateCalcTool(),
@@ -53,6 +57,12 @@ const builtinTools = <ToolHandler>[
   MemorySaveTool(),
   MemorySearchTool(),
   MemoryForgetTool(),
+  // 文档生成（Document Forge：pdf/word/excel/ppt/csv，输出目录
+  // 注册时注入——ChatProvider 构建注册表处）
+  CreateDocumentTool(),
+  // 生图（Image Forge：调用户配置的生图 API；配置清单注册时注入，
+  // 空清单 = execute 报「未配置」引导用户去设置页）
+  GenerateImageTool(enabledApis: const []),
   // 情景记忆（M4：历史会话摘要检索；currentSessionId 注册时注入）
   SearchHistoryTool(),
   // 自我迭代（v2.32.0：模型设计新 HTTP 工具，审批通过才生效；

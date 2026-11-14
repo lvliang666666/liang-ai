@@ -110,6 +110,27 @@ class AppThemeRegistry {
   static double cornerRadiusOf(AppThemeId id) =>
       (_registry[id] ?? _registry[defaultId]!).cornerRadius;
 
+  /// 取主题的文档强调色（Document Forge 排版美化用，生成时快照）
+  ///
+  /// 文档是打印物（白底黑字为主），强调色只用于标题/表头/装饰条——
+  /// 取各主题亮色版主色（暗色版主色在白纸上对比度不足）：
+  /// 默认 4F8CFF 蓝 / DeepSeek 4D6BFE 品牌蓝 / Minecraft 5B8731 草绿 /
+  /// 曜石 007A9E 深青（电光青 00D4FF 在白纸上看不清）/ 墨韵 B03A2E 朱砂
+  static Color accentColorOf(AppThemeId id) {
+    switch (id) {
+      case AppThemeId.deepseek:
+        return const Color(0xFF4D6BFE);
+      case AppThemeId.minecraft:
+        return const Color(0xFF5B8731);
+      case AppThemeId.obsidian:
+        return const Color(0xFF007A9E);
+      case AppThemeId.inkWash:
+        return const Color(0xFFB03A2E);
+      case AppThemeId.material:
+        return const Color(0xFF4F8CFF);
+    }
+  }
+
   /// 主题显示名
   static String labelOf(AppThemeId id) =>
       (_registry[id] ?? _registry[defaultId]!).label;
