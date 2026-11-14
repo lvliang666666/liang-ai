@@ -142,7 +142,12 @@ class _MessageBubbleState extends State<MessageBubble> {
   ///
   /// 关联规则：调用参数里的 name → PendingToolProvider.forSession 里
   /// 同名记录（工具层已保证会话内 name 唯一——重名提交被拒）。
-  /// build 里调用（watch provider，审批状态变化即时刷新）。
+  ///
+  /// **watch 收窄（v2.32.1 性能修复）**：先查本消息有无 manage_http_tool
+  /// 调用，**有才 watch**——否则流式期间每个 delta notify 全列表重建时，
+  /// 30 个无关气泡也各自订阅 provider + 跑 forSession 过滤（分配新
+  /// List），长会话逐帧 GC 压力 → 渲染卡死（真机「该会话无法再回答」
+  /// 根因之一）。无关联调用的气泡零订阅零开销。
   PendingTool? _pendingForMessage(BuildContext context) {
     final message = widget.message;
     final calls = message.toolCalls;
@@ -152,6 +157,7 @@ class _MessageBubbleState extends State<MessageBubble> {
         .where((c) => c.name == 'manage_http_tool')
         .toList();
     if (manageCalls.isEmpty) return null;
+    // 走到这里才订阅（本消息确有工具提交，watch 是必要成本）
     final provider = context.watch<PendingToolProvider>();
     if (!provider.loaded) return null;
     final sessionId = message.sessionId;
@@ -473,9 +479,16 @@ class _MessageBubbleState extends State<MessageBubble> {
                 // 自我迭代审批卡片（v2.32.0）：本消息发起过
                 // manage_http_tool 调用时，按工具名关联 pending 记录
                 // 渲染审批卡片（试运行 + 通过/拒绝）。pending 已处理
-                // 则不渲染（ToolCallBlock 里的调用记录已可溯）
+                // 则不渲染（ToolCallBlock 里的调用记录已可溯）。
+                // ValueKey 锁 State 身份：流式期间列表高度变化时卡片
+                // 不被重建，ExpansionTile 动画不被打断（无 key 时父级
+                // 每次 layout 都重建卡片 → 展开动画反复重启 → 布局
+                // 抖动循环，真机「该会话无法再回答」根因之二）
                 if (pendingForMessage != null)
-                  ToolApprovalCard(pending: pendingForMessage),
+                  ToolApprovalCard(
+                    key: ValueKey(pendingForMessage.id),
+                    pending: pendingForMessage,
+                  ),
                 // 正文：选择模式 = SelectionArea 包住 Markdown（渲染
                 // 原样保留，长按选词/拖手柄/系统工具条复制）；常规 =
                 // 裸 Markdown。GptMarkdown 的段落是 Text/RichText，
