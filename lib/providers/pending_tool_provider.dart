@@ -23,16 +23,27 @@ class PendingToolProvider extends ChangeNotifier {
   List<PendingTool> _tools = [];
   bool _loaded = false;
 
+  /// 按会话缓存的过滤结果（v2.32.1 性能修复）：气泡 build 每帧调
+  /// forSession，无缓存时每次 where().toList() 分配新 List——流式
+  /// 期间全列表逐帧重建 × 每气泡一次 = GC 压力风暴。缓存随 _tools
+  /// 变化（load/approve/reject）失效。
+  final Map<String, List<PendingTool>> _sessionCache = {};
+
   List<PendingTool> get tools => _tools;
   bool get loaded => _loaded;
 
-  /// 指定会话的待审批子集（聊天审批卡片渲染用）
+  /// 指定会话的待审批子集（聊天审批卡片渲染用，带缓存）
   List<PendingTool> forSession(String sessionId) =>
-      _tools.where((t) => t.sessionId == sessionId).toList();
+      _sessionCache.putIfAbsent(
+          sessionId, () => _tools.where((t) => t.sessionId == sessionId).toList());
+
+  /// 缓存失效（_tools 变化时调用）
+  void _invalidateSessionCache() => _sessionCache.clear();
 
   Future<void> load() async {
     _tools = await _db.getAllPendingTools();
     _loaded = true;
+    _invalidateSessionCache();
     notifyListeners();
   }
 
@@ -53,5 +64,11 @@ class PendingToolProvider extends ChangeNotifier {
   Future<void> reject(PendingTool tool) async {
     await _db.deletePendingTool(tool.id);
     await load();
+  }
+
+  @override
+  void dispose() {
+    _sessionCache.clear();
+    super.dispose();
   }
 }

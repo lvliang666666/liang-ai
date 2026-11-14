@@ -91,6 +91,13 @@ class _HomePageState extends State<HomePage> {
   // → 会话内即时生效；_enterChat 挂 / dispose 摘）
   VoidCallback? _pendingToolsSub;
 
+  // v2.32.1 修复：HTTP 工具编辑/删除/开关后活跃会话仍用旧配置——
+  // 会话注册表持有 HttpToolHandler 快照（构造时捕获 tool 对象），
+  // 之前只有审批回调会热更新目录，编辑保存无人监听。挂 HttpToolProvider
+  // 监听：任何 CRUD 变化（update/delete/create 都会 notifyListeners）
+  // 重读 enabledTools 重建目录，活跃会话下一轮请求立即用新配置
+  VoidCallback? _httpToolsSub;
+
   // 空闲态的预选状态（tags 行展示与切换）
   agent_model.Agent? _selectedAgent; // null = 默认助手
   (ProviderProfile, String)? _selectedModel; // null = 用默认供应商默认模型
@@ -128,6 +135,10 @@ class _HomePageState extends State<HomePage> {
     context.read<SessionsProvider>().loadSessions();
     // 启动即加载 Agent 列表：否则 tags 行的 Agent 图标在首次懒加载前显示兜底 emoji
     context.read<AgentProvider>().load();
+    // 自我迭代批次（v2.32.0）：启动即加载待审批列表——气泡侧审批卡片
+    // 按 provider.loaded 门控，全 app 只有设置页 Tools tab 触发过 load，
+    // 聊天界面不加载则卡片永远不渲染（真机「审批卡片没弹出」根因）
+    context.read<PendingToolProvider>().load();
     // F9/F7 分享即问：注册分享接收（冷启动兜底拉取 + 热启动推送），
     // 收到后按类型分发（fire-and-forget，不阻塞首帧）
     _shareSubscription = _shareReceive.stream.listen(_onSharedPayload);
@@ -170,6 +181,7 @@ class _HomePageState extends State<HomePage> {
     _shareReceive.dispose();
     _teardownWidgetPusher();
     _teardownPendingToolsSub();
+    _teardownHttpToolsSub();
     _inputController.dispose();
     _inputFocusNode.dispose();
     _drawerBatchMode.dispose();
@@ -197,6 +209,15 @@ class _HomePageState extends State<HomePage> {
   /// 只在 approve 后工具目录才会变（reject 不动 http_tools），但
   /// listener 拿不到变化明细，重读目录是幂等轻操作（千级以内）
   void _onPendingToolsChanged() {
+    _refreshChatToolCatalog();
+  }
+
+  /// v2.32.1 修复：重读 HTTP 工具目录热更新当前会话注册表。
+  /// 触发源：①审批通过（pending 变化）②HTTP 工具编辑/删除/开关切换
+  /// （HttpToolProvider CRUD 后 notifyListeners）——之前只有①，
+  /// 编辑保存后活跃会话的 handler 仍持有旧 tool 对象（快照），
+  /// 请求发往旧 URL（用户报「编辑后执行旧配置」根因）
+  void _refreshChatToolCatalog() {
     final chat = _chat;
     if (chat == null || !mounted) return;
     final httpTools = context.read<HttpToolProvider>().enabledTools;
@@ -204,6 +225,27 @@ class _HomePageState extends State<HomePage> {
       ...builtinTools,
       for (final t in httpTools) HttpToolHandler(t),
     ]);
+  }
+
+  /// v2.32.1：挂 HttpToolProvider 监听（_enterChat 调用，与
+  /// _pendingToolsSub 同生命周期）
+  void _setupHttpToolsSub() {
+    _teardownHttpToolsSub();
+    _httpToolsSub = _refreshChatToolCatalog;
+    context.read<HttpToolProvider>().addListener(_refreshChatToolCatalog);
+  }
+
+  /// v2.32.1：摘除 HttpToolProvider 监听（dispose 调用）
+  void _teardownHttpToolsSub() {
+    final sub = _httpToolsSub;
+    if (sub != null) {
+      try {
+        context.read<HttpToolProvider>().removeListener(sub);
+      } catch (_) {
+        // dispose 期间查 Provider 可能不安全，静默忽略
+      }
+      _httpToolsSub = null;
+    }
   }
 
   /// P2：初始化 widget 推送器（读 SharedPreferences → 订阅会话变化 → 首推）
@@ -720,6 +762,9 @@ class _HomePageState extends State<HomePage> {
     context
         .read<PendingToolProvider>()
         .addListener(_onPendingToolsChanged);
+    // v2.32.1 修复：HTTP 工具编辑/删除/开关后活跃会话立即用新配置
+    //（同上模式：CRUD 后 notifyListeners → 重读目录热更新注册表）
+    _setupHttpToolsSub();
     // F10：空闲态预选的 Agent 变量带入新会话（含人格预设名回显）
     if (initialAgentVariables.isNotEmpty && agent != null) {
       chat.setAgentVariables(initialAgentVariables);

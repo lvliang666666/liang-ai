@@ -165,6 +165,10 @@ class ChatProvider extends ChangeNotifier {
   /// 当前注册的工具数（测试/调试用）
   int get toolCount => _tools?.length ?? 0;
 
+  /// 当前注册表（测试断言用：验证热更新后 handler 持有的配置）
+  @visibleForTesting
+  ToolRegistry? get toolRegistryForTest => _tools;
+
   List<ChatMessage> _messages = [];
   ChatStatus _status = ChatStatus.idle;
   String _errorMessage = '';

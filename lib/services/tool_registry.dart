@@ -39,6 +39,9 @@ class ToolRegistry {
   int get length => _handlers.length;
   List<String> get names => _handlers.keys.toList();
 
+  /// 按名取 handler（只读；测试断言注册表内容用，生产代码用 execute）
+  ToolHandler? handlerByName(String name) => _handlers[name];
+
   /// 生成 OpenAI 请求体的 tools 数组
   List<Map<String, dynamic>> toOpenAiTools() => [
         for (final h in _handlers.values)
