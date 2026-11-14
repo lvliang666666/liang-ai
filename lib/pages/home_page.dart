@@ -13,6 +13,7 @@ import '../models/provider_profile.dart';
 import '../models/agent.dart' as agent_model;
 import '../providers/chat_provider.dart';
 import '../providers/http_tool_provider.dart';
+import '../providers/image_api_provider.dart';
 import '../providers/pending_tool_provider.dart';
 import '../providers/provider_provider.dart';
 import '../providers/sessions_provider.dart';
@@ -185,12 +186,24 @@ class _HomePageState extends State<HomePage> {
     _teardownWidgetPusher();
     _teardownPendingToolsSub();
     _teardownHttpToolsSub();
+    _teardownImageApisSub();
     _inputController.dispose();
     _inputFocusNode.dispose();
     _drawerBatchMode.dispose();
     _chat?.dispose();
     _chat = null;
     super.dispose();
+  }
+
+  /// Image Forge：摘除 ImageApiProvider 监听（dispose 调用）
+  void _teardownImageApisSub() {
+    try {
+      context
+          .read<ImageApiProvider>()
+          .removeListener(_refreshChatToolCatalog);
+    } catch (_) {
+      // dispose 期间查 Provider 可能不安全，静默忽略
+    }
   }
 
   /// 自我迭代批次：摘除 PendingToolProvider 监听（dispose 调用）
@@ -227,6 +240,15 @@ class _HomePageState extends State<HomePage> {
     chat.refreshToolCatalog([
       ...builtinTools,
       for (final t in httpTools) HttpToolHandler(t),
+    ], imageApis: [
+      for (final a in context.read<ImageApiProvider>().enabledApis)
+        ImageApiConfig(
+          name: a.name,
+          baseUrl: a.baseUrl,
+          apiKey: a.apiKey,
+          model: a.model,
+          size: a.size,
+        ),
     ]);
   }
 
@@ -745,6 +767,19 @@ class _HomePageState extends State<HomePage> {
         accent: AppThemeRegistry.accentColorOf(
             context.read<ThemeProvider>().current),
       ),
+      // Image Forge 生图配置：从 ImageApiProvider 快照启用清单
+      //（设置页改配置后新会话生效；活跃会话走 refreshToolCatalog 同款
+      // 机制——见 _setupImageApisSub）
+      imageApis: [
+        for (final a in context.read<ImageApiProvider>().enabledApis)
+          ImageApiConfig(
+            name: a.name,
+            baseUrl: a.baseUrl,
+            apiKey: a.apiKey,
+            model: a.model,
+            size: a.size,
+          ),
+      ],
       toolCatalog: [
         ...builtinTools,
         for (final t in httpTools) HttpToolHandler(t),
@@ -777,6 +812,10 @@ class _HomePageState extends State<HomePage> {
     // v2.32.1 修复：HTTP 工具编辑/删除/开关后活跃会话立即用新配置
     //（同上模式：CRUD 后 notifyListeners → 重读目录热更新注册表）
     _setupHttpToolsSub();
+    // Image Forge：生图 API 配置变化（设置页 CRUD）→ 活跃会话热更新
+    //（与 HttpToolProvider 同款监听模式；进会话时顺带确保已加载）
+    unawaited(context.read<ImageApiProvider>().load());
+    context.read<ImageApiProvider>().addListener(_refreshChatToolCatalog);
     // F10：空闲态预选的 Agent 变量带入新会话（含人格预设名回显）
     if (initialAgentVariables.isNotEmpty && agent != null) {
       chat.setAgentVariables(initialAgentVariables);

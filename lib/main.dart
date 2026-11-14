@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'models/provider_profile.dart';
 import 'pages/home_page.dart';
 import 'providers/http_tool_provider.dart';
+import 'providers/image_api_provider.dart';
 import 'providers/memory_provider.dart';
 import 'providers/pending_tool_provider.dart';
 import 'providers/provider_provider.dart';
@@ -114,6 +115,13 @@ class AiChatApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(
           create: (_) => HttpToolProvider(
+            database: DatabaseService.instance,
+          ),
+        ),
+        // 生图 API 配置（Image Forge）：设置页 CRUD + generate_image
+        // 工具的配置源（HomePage 启动时 load，与 PendingToolProvider 同款）
+        ChangeNotifierProvider(
+          create: (_) => ImageApiProvider(
             database: DatabaseService.instance,
           ),
         ),

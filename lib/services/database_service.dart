@@ -10,6 +10,7 @@ import '../models/commitment.dart';
 import '../models/context_summary.dart';
 import '../models/doc_chunk.dart';
 import '../models/http_tool.dart';
+import '../models/image_api.dart';
 import '../models/memory.dart';
 import '../models/pending_tool.dart';
 import '../models/provider_profile.dart';
@@ -27,7 +28,7 @@ class DatabaseService {
   static const _dbName = 'ai_chat.db';
 
   /// 当前数据库版本号（公开给测试 fixture：测试库与生产同版本同源）
-  static const int dbVersion = 22;
+  static const int dbVersion = 23;
 
   /// E6 API Key 加固桥（null = 未启用，行为与 v2.3.7 完全一致）。
   /// 生产在 main 启动时注入 [SecureKeyStore]；测试不注入或注入 fake。
@@ -156,6 +157,7 @@ class DatabaseService {
     await _createDocChunksTable(db);
     await _createCommitmentsTable(db);
     await _createPendingToolsTable(db);
+    await _createImageApisTable(db);
     await _createFtsTables(db);
   }
 
@@ -311,6 +313,12 @@ class DatabaseService {
       // manage_http_tool 提交的待审批工具定义；用户审批通过才落
       // http_tools 生效；deleteSession 级联删；不进备份）
       await _createPendingToolsTable(db);
+    }
+    if (oldVersion < 23 && newVersion >= 23) {
+      // v22 → v23：生图 API（Image Forge）——新建 image_apis 表
+      //（用户配置的文生图服务，generate_image 工具调用；不进备份——
+      // 含 API Key，与 providers 表同策略）
+      await _createImageApisTable(db);
     }
   }
 
@@ -572,6 +580,50 @@ class DatabaseService {
       'CREATE INDEX IF NOT EXISTS idx_pending_tools_session '
       'ON pending_tools(session_id, created_at)',
     );
+  }
+
+  /// image_apis 表（Image Forge，DB v23）：用户配置的生图服务
+  ///
+  /// - 不进备份（含 API Key，与 providers 表同策略）
+  /// - generate_image 工具按 enabled 清单调第一个启用的配置
+  static Future<void> _createImageApisTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS image_apis (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        base_url TEXT NOT NULL DEFAULT '',
+        api_key TEXT NOT NULL DEFAULT '',
+        model TEXT NOT NULL DEFAULT '',
+        size TEXT NOT NULL DEFAULT '1024x1024',
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      )
+    ''');
+  }
+
+  /// 生图 API CRUD（Image Forge）
+  Future<List<ImageApi>> getAllImageApis() async {
+    final db = await database;
+    final rows = await db.query('image_apis', orderBy: 'created_at');
+    return [for (final r in rows) ImageApi.fromMap(r)];
+  }
+
+  Future<void> insertImageApi(ImageApi api) async {
+    final db = await database;
+    await db.insert('image_apis', api.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<void> updateImageApi(ImageApi api) async {
+    final db = await database;
+    await db.update('image_apis', api.toMap(),
+        where: 'id = ?', whereArgs: [api.id]);
+  }
+
+  Future<void> deleteImageApi(String id) async {
+    final db = await database;
+    await db.delete('image_apis', where: 'id = ?', whereArgs: [id]);
   }
 
   /// chunks_fts：doc_chunks 的 FTS5 索引（bigram 自管，同 messages_fts 模式）

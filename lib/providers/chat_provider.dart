@@ -29,6 +29,7 @@ import '../services/skill_variables.dart';
 import '../services/tool_registry.dart';
 import '../services/tools/builtin_tools.dart';
 import '../services/tools/create_document_tool.dart';
+import '../services/tools/generate_image_tool.dart';
 import '../services/tools/run_skill_tool.dart';
 
 /// F3/F5 token 估算函数的转发导出（E9 后实现移入 chat_orchestrator.dart；
@@ -48,7 +49,7 @@ class ChatProvider extends ChangeNotifier {
     required ProviderProfile profile,
     required String model,
     Agent? agent,
-    List<ToolHandler> toolCatalog = builtinTools,
+    List<ToolHandler>? toolCatalog,
     MemoryService? memory,
     ContextSummaryService? summaryService,
     bool smartRouting = false,
@@ -57,13 +58,14 @@ class ChatProvider extends ChangeNotifier {
     ApiService Function(ProviderProfile profile)? dualApiFactory,
     DocumentIndexService? documentIndex,
     DocumentPalette? documentPalette,
+    List<ImageApiConfig> imageApis = const [],
   })  : _db = database,
         _api = api,
         _session = session,
         _profile = profile,
         _model = model,
         _agent = agent,
-        _toolCatalog = toolCatalog,
+        _toolCatalog = toolCatalog ?? builtinTools,
         _memory = memory,
         _summaryService = summaryService ??
             ContextSummaryService(api: api, database: database),
@@ -76,14 +78,17 @@ class ChatProvider extends ChangeNotifier {
     // 委派桥绑定宿主（初始化列表不能引用 this，构造体补挂）
     _runSkillDelegate?._bindHost(this);
     _documentPalette = documentPalette;
+    _imageApis = imageApis;
+    // 工具目录缺省 = 内置目录（初始化列表已兜底，此处直接用参数值）
     // 注册表在构造体构建：run_skill 需要已绑定的委派桥实例
     _tools = _buildRegistry(
       agent,
-      toolCatalog,
+      _toolCatalog,
       sessionId: session.id,
       runSkillDelegate: _runSkillDelegate,
       documentOutputDir: _documentOutputDir,
       documentPalette: _documentPalette,
+      imageApis: _imageApis,
     );
     // F6 双答对侧连接工厂（null = 默认按 profile 新建；测试注入 mock）
     _dualApiFactory = dualApiFactory ??
@@ -130,6 +135,10 @@ class ChatProvider extends ChangeNotifier {
   /// create_document 排版强调色（构造时从 App 主题快照；null = 兜底色）
   DocumentPalette? _documentPalette;
 
+  /// generate_image 可用的生图 API 配置（构造时从 ImageApiProvider
+  /// 快照启用清单；空 = 工具 execute 报「未配置」）
+  List<ImageApiConfig> _imageApis = const [];
+
   /// 异步初始化文档输出目录（宿主构造后调用一次；测试不调用则工具
   /// 保持未注入态，纯 Dart 单测注入临时目录即可）
   Future<void> initDocumentOutputDir() async {
@@ -170,7 +179,8 @@ class ChatProvider extends ChangeNotifier {
       {String? sessionId,
       RunSkillDelegate? runSkillDelegate,
       Directory? documentOutputDir,
-      DocumentPalette? documentPalette}) {
+      DocumentPalette? documentPalette,
+      List<ImageApiConfig> imageApis = const []}) {
     final registry = ToolRegistry();
     final allowed = agent?.toolNames;
     final selected = allowed == null
@@ -190,7 +200,13 @@ class ChatProvider extends ChangeNotifier {
                             : CreateDocumentTool(
                                 outputDir: documentOutputDir,
                                 palette: documentPalette))
-                        : t,
+                        : t is GenerateImageTool
+                            ? (t.outputDir != null && t.hasApis
+                                ? t
+                                : GenerateImageTool(
+                                    enabledApis: imageApis,
+                                    outputDir: documentOutputDir))
+                            : t,
     ]);
     if (runSkillDelegate != null) {
       registry.register(RunSkillTool(runSkillDelegate));
@@ -1191,10 +1207,16 @@ class ChatProvider extends ChangeNotifier {
   /// 新目录后调用。重建注册表（保留当前 Agent 白名单语义），下一轮
   /// 请求的 tools 数组自动带上新工具——orchestrator 每轮
   /// resolveToolsPayload() 实时求值，无需中断当前流式。
-  void refreshToolCatalog(List<ToolHandler> newCatalog) {
+  void refreshToolCatalog(List<ToolHandler> newCatalog,
+      {List<ImageApiConfig>? imageApis}) {
     _toolCatalog = newCatalog;
+    if (imageApis != null) _imageApis = imageApis;
     _tools = _buildRegistry(_agent, _toolCatalog,
-        sessionId: _session.id, runSkillDelegate: _runSkillDelegate);
+        sessionId: _session.id,
+        runSkillDelegate: _runSkillDelegate,
+        documentOutputDir: _documentOutputDir,
+        documentPalette: _documentPalette,
+        imageApis: _imageApis);
     _notify();
   }
 
