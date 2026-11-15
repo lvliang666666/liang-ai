@@ -217,5 +217,96 @@ void main() {
       expect(find.byType(Image), findsNothing);
       expect(find.text('你好'), findsOneWidget);
     });
+
+    testWidgets('多图网格：3 张图三列完整显示，气泡不超屏宽', (tester) async {
+      const pngB64 =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'user',
+        content: '',
+        attachments: const [
+          MessageAttachment(
+              type: AttachmentType.image, name: '1.png', base64Data: pngB64),
+          MessageAttachment(
+              type: AttachmentType.image, name: '2.png', base64Data: pngB64),
+          MessageAttachment(
+              type: AttachmentType.image, name: '3.png', base64Data: pngB64),
+        ],
+        createdAt: 1000,
+      );
+
+      await tester.pumpWidget(wrap(MessageBubble(message: msg)));
+      await tester.pump();
+
+      // 三张图都渲染（3 个 Image widget）
+      expect(find.byType(Image), findsNWidgets(3));
+      // 无「+N」遮罩（≤9 张全显）
+      expect(find.textContaining('+'), findsNothing);
+      // 气泡右缘不超屏宽：所有 Image 的右边界 ≤ 屏宽 − 16dp 边距
+      final screenWidth = tester.view.physicalSize.width /
+          tester.view.devicePixelRatio;
+      for (final image in find.byType(Image).evaluate()) {
+        final box = image.renderObject! as RenderBox;
+        final right = box.localToGlobal(Offset.zero).dx + box.size.width;
+        expect(right, lessThanOrEqualTo(screenWidth - 15.9),
+            reason: '图片右缘应留 16dp 屏幕边距（容差 0.1）');
+      }
+    });
+
+    testWidgets('多图网格：>9 张显示前 8 张 + 「+N」遮罩', (tester) async {
+      // 8 张图 = 3 行网格，默认测试屏（800x600）高度不够会 RenderFlex
+      // overflow——放大测试屏（真机比例）
+      tester.view.physicalSize = const Size(800, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      const pngB64 =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'user',
+        content: '',
+        attachments: [
+          for (var i = 1; i <= 12; i++)
+            const MessageAttachment(
+                type: AttachmentType.image,
+                name: 'x.png',
+                base64Data: pngB64),
+        ],
+        createdAt: 1000,
+      );
+
+      await tester.pumpWidget(wrap(MessageBubble(message: msg)));
+      await tester.pump();
+
+      // 8 张直显 + 1 格遮罩（遮罩内也有 1 个 Image）= 9 个 Image
+      expect(find.byType(Image), findsNWidgets(9));
+      // 「+4」遮罩文字（12 - 8 = 4）
+      expect(find.text('+4'), findsOneWidget);
+    });
+
+    testWidgets('单张图：大图渲染（无网格折叠）', (tester) async {
+      const pngB64 =
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+      final msg = ChatMessage(
+        id: 'm1',
+        sessionId: 's1',
+        role: 'user',
+        content: '',
+        attachments: const [
+          MessageAttachment(
+              type: AttachmentType.image, name: 'p.png', base64Data: pngB64),
+        ],
+        createdAt: 1000,
+      );
+
+      await tester.pumpWidget(wrap(MessageBubble(message: msg)));
+      await tester.pump();
+
+      expect(find.byType(Image), findsOneWidget);
+      expect(find.textContaining('+'), findsNothing);
+    });
   });
 }

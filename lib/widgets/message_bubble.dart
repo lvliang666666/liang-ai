@@ -256,12 +256,15 @@ class _MessageBubbleState extends State<MessageBubble> {
               swipeEnabled && message.content.isNotEmpty && !isStreaming,
           onAction: () => _copyMessage(context, message),
           child: Container(
-            margin: const EdgeInsets.only(left: 60, top: 4, bottom: 4),
+            // 左 16dp（多图网格让位）+ 右 16dp（屏缘边距，多图溢屏修复）
+            margin: const EdgeInsets.only(left: 16, right: 16, top: 4, bottom: 4),
             padding: EdgeInsets.fromLTRB(
                 hasImages ? 6 : 14, hasImages ? 6 : 10, hasImages ? 6 : 14,
                 hasImages ? 6 : 10),
             constraints: BoxConstraints(
-              maxWidth: MediaQuery.widthOf(context) * 0.78,
+              // 多图溢屏修复：屏宽 − 32dp（左右边距各 16dp）——
+              // 3 列网格在任意张数下都完整可见，气泡永不超出屏宽
+              maxWidth: MediaQuery.widthOf(context) - 32,
             ),
             decoration: BoxDecoration(
               color: colorScheme.primary,
@@ -900,7 +903,13 @@ class _MessageBubbleState extends State<MessageBubble> {
   }
 }
 
-/// 用户消息附件区：图片缩略图网格 + 豆包式文件卡片（可点开）
+/// 用户消息附件区：图片 3 列等宽网格 + 豆包式文件卡片（可点开）
+///
+/// 网格规则（多图溢屏修复批次）：
+/// - ≤9 张：3 列等宽网格（间距 4dp），全部完整可见
+/// - >9 张：前 8 张 + 第 9 格叠加「+N」遮罩，点击进全屏查看器
+///   （不做横向长条——消息流不被无限拉高）
+/// - 单张：大图（屏宽 60%），多张才进网格
 class _UserAttachments extends StatelessWidget {
   const _UserAttachments({required this.message});
 
@@ -915,23 +924,11 @@ class _UserAttachments extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.end,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // 图片缩略图（≤3 张，一行排开）
         if (images.isNotEmpty)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final img in images)
-                GestureDetector(
-                  onTap: () => _openImageViewer(context, images, img),
-                  child: Padding(
-                    padding: const EdgeInsets.all(2),
-                    child: AttachmentThumbnail(
-                      base64: img.base64Data ?? '',
-                      size: 96,
-                    ),
-                  ),
-                ),
-            ],
+          _ImageGrid(
+            images: images,
+            onOpen: (index) =>
+                _openImageViewer(context, images, images[index]),
           ),
         // 豆包式文件卡片（点击打开原文件）
         for (final f in files)
@@ -972,6 +969,109 @@ class _UserAttachments extends StatelessWidget {
     if (result.type != ResultType.done && context.mounted) {
       showAppToast(context, result.message);
     }
+  }
+}
+
+/// 用户消息图片网格：3 列等宽（间距 4dp），>9 张折叠为「+N」遮罩
+///
+/// 宽度约束由外层气泡（屏宽 − 32dp − 气泡内边距）传入，格子尺寸 =
+/// 可用宽 / 3，保证任意张数气泡永不超出屏宽。
+class _ImageGrid extends StatelessWidget {
+  const _ImageGrid({required this.images, required this.onOpen});
+
+  final List images;
+  final void Function(int index) onOpen;
+
+  static const _maxVisibleImages = 9;
+  static const _spacing = 4.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final count = images.length;
+    // 单张：大图（屏宽 60%，保持缩略图组件的降采样解码）
+    if (count == 1) {
+      final size = MediaQuery.widthOf(context) * 0.6;
+      return GestureDetector(
+        onTap: () => onOpen(0),
+        child: AttachmentThumbnail(
+          base64: (images[0] as dynamic).base64Data ?? '',
+          size: size,
+          borderRadius: 10,
+        ),
+      );
+    }
+
+    final visible = count > _maxVisibleImages
+        ? images.sublist(0, _maxVisibleImages - 1)
+        : images;
+    final overflow = count - visible.length; // >9 时 = count - 8
+
+    return LayoutBuilder(builder: (context, constraints) {
+      final cellSize = (constraints.maxWidth - _spacing * 2) / 3;
+      return Wrap(
+        spacing: _spacing,
+        runSpacing: _spacing,
+        children: [
+          for (var i = 0; i < visible.length; i++)
+            GestureDetector(
+              onTap: () => onOpen(i),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: SizedBox(
+                  width: cellSize,
+                  height: cellSize,
+                  child: AttachmentThumbnail(
+                    base64: (visible[i] as dynamic).base64Data ?? '',
+                    size: cellSize,
+                    borderRadius: 8,
+                  ),
+                ),
+              ),
+            ),
+          // 「+N」遮罩格（>9 张时第 9 格）
+          if (overflow > 0)
+            GestureDetector(
+              onTap: () => onOpen(visible.length - 1),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  width: cellSize,
+                  height: cellSize,
+                  color: Colors.black.withValues(alpha: 0.55),
+                  // 底图：第 9 张图压暗 + 白字「+N」
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      AttachmentThumbnail(
+                        base64:
+                            (images[_maxVisibleImages - 1] as dynamic)
+                                    .base64Data ??
+                                '',
+                        size: cellSize,
+                        borderRadius: 8,
+                      ),
+                      Container(
+                        color: Colors.black.withValues(alpha: 0.45),
+                        alignment: Alignment.center,
+                        child: Text(
+                          '+$overflow',
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleLarge
+                              ?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      );
+    });
   }
 }
 
