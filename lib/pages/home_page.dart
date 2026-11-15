@@ -380,9 +380,8 @@ class _HomePageState extends State<HomePage> {
     );
     final chat = _chat;
     if (chat != null) {
-      final ok = chat.addAttachment(attachment);
-      showAppToast(context,
-          ok ? '已加入待发送附件' : '图片附件已达上限（3 张），未加入');
+      chat.addAttachment(attachment);
+      showAppToast(context, '已加入待发送附件');
     } else {
       // 空闲态：暂存输入栏本地队列，随首条消息经 onSendIdle 传入新会话
       setState(() => _idleShareAttachments.add(attachment));

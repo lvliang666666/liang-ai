@@ -469,14 +469,10 @@ class _HomeInputBarState extends State<HomeInputBar>
 
   bool get _hasPendingAttachments => _pendingAttachments.isNotEmpty;
 
-  /// 添加附件（图片 ≤3、文件 ≤3，超限返回 false）
+  /// 添加附件（张数不限——多选相册批次放开；始终返回 true）
   bool _addAttachment(MessageAttachment attachment) {
     final chat = widget.chat;
     if (chat != null) return chat.addAttachment(attachment);
-    final images = _idleAttachments.where((a) => a.isImage).length;
-    final files = _idleAttachments.where((a) => a.isFile).length;
-    if (attachment.isImage && images >= 3) return false;
-    if (attachment.isFile && files >= 3) return false;
     _idleAttachments = [..._idleAttachments, attachment];
     return true;
   }
@@ -496,7 +492,11 @@ class _HomeInputBarState extends State<HomeInputBar>
     });
   }
 
-  /// 附件来源选择：拍照 / 相册 / 文件
+  /// 附件来源选择：拍照 / 相册（系统全屏多选）/ 文件
+  ///
+  /// 相册入口 = 系统照片选择器（Android 13+ Photo Picker / iOS PHPicker）：
+  /// 全屏网格 + 多选 + 相册文件夹切换 + 确认按钮带张数——系统组件
+  /// 本身就是微信风格全屏相册页，零自绘成本。
   Future<void> _pickAttachment() async {
     Haptics.light();
     // 打开弹层前收起键盘，避免弹层关闭时焦点自动回到输入框
@@ -521,12 +521,12 @@ class _HomeInputBarState extends State<HomeInputBar>
             ),
             ListTile(
               leading: const Icon(Icons.photo_outlined),
-              title: const Text('相册（最多 3 张）'),
+              title: const Text('相册（可多选）'),
               onTap: () => Navigator.pop(context, 'gallery'),
             ),
             ListTile(
               leading: const Icon(Icons.folder_outlined),
-              title: const Text('文件（txt / md / pdf，最多 3 个）'),
+              title: const Text('文件（txt / md / pdf）'),
               onTap: () => Navigator.pop(context, 'file'),
             ),
             const SizedBox(height: 8),
@@ -550,16 +550,19 @@ class _HomeInputBarState extends State<HomeInputBar>
           _addOrWarn(
               _attachmentService.imageAttachment(xfile.name, bytes));
         case 'gallery':
-          final xfile = await _picker.pickImage(
-            source: ImageSource.gallery,
+          // 多选：按选择顺序逐张入队（attachments JSON 保序，气泡
+          // 渲染顺序与选择顺序一致）
+          final xfiles = await _picker.pickMultiImage(
             maxWidth: 1024,
             maxHeight: 1024,
             imageQuality: 85,
           );
-          if (xfile == null) return;
-          final bytes = await xfile.readAsBytes();
-          _addOrWarn(
-              _attachmentService.imageAttachment(xfile.name, bytes));
+          if (xfiles.isEmpty) return;
+          for (final x in xfiles) {
+            final bytes = await x.readAsBytes();
+            _addOrWarn(
+                _attachmentService.imageAttachment(x.name, bytes));
+          }
         case 'file':
           final result = await _pickFileWithFallback();
           if (result == null) return;
@@ -581,7 +584,7 @@ class _HomeInputBarState extends State<HomeInputBar>
     final ok = _addAttachment(attachment);
     if (!ok && mounted) {
       Haptics.medium();
-      showAppToast(context, '图片最多 3 张、文件最多 3 个');
+      showAppToast(context, '添加附件失败');
       return;
     }
     // 空闲态附件存本地列表（聊天态由 provider notifyListeners 驱动重建），
@@ -1104,7 +1107,7 @@ class _ClipboardSuggestionBar extends StatelessWidget {
   }
 }
 
-/// 主页待发附件预览条（横向滚动缩略图 + 文件卡片）
+/// 主页待发附件预览条（横向滚动缩略图 + 文件卡片 + 张数徽标）
 class HomeAttachmentPreview extends StatelessWidget {
   const HomeAttachmentPreview({super.key, required this.pending, required this.onRemove});
 
@@ -1114,72 +1117,103 @@ class HomeAttachmentPreview extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final imageCount = pending.where((a) => a.isImage).length;
+    final fileCount = pending.where((a) => a.isFile).length;
+    // 张数徽标：图片 N 张 / 文件 N 个（混合都显示）
+    final badgeText = [
+      if (imageCount > 0) '图片 $imageCount',
+      if (fileCount > 0) '文件 $fileCount',
+    ].join(' · ');
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      height: 72,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: pending.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 8),
-        itemBuilder: (context, index) {
-          final att = pending[index];
-          return Stack(
-            children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  color: colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(10),
-                  border:
-                      Border.all(color: colorScheme.outlineVariant, width: 0.5),
-                ),
-                child: att.isImage
-                    ? AttachmentThumbnail(
-                        base64: att.base64Data ?? '',
-                        size: 72,
-                        borderRadius: 10,
-                      )
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(Icons.description_outlined,
-                              size: 26, color: colorScheme.primary),
-                          const SizedBox(height: 4),
-                          Text(
-                            att.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 9),
-                          ),
-                        ],
+      height: 96,
+      child: Column(
+        children: [
+          Expanded(
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: pending.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) {
+                final att = pending[index];
+                return Stack(
+                  children: [
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        color: colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                            color: colorScheme.outlineVariant, width: 0.5),
                       ),
-              ),
-              // 移除按钮
-              Positioned(
-                top: 0,
-                right: 0,
-                child: GestureDetector(
-                  onTap: () {
-                    Haptics.light();
-                    onRemove(att);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: colorScheme.surface,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: colorScheme.outlineVariant, width: 0.5),
+                      child: att.isImage
+                          ? AttachmentThumbnail(
+                              base64: att.base64Data ?? '',
+                              size: 72,
+                              borderRadius: 10,
+                            )
+                          : Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.description_outlined,
+                                    size: 26, color: colorScheme.primary),
+                                const SizedBox(height: 4),
+                                Text(
+                                  att.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 9),
+                                ),
+                              ],
+                            ),
                     ),
-                    child: Icon(Icons.close,
-                        size: 14, color: colorScheme.onSurfaceVariant),
-                  ),
+                    // 移除按钮
+                    Positioned(
+                      top: 0,
+                      right: 0,
+                      child: GestureDetector(
+                        onTap: () {
+                          Haptics.light();
+                          onRemove(att);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: colorScheme.surface,
+                            shape: BoxShape.circle,
+                            border: Border.all(
+                                color: colorScheme.outlineVariant, width: 0.5),
+                          ),
+                          child: Icon(Icons.close,
+                              size: 14, color: colorScheme.onSurfaceVariant),
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 4),
+          // 张数徽标行
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                badgeText,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onPrimaryContainer,
                 ),
               ),
-            ],
-          );
-        },
+            ),
+          ),
+        ],
       ),
     );
   }

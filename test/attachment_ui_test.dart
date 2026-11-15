@@ -49,39 +49,37 @@ void main() {
       await db.close();
     });
 
-    test('添加图片附件：3 张后拒绝第 4 张', () {
-      expect(provider.addAttachment(const MessageAttachment(
-          type: AttachmentType.image, name: '1.jpg', base64Data: 'A')), isTrue);
-      expect(provider.addAttachment(const MessageAttachment(
-          type: AttachmentType.image, name: '2.jpg', base64Data: 'B')), isTrue);
-      expect(provider.addAttachment(const MessageAttachment(
-          type: AttachmentType.image, name: '3.jpg', base64Data: 'C')), isTrue);
-      expect(provider.addAttachment(const MessageAttachment(
-          type: AttachmentType.image, name: '4.jpg', base64Data: 'D')), isFalse);
-      expect(provider.pendingAttachments, hasLength(3));
+    test('添加图片附件：张数不限（多选批次放开 3 张上限）', () {
+      for (var i = 1; i <= 10; i++) {
+        expect(provider.addAttachment(MessageAttachment(
+            type: AttachmentType.image,
+            name: '$i.jpg',
+            base64Data: 'A')), isTrue);
+      }
+      expect(provider.pendingAttachments, hasLength(10));
     });
 
-    test('添加文件附件：3 个后拒绝第 4 个', () {
-      for (var i = 1; i <= 3; i++) {
+    test('添加文件附件：个数不限', () {
+      for (var i = 1; i <= 8; i++) {
         expect(provider.addAttachment(MessageAttachment(
             type: AttachmentType.file,
             name: 'f$i.txt',
             extractedText: 'x')), isTrue);
       }
-      expect(provider.addAttachment(MessageAttachment(
-          type: AttachmentType.file, name: 'f4.txt', extractedText: 'x')),
-          isFalse);
+      expect(provider.pendingAttachments, hasLength(8));
     });
 
-    test('图片和文件上限独立计算', () {
-      for (var i = 1; i <= 3; i++) {
+    test('多选按选择顺序入队（发送顺序 = 选择顺序）', () {
+      for (var i = 1; i <= 5; i++) {
         provider.addAttachment(MessageAttachment(
-            type: AttachmentType.image, name: 'i$i.jpg', base64Data: 'A'));
+            type: AttachmentType.image,
+            name: 'img$i.jpg',
+            base64Data: 'A'));
       }
-      // 图片已满，但文件仍可加
-      expect(provider.addAttachment(const MessageAttachment(
-          type: AttachmentType.file, name: 'a.txt', extractedText: 't')), isTrue);
-      expect(provider.pendingAttachments, hasLength(4));
+      expect(
+        provider.pendingAttachments.map((a) => a.name).toList(),
+        ['img1.jpg', 'img2.jpg', 'img3.jpg', 'img4.jpg', 'img5.jpg'],
+      );
     });
 
     test('移除附件', () {

@@ -347,16 +347,12 @@ class ChatProvider extends ChangeNotifier {
 
   bool get hasPendingAttachments => _pendingAttachments.isNotEmpty;
 
-  /// 添加附件（图片 ≤3、文件 ≤3，超限返回 false）
+  /// 添加附件（张数不限——多选相册批次放开；始终返回 true）
   ///
   /// F8：PDF 附件（有沙箱路径）后台分块索引——fire-and-forget，
   /// 索引完成前发送也能走 extractedText 全量注入的老路径（索引是
   /// 增强不是门槛）。
   bool addAttachment(MessageAttachment attachment) {
-    final images = _pendingAttachments.where((a) => a.isImage).length;
-    final files = _pendingAttachments.where((a) => a.isFile).length;
-    if (attachment.isImage && images >= 3) return false;
-    if (attachment.isFile && files >= 3) return false;
     _pendingAttachments = [..._pendingAttachments, attachment];
     _maybeIndexPdfAttachment(attachment);
     _notify();
