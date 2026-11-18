@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liang AI 项目说明书（Android 本地优先 AI 助手）</title>
+<style>
+  :root { --ink:#1c2333; --sub:#5a6478; --line:#e3e7ef; --bg:#f7f8fb; --card:#ffffff; --acc:#6c63ff; --ok:#1a7f4e; --warn:#b3541e; }
+  * { box-sizing:border-box; }
+  body { font-family:"Microsoft YaHei","PingFang SC",system-ui,sans-serif; color:var(--ink); background:var(--bg); margin:0; line-height:1.75; }
+  .wrap { max-width:960px; margin:0 auto; padding:32px 24px 80px; }
+  header.hero { background:linear-gradient(135deg,#3a2f8f,#6c63ff); color:#fff; border-radius:14px; padding:36px 36px 28px; margin-bottom:28px; }
+  header.hero h1 { margin:0 0 8px; font-size:26px; }
+  header.hero p { margin:4px 0; opacity:.92; font-size:14px; }
+  .badge { display:inline-block; background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35); border-radius:999px; padding:2px 12px; font-size:12px; margin-right:8px; }
+  nav.toc { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px 24px; margin-bottom:28px; }
+  nav.toc h2 { margin:0 0 10px; font-size:15px; color:var(--sub); }
+  nav.toc ol { margin:0; padding-left:22px; columns:2; column-gap:40px; }
+  nav.toc li { margin:3px 0; font-size:14px; }
+  nav.toc a { color:var(--acc); text-decoration:none; }
+  nav.toc a:hover { text-decoration:underline; }
+  section { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:26px 30px; margin-bottom:24px; }
+  section > h2 { margin:0 0 14px; font-size:20px; border-left:4px solid var(--acc); padding-left:12px; }
+  h3 { font-size:16px; margin:22px 0 8px; }
+  h4 { font-size:14px; margin:16px 0 6px; color:var(--sub); }
+  p, li { font-size:14px; }
+  table { width:100%; border-collapse:collapse; margin:10px 0 16px; font-size:13.5px; }
+  th, td { border:1px solid var(--line); padding:8px 12px; text-align:left; vertical-align:top; }
+  th { background:#f0eefc; font-weight:600; white-space:nowrap; }
+  tr:nth-child(even) td { background:#fbfaff; }
+  code { font-family:Consolas,"Cascadia Code",monospace; background:#eef1f7; border-radius:4px; padding:1px 6px; font-size:13px; color:#c7254e; }
+  pre { background:#0f1726; color:#dce4f2; border-radius:8px; padding:14px 18px; overflow-x:auto; font-size:13px; line-height:1.6; }
+  pre code { background:none; color:inherit; padding:0; }
+  .tip { border-left:4px solid var(--ok); background:#f0f9f4; border-radius:0 8px 8px 0; padding:10px 16px; margin:12px 0; font-size:13.5px; }
+  .warn { border-left:4px solid var(--warn); background:#fdf5ef; border-radius:0 8px 8px 0; padding:10px 16px; margin:12px 0; font-size:13.5px; }
+  .steps { counter-reset:step; padding-left:0; list-style:none; }
+  .steps > li { counter-increment:step; position:relative; padding:10px 0 10px 46px; border-bottom:1px dashed var(--line); }
+  .steps > li:last-child { border-bottom:none; }
+  .steps > li::before { content:counter(step); position:absolute; left:0; top:10px; width:30px; height:30px; border-radius:50%; background:var(--acc); color:#fff; text-align:center; line-height:30px; font-weight:700; font-size:14px; }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .card { border:1px solid var(--line); border-radius:10px; padding:14px 18px; background:#fbfaff; }
+  .card h4 { margin-top:0; }
+  footer { text-align:center; color:var(--sub); font-size:12.5px; margin-top:30px; }
+  @media (max-width:720px){ nav.toc ol{columns:1;} .grid2{grid-template-columns:1fr;} }
+  @media print { body{background:#fff;} section{border:none; padding:10px 0;} header.hero{border-radius:0;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Liang AI 项目说明书</h1>
+  <p><span class="badge">v2.33.1</span><span class="badge">Flutter · Android</span><span class="badge">MIT 开源</span></p>
+  <p>Local-first 的 Android AI 助手——聊天记录、长期记忆、知识卡片全部存在本机 SQLite，API key 经 Android Keystore 加密，零遥测。自带 API key 接任意 OpenAI 兼容模型服务，成为你自己的 AI 终端。</p>
+  <p>一人开发维护（产品设计/开发/测试/发版），1158+ 单测保持绿色，严格版本化工作流。</p>
+</header>
+
+<nav class="toc">
+  <h2>目录</h2>
+  <ol>
+    <li><a href="#s1">项目是什么</a></li>
+    <li><a href="#s2">功能全景</a></li>
+    <li><a href="#s3">安装与快速上手</a></li>
+    <li><a href="#s4">从源码构建</a></li>
+    <li><a href="#s5">移植到新电脑（开发环境）</a></li>
+    <li><a href="#s6">数据与安全设计</a></li>
+    <li><a href="#s7">备份指南</a></li>
+    <li><a href="#s8">版本管理与发版</a></li>
+    <li><a href="#s9">FAQ</a></li>
+  </ol>
+</nav>
+
+<!-- ===================== 1 ===================== -->
+<section id="s1">
+  <h2>1. 项目是什么</h2>
+  <p>主流 AI 应用把你的对话存在别人的服务器上，把记忆锁在它的账号里。<b>Liang AI 是对这件事的个人回答</b>：一个完全跑在你手机上的 AI 助手——</p>
+  <ul>
+    <li><b>Local-first</b>：聊天历史、长期记忆、知识卡片全部存本地 SQLite；</li>
+    <li><b>Key 自持</b>：API key 存 Android Keystore 加密的安全存储，数据库里只存空串——数据库泄露也拿不到 key；</li>
+    <li><b>零遥测</b>：无任何上传、无统计埋点；</li>
+    <li><b>BYOK</b>（Bring Your Own Key）：接任意 OpenAI 兼容服务（OpenAI / DeepSeek / Moonshot / SiliconFlow / 本地 Ollama），Base URL + Key 即插即用，多服务商一键切换。</li>
+  </ul>
+  <table>
+    <tr><th>项</th><th>值</th></tr>
+    <tr><td>平台</td><td>Android 5.0+（API 21）</td></tr>
+    <tr><td>技术栈</td><td>Flutter（Dart SDK ≥ 3.12.2）</td></tr>
+    <tr><td>当前版本</td><td>v2.33.1（2026-11-15）</td></tr>
+    <tr><td>远程仓库</td><td><code>github.com/lvliang666666/liang-ai</code>（公开，MIT）</td></tr>
+    <tr><td>发布渠道</td><td>GitHub Releases（APK）</td></tr>
+  </table>
+</section>
+
+<!-- ===================== 2 ===================== -->
+<section id="s2">
+  <h2>2. 功能全景</h2>
+  <table>
+    <tr><th>模块</th><th>能力</th></tr>
+    <tr><td>💬 聊天</td><td>多会话管理、置顶/分组、SSE 流式逐字渲染、随时停止、Markdown + 代码高亮</td></tr>
+    <tr><td>🧠 记忆</td><td>会话后自动提取记忆、按重要性分层与衰减、可钉选为永久、可溯源到原对话、截图记忆</td></tr>
+    <tr><td>🤖 Agents</td><td>Markdown + YAML front matter 定义人格与技能；10 个内置 agent（翻译/头脑风暴/发票提取…）；变量槽表单；结构化输出契约</td></tr>
+    <tr><td>🃏 卡片</td><td>长按任意消息蒸馏成卡片，自动提取标题/标签，可搜索/编辑/删除</td></tr>
+    <tr><td>📄 文档</td><td>PDF 分块索引、按相关性检索注入、回答标注「文件名 · 第 N 页」可跳转原文</td></tr>
+    <tr><td>🔍 搜索</td><td>历史会话与记忆的全文检索（SQLite FTS），模型可主动调 <code>search_history</code> 工具</td></tr>
+    <tr><td>🌅 主动关怀</td><td>每日晨报（含上周回顾）、承诺跟进（提取的 todo 次日温和提醒，防打扰内置）</td></tr>
+    <tr><td>🧩 工具</td><td>内置工具（设备信息/电量/哈希）、自定义 HTTP 工具、工具调用过程透明可视化</td></tr>
+    <tr><td>📱 小组件</td><td>桌面 Widget：最近会话 + 快速新聊 + 今日晨报</td></tr>
+    <tr><td>💾 数据</td><td>一键备份/恢复（含记忆与卡片）、导出 Markdown/HTML 到 Downloads、系统分享接收</td></tr>
+  </table>
+  <div class="tip"><b>技术亮点</b>：纯 Dart 编排器（ChatOrchestrator 与 Flutter 解耦，假服务全单测）；手写 SSE 解析 + CancelToken 停止生成；前台服务 + WakeLock 保活（切微信/锁屏长回答不断）；1158+ 测试用例。</div>
+</section>
+
+<!-- ===================== 3 ===================== -->
+<section id="s3">
+  <h2>3. 安装与快速上手（用户视角）</h2>
+  <ol class="steps">
+    <li><b>下载 APK</b>：GitHub Releases 页下载最新 <code>app-release.apk</code>，安装（允许「安装未知应用」）。</li>
+    <li><b>配模型服务</b>：首次启动 → 设置 → Model Service → 填 Base URL + API Key（任意 OpenAI 兼容服务）。</li>
+    <li><b>开聊</b>：新建会话即可流式对话；长按消息可蒸馏成卡片。</li>
+    <li><b>记忆自动生长</b>：每轮会话后自动提取记忆，重要度分层；重要的钉选为永久。</li>
+    <li><b>备份</b>：设置里一键备份/恢复（记忆与卡片包含在内）——换手机必备。</li>
+  </ol>
+</section>
+
+<!-- ===================== 4 ===================== -->
+<section id="s4">
+  <h2>4. 从源码构建（开发者视角）</h2>
+  <pre><code># 1. 环境：Flutter SDK（Dart SDK >= 3.12.2）+ Android SDK（minSdk 21）
+git clone https://github.com/lvliang666666/liang-ai.git
+cd liang-ai
+
+# 2. 拉依赖
+flutter pub get
+
+# 3. 跑测试（可选，1158+ 用例）
+flutter test
+
+# 4. 构建 release APK
+flutter build apk --release
+# 产物：build/app/outputs/flutter-apk/app-release.apk</code></pre>
+  <div class="warn"><b>不要动 dependency_overrides</b>：<code>shared_preferences_android</code> 钉在 2.4.28——2.5.x 会导致 release 构建启动白屏（pubspec.yaml 里有注释说明）。顺手升级依赖前先看这条。</div>
+</section>
+
+<!-- ===================== 5 ===================== -->
+<section id="s5">
+  <h2>5. 移植到新电脑（开发环境）</h2>
+  <ol class="steps">
+    <li>装 Flutter SDK（Dart ≥ 3.12.2）与 Android SDK，<code>flutter doctor</code> 全绿。</li>
+    <li><code>git clone</code> 本仓库（或拷目录，排除 build/ 与 tempfolds/）。</li>
+    <li><code>flutter pub get</code> → <code>flutter test</code>（确认 1158+ 用例绿）→ <code>flutter build apk --release</code>。</li>
+    <li>签名配置若在新机器缺失：检查 <code>android/key.properties</code> 与 keystore 文件是否随目录迁移（<b>keystore 丢了就无法同签名更新发版</b>，务必单独备份）。</li>
+  </ol>
+</section>
+
+<!-- ===================== 6 ===================== -->
+<section id="s6">
+  <h2>6. 数据与安全设计</h2>
+  <ul>
+    <li><b>API key</b>：<code>flutter_secure_storage</code>（Android Keystore 加密的 EncryptedSharedPreferences）；数据库只存空串；</li>
+    <li><b>本地库</b>：SQLite 存会话/记忆/卡片，FTS 全文索引；</li>
+    <li><b>后台保活</b>：<code>flutter_foreground_task</code> 前台服务（dataSync 类型）+ WakeLock；</li>
+    <li><b>零遥测</b>：无统计 SDK、无上传通道。</li>
+  </ul>
+</section>
+
+<!-- ===================== 7 ===================== -->
+<section id="s7">
+  <h2>7. 备份指南</h2>
+  <table>
+    <tr><th>资产</th><th>位置</th><th>优先级</th></tr>
+    <tr><td>源码</td><td>GitHub 公开仓库（已异地）</td><td>中（远程已有）</td></tr>
+    <tr><td><b>签名 keystore</b></td><td>android/ 下（随目录）</td><td><b>最高</b>（丢了无法同签名发版）</td></tr>
+    <tr><td>用户数据（手机侧）</td><td>App 内一键备份导出的文件</td><td>高（记忆/卡片不可再生）</td></tr>
+    <tr><td>docs/ROADMAP.md</td><td>需求池（随仓库）</td><td>中</td></tr>
+  </table>
+</section>
+
+<!-- ===================== 8 ===================== -->
+<section id="s8">
+  <h2>8. 版本管理与发版</h2>
+  <ul>
+    <li>严格版本化工作流：VERSIONING.md 记录每个版本的主题与条目；docs/ROADMAP.md 是活的需求池；ACCEPTANCE.md 是验收台账——每个功能可追溯到需求与验收记录。</li>
+    <li>发版：<code>release.sh</code> 一键流程；APK 发 GitHub Releases。</li>
+    <li>README 纪律：<b>只写已实现且验收的功能</b>，计划中的东西绝不过度承诺。</li>
+  </ul>
+</section>
+
+<!-- ===================== 9 ===================== -->
+<section id="s9">
+  <h2>9. FAQ</h2>
+  <h4>Q1：支持 iOS 吗？</h4>
+  <p>当前只有 Android。Flutter 代码理论上可跨平台，但 iOS 侧未做适配与发版。</p>
+  <h4>Q2：换手机怎么迁移数据？</h4>
+  <p>旧手机 App 内「一键备份」→ 导出文件传到新手机 → 新手机 App 内「恢复」。记忆与卡片都在备份里。</p>
+  <h4>Q3：模型服务哪家能用？</h4>
+  <p>任何 OpenAI chat/completions 兼容端点：OpenAI、DeepSeek、Moonshot、SiliconFlow、本地 Ollama 等。填 Base URL + Key 即可。</p>
+  <h4>Q4：release 构建启动白屏？</h4>
+  <p>十有八九是 dependency_overrides 被动了——把 shared_preferences_android 钉回 2.4.28。</p>
+  <h4>Q5：和 Liang-AI-Desktop 什么关系？</h4>
+  <p>姊妹项目：本仓库是 Android 端；Liang-AI-Desktop 是 Electron 桌面端（独立仓库、独立版本线）。</p>
+</section>
+
+<footer>
+  Liang AI 项目说明书 · v2.33.1 · 2026-11-18 由 S000252（百万大撤离）整理<br>
+  详细功能与截图见仓库 README.md（中英双语）
+</footer>
+
+</div>
+</body>
+</html>
